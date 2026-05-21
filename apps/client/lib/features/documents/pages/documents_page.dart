@@ -351,6 +351,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
           onSelected: (id) {
             final target = list.firstWhere((w) => w.id == id);
             ref.read(selectedWorkspaceProvider.notifier).state = target;
+            saveLastWorkspaceId(target.id);
             ref.read(documentProvider.notifier).loadDocuments(target.id);
             ref.read(conversationProvider.notifier).loadConversations(target.id);
             ref.read(selectedConversationProvider.notifier).state = null;

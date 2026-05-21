@@ -429,6 +429,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 onSelected: (id) {
                   final target = list.firstWhere((w) => w.id == id);
                   ref.read(selectedWorkspaceProvider.notifier).state = target;
+                  saveLastWorkspaceId(target.id);
                   ref.read(conversationProvider.notifier).loadConversations(target.id);
                   ref.read(selectedConversationProvider.notifier).state = null;
                   ref.read(messagesProvider.notifier).state = [];

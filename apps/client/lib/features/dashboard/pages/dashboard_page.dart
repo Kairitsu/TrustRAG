@@ -239,6 +239,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                           : null,
                       onTap: () {
                         ref.read(selectedWorkspaceProvider.notifier).state = ws;
+                        saveLastWorkspaceId(ws.id);
                         setState(() => _selectedIndex = 0);
                       },
                     ),
@@ -633,6 +634,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                   );
               if (ws != null && ctx.mounted) {
                 ref.read(selectedWorkspaceProvider.notifier).state = ws;
+                saveLastWorkspaceId(ws.id);
                 Navigator.pop(ctx);
               }
             },
