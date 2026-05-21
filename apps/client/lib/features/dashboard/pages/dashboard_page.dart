@@ -12,6 +12,7 @@ import '../../documents/pages/documents_page.dart';
 import '../../review/pages/review_list_page.dart';
 import '../../search/pages/workspace_search_page.dart';
 import '../../settings/pages/model_config_page.dart';
+import '../../settings/pages/workspace_members_page.dart';
 import '../providers/workspace_provider.dart';
 
 class DashboardPage extends ConsumerStatefulWidget {
@@ -275,6 +276,21 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                     Navigator.of(context).push(
                       MaterialPageRoute(
                           builder: (_) => const ModelConfigPage()),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.group),
+                  title: const Text('团队成员'),
+                  subtitle: const Text('管理工作区的成员和权限'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const WorkspaceMembersPage()),
                     );
                   },
                 ),
