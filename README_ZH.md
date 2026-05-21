@@ -71,6 +71,8 @@ Flutter 客户端 (Windows / macOS / Linux / Android / iOS)
           └── SQLite + FTS5（内嵌，零配置）
 ```
 
+> **注意：** 桌面模式目前支持 **TXT、Markdown、HTML** 格式文档。如需解析 PDF/DOCX，请使用服务器模式（包含 Python 文档处理器）。
+
 ### 服务器模式（完整部署）
 
 ```text

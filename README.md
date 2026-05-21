@@ -77,6 +77,8 @@ Flutter Client (Windows / macOS / Linux / Android / iOS)
           └── SQLite + FTS5 (embedded, zero config)
 ```
 
+> **Note:** Desktop mode currently supports **TXT, Markdown, and HTML** documents. For PDF/DOCX parsing, please use Server Mode which includes the Python Document Processor.
+
 ### Server Mode (Full Stack)
 
 ```text

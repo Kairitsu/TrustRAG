@@ -1,13 +1,17 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/services/backend_manager.dart';
 import '../../chat/providers/chat_provider.dart';
 import '../../dashboard/providers/workspace_provider.dart';
 import '../providers/document_provider.dart';
 import 'document_viewer_page.dart';
+
+const _desktopSupportedExtensions = {'txt', 'md', 'html', 'htm'};
 
 class DocumentsPage extends ConsumerStatefulWidget {
   const DocumentsPage({super.key});
@@ -53,13 +57,20 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
     }
   }
 
+  bool get _isDesktopEmbedded =>
+      !kIsWeb && BackendManager.shouldRunEmbedded;
+
   Future<void> _uploadFile() async {
     final ws = ref.read(selectedWorkspaceProvider);
     if (ws == null) return;
 
+    final allowedExts = _isDesktopEmbedded
+        ? _desktopSupportedExtensions.toList()
+        : ['pdf', 'docx', 'txt', 'md', 'html'];
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['pdf', 'docx', 'txt', 'md', 'html'],
+      allowedExtensions: allowedExts,
       allowMultiple: true,
       withData: true,
     );
@@ -194,6 +205,15 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                   icon: const Icon(Icons.upload_file, size: 18),
                   label: const Text('上传文档'),
                 ),
+                if (_isDesktopEmbedded) ...[
+                  const SizedBox(width: 8),
+                  Tooltip(
+                    message: '桌面模式仅支持 TXT/MD/HTML\n'
+                        'PDF/DOCX 需要部署服务器模式',
+                    child: Icon(Icons.info_outline,
+                        size: 18, color: Colors.orange.shade600),
+                  ),
+                ],
               ],
             ],
           ),
@@ -218,8 +238,43 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                               .headlineSmall
                               ?.copyWith(color: Colors.grey)),
                       const SizedBox(height: 8),
-                      Text('点击"上传文档"添加 PDF、DOCX 或 TXT 文件',
+                      Text(
+                          _isDesktopEmbedded
+                              ? '点击"上传文档"添加 TXT、MD 或 HTML 文件'
+                              : '点击"上传文档"添加 PDF、DOCX 或 TXT 文件',
                           style: TextStyle(color: Colors.grey.shade500)),
+                      if (_isDesktopEmbedded) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                                color: Colors.orange.shade200),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.info_outline,
+                                  size: 16,
+                                  color: Colors.orange.shade700),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  '桌面模式暂不支持 PDF/DOCX 解析，'
+                                  '如需解析这些格式请部署服务器模式',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.orange.shade800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 );
