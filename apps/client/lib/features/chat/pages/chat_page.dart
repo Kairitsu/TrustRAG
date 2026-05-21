@@ -12,6 +12,7 @@ import 'package:streaming_markdown/streaming_markdown.dart' hide MarkdownStyleSh
 
 import '../../../core/utils/ai_icon_helper.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../core/providers/dev_mode_provider.dart';
 import '../../dashboard/providers/workspace_provider.dart';
 import '../../reader/pages/pdf_viewer_page.dart';
 import '../../settings/providers/model_config_provider.dart';
@@ -99,6 +100,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     _scrollToBottom();
 
+    DebugLogBuffer().add('CHAT 发送消息: ${userText.length > 50 ? '${userText.substring(0, 50)}...' : userText}');
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('auth_token') ?? '';
@@ -242,11 +244,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         client.close();
       }
     } catch (e) {
+      DebugLogBuffer().add('ERROR CHAT 发送失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('发送失败: $e')));
       }
     } finally {
+      DebugLogBuffer().add('CHAT 流式响应结束，引用数: ${_streamingCitations.length}');
       if (mounted) {
         setState(() => _isSending = false);
       }

@@ -3,6 +3,7 @@ import 'package:dio_cache_interceptor/dio_cache_interceptor.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../providers/dev_mode_provider.dart';
 import '../services/backend_manager.dart';
 
 class ApiClient {
@@ -36,6 +37,8 @@ class ApiClient {
         handler.next(error);
       },
     ));
+
+    dio.interceptors.add(_DebugLogInterceptor());
 
     final cacheStore = MemCacheStore(maxSize: 50, maxEntrySize: 524288);
     final cacheOptions = CacheOptions(
@@ -79,5 +82,30 @@ class ApiClient {
   static Future<void> clearToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
+  }
+}
+
+class _DebugLogInterceptor extends Interceptor {
+  final _log = DebugLogBuffer();
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    _log.add('API >> ${options.method} ${options.path}');
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    _log.add(
+        'API << ${response.statusCode} ${response.requestOptions.method} ${response.requestOptions.path}');
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final code = err.response?.statusCode ?? 0;
+    _log.add(
+        'API ERROR [$code] ${err.requestOptions.method} ${err.requestOptions.path}: ${err.message}');
+    handler.next(err);
   }
 }

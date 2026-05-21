@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/providers/dev_mode_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 
 class Document {
@@ -53,6 +54,7 @@ class DocumentNotifier extends StateNotifier<AsyncValue<List<Document>>> {
   DocumentNotifier(this.ref) : super(const AsyncValue.data([]));
 
   Future<void> loadDocuments(String workspaceId) async {
+    DebugLogBuffer().add('DOC 加载文档列表: workspace=$workspaceId');
     state = const AsyncValue.loading();
     try {
       final api = ref.read(apiClientProvider);
@@ -60,13 +62,21 @@ class DocumentNotifier extends StateNotifier<AsyncValue<List<Document>>> {
       final data = resp.data;
       final items = data is List ? data : (data['items'] ?? []);
       final list = (items as List).map((j) => Document.fromJson(j)).toList();
+      final statusSummary = <String, int>{};
+      for (final d in list) {
+        statusSummary[d.processingStatus] = (statusSummary[d.processingStatus] ?? 0) + 1;
+      }
+      DebugLogBuffer().add('DOC 加载完成: ${list.length}个文档, 状态分布: $statusSummary');
       state = AsyncValue.data(list);
     } catch (e, st) {
+      DebugLogBuffer().add('ERROR DOC 加载失败: $e');
       state = AsyncValue.error(e, st);
     }
   }
 
   Future<bool> uploadDocument(String workspaceId, List<int> bytes, String filename) async {
+    final sizeKb = (bytes.length / 1024).toStringAsFixed(1);
+    DebugLogBuffer().add('DOC 上传开始: $filename (${sizeKb}KB)');
     try {
       final api = ref.read(apiClientProvider);
       final formData = FormData.fromMap({
@@ -76,9 +86,11 @@ class DocumentNotifier extends StateNotifier<AsyncValue<List<Document>>> {
         '/workspaces/$workspaceId/documents',
         data: formData,
       );
+      DebugLogBuffer().add('DOC 上传成功: $filename');
       await loadDocuments(workspaceId);
       return true;
-    } catch (_) {
+    } catch (e) {
+      DebugLogBuffer().add('ERROR DOC 上传失败: $filename — $e');
       return false;
     }
   }

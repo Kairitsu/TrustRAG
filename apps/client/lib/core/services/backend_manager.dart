@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../providers/dev_mode_provider.dart';
+
 class BackendManager {
   static final BackendManager _instance = BackendManager._();
   factory BackendManager() => _instance;
@@ -72,6 +74,8 @@ class BackendManager {
     debugPrint('[BackendManager] Starting backend on port $_port');
     debugPrint('[BackendManager] Data dir: $dataDir');
     debugPrint('[BackendManager] Binary: $backendPath');
+    DebugLogBuffer().add('BACKEND 启动中 port=$_port');
+    DebugLogBuffer().add('BACKEND 数据目录: $dataDir');
 
     try {
       _process = await Process.start(
@@ -117,6 +121,9 @@ class BackendManager {
     if (!_isRunning) {
       _isRunning = await _healthCheck();
       debugPrint('[BackendManager] Health check result: $_isRunning');
+      DebugLogBuffer().add(_isRunning
+          ? 'BACKEND 健康检查通过，端口 $_port'
+          : 'ERROR BACKEND 健康检查失败');
     }
   }
 
