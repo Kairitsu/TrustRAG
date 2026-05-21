@@ -1,16 +1,24 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::{get, post},
     Json, Router,
 };
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
 use crate::services::review::{self, CreateReviewInput, ReviewRecord, ReviewStats};
 
+#[derive(Debug, Deserialize)]
+struct ListReviewsQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
 pub fn router() -> Router<crate::api::AppState> {
     Router::new()
+        .route("/reviews", get(list_all_reviews))
         .route(
             "/citations/{citation_id}/reviews",
             get(list_reviews).post(create_review),
@@ -19,6 +27,17 @@ pub fn router() -> Router<crate::api::AppState> {
             "/conversations/{conv_id}/review-stats",
             get(get_conversation_review_stats),
         )
+}
+
+async fn list_all_reviews(
+    _auth: AuthUser,
+    State(state): State<crate::api::AppState>,
+    Query(params): Query<ListReviewsQuery>,
+) -> Result<Json<Vec<ReviewRecord>>, AppError> {
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+    let reviews = review::list_all_reviews(&state.pool, limit, offset).await?;
+    Ok(Json(reviews))
 }
 
 async fn create_review(

@@ -101,4 +101,16 @@ class ReviewService {
         await api.dio.get('/conversations/$conversationId/review-stats');
     return ReviewStats.fromJson(resp.data);
   }
+
+  Future<List<ReviewRecord>> listAllReviews({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get(
+      '/reviews',
+      queryParameters: {'limit': limit, 'offset': offset},
+    );
+    return (resp.data as List).map((e) => ReviewRecord.fromJson(e)).toList();
+  }
 }

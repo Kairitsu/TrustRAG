@@ -9,6 +9,7 @@ import '../../../main.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../chat/pages/chat_page.dart';
 import '../../documents/pages/documents_page.dart';
+import '../../review/pages/review_list_page.dart';
 import '../../search/pages/workspace_search_page.dart';
 import '../../settings/pages/model_config_page.dart';
 import '../providers/workspace_provider.dart';
@@ -26,6 +27,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   static const _navItems = <({IconData icon, IconData selectedIcon, String label})>[
     (icon: Icons.chat_outlined, selectedIcon: Icons.chat, label: '对话'),
     (icon: Icons.folder_outlined, selectedIcon: Icons.folder, label: '资料库'),
+    (icon: Icons.rate_review_outlined, selectedIcon: Icons.rate_review, label: '审核'),
     (icon: Icons.workspaces_outlined, selectedIcon: Icons.workspaces, label: '工作区'),
     (icon: Icons.search_outlined, selectedIcon: Icons.search, label: '搜索'),
     (icon: Icons.settings_outlined, selectedIcon: Icons.settings, label: '设置'),
@@ -141,10 +143,12 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       case 1:
         return _buildDocumentsView();
       case 2:
-        return _buildWorkspacesView();
+        return const ReviewListPage();
       case 3:
-        return const WorkspaceSearchPage();
+        return _buildWorkspacesView();
       case 4:
+        return const WorkspaceSearchPage();
+      case 5:
         return _buildSettingsView();
       default:
         return const SizedBox.shrink();

@@ -106,6 +106,27 @@ pub async fn list_reviews_for_citation(
     Ok(rows.into_iter().map(parse_review_row).collect())
 }
 
+pub async fn list_all_reviews(
+    pool: &DbPool,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<ReviewRecord>> {
+    let rows = sqlx::query_as::<_, ReviewRow>(
+        r#"
+        SELECT id, citation_id, reviewer_id, status, comment, corrected_text, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
+        FROM review_records
+        ORDER BY created_at DESC
+        LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(parse_review_row).collect())
+}
+
 #[derive(Debug, Serialize)]
 pub struct ReviewStats {
     pub total_citations: i64,
