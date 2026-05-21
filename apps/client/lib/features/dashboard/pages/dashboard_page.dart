@@ -5,8 +5,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../../core/services/backend_manager.dart';
+import '../../../core/services/update_checker.dart';
 import '../../../main.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../settings/widgets/update_dialog.dart';
 import '../../chat/pages/chat_page.dart';
 import '../../documents/pages/documents_page.dart';
 import '../../review/pages/review_list_page.dart';
@@ -24,6 +26,7 @@ class DashboardPage extends ConsumerStatefulWidget {
 
 class _DashboardPageState extends ConsumerState<DashboardPage> {
   int _selectedIndex = 0;
+  bool _checkingUpdate = false;
 
   static const _navItems = <({IconData icon, IconData selectedIcon, String label})>[
     (icon: Icons.chat_outlined, selectedIcon: Icons.chat, label: '对话'),
@@ -390,9 +393,24 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               const SizedBox(height: 8),
               Card(
                 child: ListTile(
+                  leading: _checkingUpdate
+                      ? const SizedBox(
+                          width: 24, height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.system_update_alt_rounded),
+                  title: const Text('检查更新'),
+                  subtitle: Text('当前版本 v$appVersion'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _checkingUpdate ? null : () => _manualCheckUpdate(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
                   leading: const Icon(Icons.info_outline),
                   title: const Text('关于'),
-                  subtitle: const Text('TrustRAG v0.2.1'),
+                  subtitle: Text('TrustRAG v$appVersion'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _showAboutDialog(),
                 ),
@@ -437,6 +455,32 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _manualCheckUpdate() async {
+    setState(() => _checkingUpdate = true);
+    try {
+      final release = await UpdateChecker().checkForUpdate(appVersion, force: true);
+      if (!mounted) return;
+      if (release != null) {
+        UpdateDialog.show(context, release: release, currentVersion: appVersion);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('已是最新版本'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('检查更新失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
   }
 
   void _showDebugLogPanel() {
@@ -587,7 +631,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             const Text('TrustRAG - 可信赖的 RAG 知识工作台',
                 style: TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
-            _infoRow('版本', 'v0.2.0'),
+            _infoRow('版本', 'v$appVersion'),
             const SizedBox(height: 4),
             _infoRow('后端', 'Rust (Axum)'),
             const SizedBox(height: 4),
