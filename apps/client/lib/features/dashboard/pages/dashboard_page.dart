@@ -392,7 +392,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 child: ListTile(
                   leading: const Icon(Icons.info_outline),
                   title: const Text('关于'),
-                  subtitle: const Text('TrustRAG v0.2.0'),
+                  subtitle: const Text('TrustRAG v0.2.1'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _showAboutDialog(),
                 ),
