@@ -24,6 +24,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
   Timer? _refreshTimer;
   final Set<String> _selectedIds = {};
   bool _selectionMode = false;
+  String? _activeFolder;
 
   @override
   void initState() {
@@ -222,9 +223,13 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
           child: docs.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => Center(child: Text('加载失败: $e')),
-            data: (list) {
-              _startAutoRefresh(list);
-              if (list.isEmpty) {
+            data: (allDocs) {
+              _startAutoRefresh(allDocs);
+              final folders = _extractFolders(allDocs);
+              final list = _activeFolder == null
+                  ? allDocs
+                  : allDocs.where((d) => d.tags.contains(_activeFolder)).toList();
+              if (allDocs.isEmpty) {
                 return Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -280,10 +285,22 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                 );
               }
 
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: list.length,
-                itemBuilder: (context, index) {
+              return Column(
+                children: [
+                  if (folders.isNotEmpty) _buildFolderBar(folders, ws),
+                  if (_activeFolder != null && list.isEmpty)
+                    Expanded(
+                      child: Center(
+                        child: Text('文件夹 "$_activeFolder" 中暂无文档',
+                            style: TextStyle(color: Colors.grey.shade500)),
+                      ),
+                    )
+                  else
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: list.length,
+                      itemBuilder: (context, index) {
                   final doc = list[index];
                   final isSelected = _selectedIds.contains(doc.id);
                   return Card(
@@ -345,6 +362,24 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                               ],
                             ],
                           ),
+                          if (doc.tags.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Row(
+                                children: doc.tags
+                                    .map((t) => Padding(
+                                          padding: const EdgeInsets.only(right: 4),
+                                          child: Chip(
+                                            label: Text(t, style: const TextStyle(fontSize: 10)),
+                                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                            visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                                            padding: EdgeInsets.zero,
+                                            labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                                          ),
+                                        ))
+                                    .toList(),
+                              ),
+                            ),
                           if (doc.processingStatus == 'failed' && doc.processingError != null)
                             Padding(
                               padding: const EdgeInsets.only(top: 4),
@@ -360,6 +395,8 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                       trailing: PopupMenuButton(
                         itemBuilder: (ctx) => [
                           const PopupMenuItem(
+                              value: 'move_folder', child: Text('移动到文件夹')),
+                          const PopupMenuItem(
                               value: 'delete', child: Text('删除')),
                         ],
                         onSelected: (value) async {
@@ -367,12 +404,17 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                             await ref
                                 .read(documentProvider.notifier)
                                 .deleteDocument(ws.id, doc.id);
+                          } else if (value == 'move_folder') {
+                            _showMoveFolderDialog(doc, ws);
                           }
                         },
                       ),
                     ),
                   );
                 },
+                    ),
+                  ),
+                ],
               );
             },
           ),
@@ -468,6 +510,164 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
       backgroundColor: color.withValues(alpha: 0.1),
       child: Icon(icon, color: color, size: 20),
     );
+  }
+
+  Set<String> _extractFolders(List<Document> docs) {
+    final folders = <String>{};
+    for (final d in docs) {
+      folders.addAll(d.tags);
+    }
+    return folders;
+  }
+
+  Widget _buildFolderBar(Set<String> folders, dynamic ws) {
+    final sortedFolders = folders.toList()..sort();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.folder_outlined, size: 16, color: Colors.grey.shade600),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _folderChip('全部', null),
+                  ...sortedFolders.map((f) => _folderChip(f, f)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+            tooltip: '新建文件夹',
+            onPressed: () => _showCreateFolderDialog(ws),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _folderChip(String label, String? folder) {
+    final isActive = _activeFolder == folder;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: FilterChip(
+        label: Text(label, style: const TextStyle(fontSize: 12)),
+        selected: isActive,
+        onSelected: (_) => setState(() => _activeFolder = folder),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+
+  Future<void> _showCreateFolderDialog(dynamic ws) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新建文件夹'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: '文件夹名称',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name != null && name.isNotEmpty) {
+      setState(() => _activeFolder = name);
+    }
+  }
+
+  Future<void> _showMoveFolderDialog(Document doc, dynamic ws) async {
+    final docs = ref.read(documentProvider).value ?? [];
+    final existingFolders = _extractFolders(docs).toList()..sort();
+    final controller = TextEditingController();
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('移动到文件夹'),
+        content: SizedBox(
+          width: 300,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (doc.tags.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text('当前文件夹: ${doc.tags.join(", ")}',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+                ),
+              if (existingFolders.isNotEmpty) ...[
+                const Text('选择已有文件夹:', style: TextStyle(fontSize: 13)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    ActionChip(
+                      label: const Text('无文件夹'),
+                      onPressed: () => Navigator.pop(ctx, '__none__'),
+                    ),
+                    ...existingFolders.map((f) => ActionChip(
+                          label: Text(f),
+                          onPressed: () => Navigator.pop(ctx, f),
+                        )),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text('或输入新文件夹:', style: TextStyle(fontSize: 13)),
+              ] else
+                const Text('输入文件夹名称:', style: TextStyle(fontSize: 13)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(
+                  hintText: '新文件夹名',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    if (result == null || result.isEmpty) return;
+
+    final newTags = result == '__none__' ? <String>[] : [result];
+    await ref.read(documentProvider.notifier).updateTags(ws.id, doc.id, newTags);
   }
 
   Widget _statusChip(String status) {

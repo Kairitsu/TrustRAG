@@ -13,6 +13,7 @@ class Document {
   final String processingStatus;
   final String? processingError;
   final int? chunkCount;
+  final List<String> tags;
   final DateTime createdAt;
 
   Document({
@@ -24,10 +25,16 @@ class Document {
     required this.processingStatus,
     this.processingError,
     this.chunkCount,
+    this.tags = const [],
     required this.createdAt,
   });
 
   factory Document.fromJson(Map<String, dynamic> json) {
+    final rawTags = json['tags'];
+    List<String> parsedTags = [];
+    if (rawTags is List) {
+      parsedTags = rawTags.map((e) => e.toString()).toList();
+    }
     return Document(
       id: json['id'],
       workspaceId: json['workspace_id'],
@@ -37,7 +44,23 @@ class Document {
       processingStatus: json['processing_status'] ?? 'pending',
       processingError: json['processing_error'],
       chunkCount: json['chunk_count'],
+      tags: parsedTags,
       createdAt: DateTime.parse(json['created_at']),
+    );
+  }
+
+  Document copyWith({List<String>? tags}) {
+    return Document(
+      id: id,
+      workspaceId: workspaceId,
+      originalFilename: originalFilename,
+      fileType: fileType,
+      fileSize: fileSize,
+      processingStatus: processingStatus,
+      processingError: processingError,
+      chunkCount: chunkCount,
+      tags: tags ?? this.tags,
+      createdAt: createdAt,
     );
   }
 
@@ -107,9 +130,29 @@ class DocumentNotifier extends StateNotifier<AsyncValue<List<Document>>> {
       return false;
     }
   }
+
+  Future<bool> updateTags(String workspaceId, String docId, List<String> tags) async {
+    try {
+      final api = ref.read(apiClientProvider);
+      await api.dio.patch(
+        '/workspaces/$workspaceId/documents/$docId',
+        data: {'tags': tags},
+      );
+      final docs = state.value ?? [];
+      state = AsyncValue.data(
+        docs.map((d) => d.id == docId ? d.copyWith(tags: tags) : d).toList(),
+      );
+      return true;
+    } catch (e) {
+      DebugLogBuffer().add('ERROR DOC 更新标签失败: $docId — $e');
+      return false;
+    }
+  }
 }
 
 final documentProvider =
     StateNotifierProvider<DocumentNotifier, AsyncValue<List<Document>>>((ref) {
   return DocumentNotifier(ref);
 });
+
+final selectedFolderProvider = StateProvider<String?>((ref) => null);

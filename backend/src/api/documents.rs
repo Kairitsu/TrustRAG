@@ -59,7 +59,7 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/workspaces/{ws_id}/documents/{doc_id}",
-            get(get_document).delete(delete_document),
+            get(get_document).delete(delete_document).patch(update_document_tags),
         )
         .route(
             "/workspaces/{ws_id}/documents/{doc_id}/download",
@@ -588,4 +588,37 @@ async fn get_markdown(
         ],
         data,
     ))
+}
+
+#[derive(Deserialize)]
+struct UpdateDocumentBody {
+    tags: Option<serde_json::Value>,
+}
+
+async fn update_document_tags(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<UpdateDocumentBody>,
+) -> Result<Json<DocumentResponse>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let tags = body.tags.unwrap_or(serde_json::json!([]));
+    let tags_str = serde_json::to_string(&tags).unwrap_or_else(|_| "[]".to_string());
+
+    let q = format!(
+        "UPDATE documents SET tags = $1, updated_at = {} WHERE id = $2 AND workspace_id = $3 RETURNING {}",
+        crate::db::compat::current_timestamp_sql(),
+        DOC_SELECT
+    );
+
+    let row = sqlx::query_as::<_, DocRow>(&q)
+        .bind(&tags_str)
+        .bind(doc_id.to_string())
+        .bind(ws_id.to_string())
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Document not found".into()))?;
+
+    Ok(Json(parse_doc_row(row)?))
 }
