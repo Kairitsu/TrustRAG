@@ -39,6 +39,7 @@ class ChatPage extends ConsumerStatefulWidget {
 class _ChatPageState extends ConsumerState<ChatPage> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _isSending = false;
   String _streamingContent = '';
   List<Citation> _streamingCitations = [];
@@ -265,6 +266,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _selectConversation(Conversation conv) async {
     ref.read(selectedConversationProvider.notifier).state = conv;
+    if (_isCompact && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
     try {
       final api = ref.read(apiClientProvider);
       final resp = await api.dio.get(
@@ -274,6 +278,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ref.read(messagesProvider.notifier).state = list;
     } catch (_) {}
   }
+
+  bool get _isCompact => MediaQuery.of(context).size.width < 600;
 
   @override
   Widget build(BuildContext context) {
@@ -289,59 +295,100 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       );
     }
 
+    final conversationPanel = _buildConversationPanel(convs, ws, selectedConv);
+    final chatPanel = Column(
+      children: [
+        if (!_isCompact) _buildWorkspaceBar(ws),
+        Expanded(
+          child: messages.isEmpty && _streamingContent.isEmpty
+              ? _buildEmptyChat()
+              : _buildMessageList(messages),
+        ),
+        _buildInputBar(),
+      ],
+    );
+
+    if (_isCompact) {
+      return Scaffold(
+        key: _scaffoldKey,
+        drawer: Drawer(
+          child: SafeArea(child: conversationPanel),
+        ),
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          ),
+          title: Text(
+            selectedConv?.title ?? ws.name,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          titleSpacing: 0,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.add, size: 22),
+              tooltip: '新对话',
+              onPressed: () {
+                ref.read(selectedConversationProvider.notifier).state = null;
+                ref.read(messagesProvider.notifier).state = [];
+              },
+            ),
+          ],
+        ),
+        body: SafeArea(
+          top: false,
+          child: chatPanel,
+        ),
+      );
+    }
+
     return Row(
       children: [
-        SizedBox(
-          width: 260,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      ref.read(selectedConversationProvider.notifier).state =
-                          null;
-                      ref.read(messagesProvider.notifier).state = [];
-                    },
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('新对话'),
-                  ),
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: convs.when(
-                  loading: () =>
-                      const Center(child: CircularProgressIndicator()),
-                  error: (e, _) => Center(child: Text('$e')),
-                  data: (list) {
-                    if (list.isEmpty) {
-                      return Center(
-                        child: Text('暂无对话',
-                            style: TextStyle(color: Colors.grey.shade500)),
-                      );
-                    }
-                    return _buildGroupedConversationList(list, ws, selectedConv);
-                  },
-                ),
-              ),
-            ],
+        SizedBox(width: 260, child: conversationPanel),
+        const VerticalDivider(width: 1),
+        Expanded(child: chatPanel),
+      ],
+    );
+  }
+
+  Widget _buildConversationPanel(
+    AsyncValue<List<Conversation>> convs,
+    dynamic ws,
+    Conversation? selectedConv,
+  ) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                ref.read(selectedConversationProvider.notifier).state = null;
+                ref.read(messagesProvider.notifier).state = [];
+                if (_isCompact) Navigator.of(context).pop();
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('新对话'),
+            ),
           ),
         ),
-        const VerticalDivider(width: 1),
+        const Divider(height: 1),
         Expanded(
-          child: Column(
-            children: [
-              _buildWorkspaceBar(ws),
-              Expanded(
-                child: messages.isEmpty && _streamingContent.isEmpty
-                    ? _buildEmptyChat()
-                    : _buildMessageList(messages),
-              ),
-              _buildInputBar(),
-            ],
+          child: convs.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => Center(child: Text('$e')),
+            data: (list) {
+              if (list.isEmpty) {
+                return Center(
+                  child: Text('暂无对话',
+                      style: TextStyle(color: Colors.grey.shade500)),
+                );
+              }
+              return _buildGroupedConversationList(list, ws, selectedConv);
+            },
           ),
         ),
       ],
@@ -528,12 +575,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildMessageList(List<ChatMessage> messages) {
+    final hPad = _isCompact ? 12.0 : 24.0;
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
         child: ListView.builder(
           controller: _scrollController,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 16),
           itemCount: messages.length + (_streamingContent.isNotEmpty ? 1 : 0),
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
@@ -556,13 +604,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final theme = Theme.of(context);
 
     if (isUser) {
+      final maxBubbleWidth = _isCompact ? 280.0 : 560.0;
       return Align(
         alignment: Alignment.centerRight,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Container(
-              constraints: const BoxConstraints(maxWidth: 560),
+              constraints: BoxConstraints(maxWidth: maxBubbleWidth),
               margin: const EdgeInsets.symmetric(vertical: 8),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
