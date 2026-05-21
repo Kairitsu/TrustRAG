@@ -43,6 +43,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   Citation? _selectedCitation;
   bool _isSending = false;
+  double _convPanelWidth = 260;
+  double _citationPanelWidth = 340;
+  static const double _minPanelWidth = 180;
+  static const double _maxConvPanelWidth = 400;
+  static const double _maxCitationPanelWidth = 500;
   String _streamingContent = '';
   List<Citation> _streamingCitations = [];
   StreamController<String>? _streamingTextController;
@@ -51,10 +56,29 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void initState() {
     super.initState();
     _initSendMode(ref);
+    _restorePanelWidths();
     final ws = ref.read(selectedWorkspaceProvider);
     if (ws != null) {
       ref.read(conversationProvider.notifier).loadConversations(ws.id);
     }
+  }
+
+  Future<void> _restorePanelWidths() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cw = prefs.getDouble('conv_panel_width');
+    final ciw = prefs.getDouble('citation_panel_width');
+    if (cw != null || ciw != null) {
+      setState(() {
+        if (cw != null) _convPanelWidth = cw.clamp(_minPanelWidth, _maxConvPanelWidth);
+        if (ciw != null) _citationPanelWidth = ciw.clamp(_minPanelWidth, _maxCitationPanelWidth);
+      });
+    }
+  }
+
+  Future<void> _savePanelWidths() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('conv_panel_width', _convPanelWidth);
+    await prefs.setDouble('citation_panel_width', _citationPanelWidth);
   }
 
   @override
@@ -351,13 +375,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     return Row(
       children: [
-        SizedBox(width: 260, child: conversationPanel),
-        const VerticalDivider(width: 1),
+        SizedBox(width: _convPanelWidth, child: conversationPanel),
+        _ResizeHandle(
+          onDrag: (dx) => setState(() {
+            _convPanelWidth = (_convPanelWidth + dx)
+                .clamp(_minPanelWidth, _maxConvPanelWidth);
+          }),
+          onDragEnd: _savePanelWidths,
+        ),
         Expanded(child: chatPanel),
         if (_selectedCitation != null) ...[
-          const VerticalDivider(width: 1),
+          _ResizeHandle(
+            onDrag: (dx) => setState(() {
+              _citationPanelWidth = (_citationPanelWidth - dx)
+                  .clamp(_minPanelWidth, _maxCitationPanelWidth);
+            }),
+            onDragEnd: _savePanelWidths,
+          ),
           SizedBox(
-            width: 340,
+            width: _citationPanelWidth,
             child: _CitationPanel(
               citation: _selectedCitation!,
               parentRef: ref,
@@ -1460,6 +1496,33 @@ class _CitationDetailDialogState
           child: const Text('关闭'),
         ),
       ],
+    );
+  }
+}
+
+class _ResizeHandle extends StatelessWidget {
+  final ValueChanged<double> onDrag;
+  final VoidCallback? onDragEnd;
+  const _ResizeHandle({required this.onDrag, this.onDragEnd});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragUpdate: (d) => onDrag(d.delta.dx),
+      onHorizontalDragEnd: (_) => onDragEnd?.call(),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeColumn,
+        child: SizedBox(
+          width: 6,
+          child: Center(
+            child: Container(
+              width: 1,
+              color: Theme.of(context).dividerColor,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
