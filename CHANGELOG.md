@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-05-21
+
+### Added / 新增
+- 📱 **Android responsive layout / Android 响应式布局** — Chat page auto-switches between single-column (Drawer + AppBar) for screens <600px and dual-column for wider screens. SafeArea wrapping prevents status bar conflicts. (Issue #6)
+- 📱 **Android 响应式布局** — 聊天页面自动在单栏（抽屉 + AppBar，<600px）和双栏（>=600px）之间切换。SafeArea 处理状态栏冲突。（Issue #6）
+- 💾 **Workspace state persistence / 工作区状态持久化** — Automatically saves and restores last selected workspace across app restarts via SharedPreferences. (Issue #6)
+- 💾 **工作区状态持久化** — 通过 SharedPreferences 自动保存和恢复上次选择的工作区。（Issue #6）
+- 📄 **Desktop document format guidance / 桌面端文档格式引导** — Desktop mode now clearly indicates supported formats (TXT/MD/HTML) and guides users to server mode for PDF/DOCX parsing. File picker is restricted accordingly. (Issue #4)
+- 📄 **桌面端文档格式引导** — 桌面模式明确提示支持格式（TXT/MD/HTML），引导用户使用服务器模式解析 PDF/DOCX。文件选择器相应限制。（Issue #4）
+- 🧪 **Widget tests / Widget 测试** — Added 18 widget and unit tests covering responsive layout, workspace persistence, and document format validation.
+- 🧪 **Widget 测试** — 新增 18 个测试覆盖响应式布局、工作区持久化和文档格式验证。
+- 📋 **Development roadmap v3 / 开发路线图 v3** — Issue-driven iteration plan (v0.2.0–v0.5.0) with prioritized tasks and milestones.
+- 📋 **开发路线图 v3** — Issue 驱动的迭代计划（v0.2.0–v0.5.0），含优先级排序和里程碑。
+
+---
+
 ## [0.1.2] - 2026-05-19
 
 ### Fixed / 修复
