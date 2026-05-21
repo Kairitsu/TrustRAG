@@ -40,6 +40,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+  Citation? _selectedCitation;
   bool _isSending = false;
   String _streamingContent = '';
   List<Citation> _streamingCitations = [];
@@ -349,6 +350,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         SizedBox(width: 260, child: conversationPanel),
         const VerticalDivider(width: 1),
         Expanded(child: chatPanel),
+        if (_selectedCitation != null) ...[
+          const VerticalDivider(width: 1),
+          SizedBox(
+            width: 340,
+            child: _CitationPanel(
+              citation: _selectedCitation!,
+              parentRef: ref,
+              onClose: () => setState(() => _selectedCitation = null),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -925,13 +937,27 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _showCitationDetail(Citation citation) {
-    showDialog(
-      context: context,
-      builder: (ctx) => _CitationDetailDialog(
-        citation: citation,
-        parentRef: ref,
-      ),
-    );
+    if (_isCompact) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (ctx) => DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.3,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (_, scrollCtrl) => _CitationPanel(
+            citation: citation,
+            parentRef: ref,
+            scrollController: scrollCtrl,
+            onClose: () => Navigator.pop(ctx),
+          ),
+        ),
+      );
+    } else {
+      setState(() => _selectedCitation = citation);
+    }
   }
 
   Widget _buildStreamingBubble() {
@@ -1431,6 +1457,317 @@ class _CitationDetailDialogState
         ),
       ],
     );
+  }
+}
+
+class _CitationPanel extends ConsumerStatefulWidget {
+  final Citation citation;
+  final WidgetRef parentRef;
+  final VoidCallback onClose;
+  final ScrollController? scrollController;
+
+  const _CitationPanel({
+    required this.citation,
+    required this.parentRef,
+    required this.onClose,
+    this.scrollController,
+  });
+
+  @override
+  ConsumerState<_CitationPanel> createState() => _CitationPanelState();
+}
+
+class _CitationPanelState extends ConsumerState<_CitationPanel> {
+  List<ReviewRecord>? _reviews;
+  bool _loading = true;
+  bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReviews();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CitationPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.citation.id != widget.citation.id) {
+      _loadReviews();
+    }
+  }
+
+  Future<void> _loadReviews() async {
+    if (!mounted) return;
+    setState(() => _loading = true);
+    try {
+      final svc = ref.read(reviewServiceProvider);
+      final citId = widget.citation.id;
+      if (citId.isEmpty) {
+        if (mounted) setState(() { _reviews = []; _loading = false; });
+        return;
+      }
+      final reviews = await svc.listReviews(citId);
+      if (mounted) setState(() { _reviews = reviews; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() { _reviews = []; _loading = false; });
+    }
+  }
+
+  Future<void> _submitReview(String status, {String? comment}) async {
+    if (widget.citation.id.isEmpty) return;
+    setState(() => _submitting = true);
+    try {
+      final svc = ref.read(reviewServiceProvider);
+      await svc.createReview(widget.citation.id, status: status, comment: comment);
+      await _loadReviews();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('审核提交失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  void _showReviewCommentDialog(String status) {
+    final commentCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(status == 'rejected' ? '标记为错误' : '标记为存疑'),
+        content: TextField(
+          controller: commentCtrl,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: '备注（可选）',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _submitReview(status,
+                  comment: commentCtrl.text.isEmpty ? null : commentCtrl.text);
+            },
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'approved': return Colors.green;
+      case 'rejected': return Colors.red;
+      case 'flagged': return Colors.orange;
+      default: return Colors.grey;
+    }
+  }
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'approved': return '已通过';
+      case 'rejected': return '已拒绝';
+      case 'flagged': return '存疑';
+      case 'pending': return '待审核';
+      default: return status;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.citation;
+    final theme = Theme.of(context);
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: theme.colorScheme.outline, width: 1),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text('${c.index}',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.onPrimary)),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(c.heading ?? '引用 ${c.index}',
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: widget.onClose,
+                tooltip: '关闭',
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.all(12),
+            children: [
+              if (c.page != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Icon(Icons.description_outlined,
+                          size: 16, color: Colors.grey.shade600),
+                      const SizedBox(width: 4),
+                      Text('第 ${c.page} 页',
+                          style: TextStyle(
+                              color: Colors.grey.shade600, fontSize: 13)),
+                      const Spacer(),
+                      Text(
+                          '相关度: ${(c.score * 100).toStringAsFixed(1)}%',
+                          style: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          )),
+                    ],
+                  ),
+                ),
+              const Divider(),
+              const SizedBox(height: 8),
+              Text(c.text, style: const TextStyle(fontSize: 14, height: 1.6)),
+              const SizedBox(height: 16),
+              Text('审核操作',
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _ReviewActionButton(
+                    icon: Icons.check_circle_outline,
+                    label: '通过',
+                    color: Colors.green,
+                    loading: _submitting,
+                    onTap: () => _submitReview('approved'),
+                  ),
+                  const SizedBox(width: 8),
+                  _ReviewActionButton(
+                    icon: Icons.cancel_outlined,
+                    label: '错误',
+                    color: Colors.red,
+                    loading: _submitting,
+                    onTap: () => _showReviewCommentDialog('rejected'),
+                  ),
+                  const SizedBox(width: 8),
+                  _ReviewActionButton(
+                    icon: Icons.flag_outlined,
+                    label: '存疑',
+                    color: Colors.orange,
+                    loading: _submitting,
+                    onTap: () => _showReviewCommentDialog('flagged'),
+                  ),
+                ],
+              ),
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.only(top: 12),
+                  child: Center(
+                      child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2))),
+                )
+              else if (_reviews != null && _reviews!.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text('审核记录',
+                    style: theme.textTheme.labelMedium
+                        ?.copyWith(color: Colors.grey.shade600)),
+                const SizedBox(height: 4),
+                ...(_reviews!.map((r) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        r.status == 'approved'
+                            ? Icons.check_circle
+                            : r.status == 'rejected'
+                                ? Icons.cancel
+                                : Icons.flag,
+                        color: _statusColor(r.status),
+                        size: 18,
+                      ),
+                      title: Text(_statusLabel(r.status),
+                          style: const TextStyle(fontSize: 13)),
+                      subtitle: r.comment != null
+                          ? Text(r.comment!,
+                              style: const TextStyle(fontSize: 12),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis)
+                          : null,
+                      trailing: Text(
+                        r.createdAt.length >= 16
+                            ? r.createdAt
+                                .substring(0, 16)
+                                .replaceFirst('T', ' ')
+                            : r.createdAt,
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.grey.shade500),
+                      ),
+                    ))),
+              ],
+              if (c.page != null) ...[
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    final ws = widget.parentRef.read(selectedWorkspaceProvider);
+                    if (ws != null) {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PdfViewerPage(
+                            workspaceId: ws.id,
+                            documentId: c.documentId,
+                            title: c.heading ?? '引用来源',
+                            initialPage: c.page,
+                            highlightText: c.text.length > 50
+                                ? c.text.substring(0, 50)
+                                : c.text,
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.open_in_new, size: 16),
+                  label: const Text('查看原文'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+
+    return content;
   }
 }
 
