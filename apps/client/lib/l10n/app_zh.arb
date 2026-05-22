@@ -300,5 +300,6 @@
   "roleViewerDesc": "仅可查看文档和对话，提交审核",
   "team": "团队",
   "collapseSidebar": "收起侧栏",
-  "expandSidebar": "展开侧栏"
+  "expandSidebar": "展开侧栏",
+  "citationSource": "引用来源"
 }

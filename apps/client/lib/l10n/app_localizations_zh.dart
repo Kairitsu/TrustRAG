@@ -825,4 +825,7 @@ class SZh extends S {
 
   @override
   String get expandSidebar => '展开侧栏';
+
+  @override
+  String get citationSource => '引用来源';
 }

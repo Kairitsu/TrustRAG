@@ -277,5 +277,6 @@
   "roleViewerDesc": "View documents, conversations, and submit reviews",
   "team": "Team",
   "collapseSidebar": "Collapse sidebar",
-  "expandSidebar": "Expand sidebar"
+  "expandSidebar": "Expand sidebar",
+  "citationSource": "Citation Source"
 }

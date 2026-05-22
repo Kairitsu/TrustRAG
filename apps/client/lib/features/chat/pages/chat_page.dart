@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:streaming_markdown/streaming_markdown.dart' hide MarkdownStyleSheet;
 
 import '../../../core/utils/ai_icon_helper.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../dashboard/providers/workspace_provider.dart';
@@ -911,7 +912,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           initiallyExpanded: false,
           dense: true,
           title: Text(
-            '引用来源 (${citations.length})',
+            S.of(context).citationSources(citations.length),
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
@@ -1514,7 +1515,7 @@ class _CitationDetailDialogState
                     builder: (_) => PdfViewerPage(
                       workspaceId: ws.id,
                       documentId: c.documentId,
-                      title: c.heading ?? '引用来源',
+                      title: c.heading ?? S.of(context).citationSource,
                       initialPage: c.page,
                       highlightText: c.text.length > 50
                           ? c.text.substring(0, 50)
@@ -1850,7 +1851,7 @@ class _CitationPanelState extends ConsumerState<_CitationPanel> {
                           builder: (_) => PdfViewerPage(
                             workspaceId: ws.id,
                             documentId: c.documentId,
-                            title: c.heading ?? '引用来源',
+                            title: c.heading ?? S.of(context).citationSource,
                             initialPage: c.page,
                             highlightText: c.text.length > 50
                                 ? c.text.substring(0, 50)

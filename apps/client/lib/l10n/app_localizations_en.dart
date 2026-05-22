@@ -839,4 +839,7 @@ class SEn extends S {
 
   @override
   String get expandSidebar => 'Expand sidebar';
+
+  @override
+  String get citationSource => 'Citation Source';
 }

@@ -1612,6 +1612,12 @@ abstract class S {
   /// In zh, this message translates to:
   /// **'展开侧栏'**
   String get expandSidebar;
+
+  /// No description provided for @citationSource.
+  ///
+  /// In zh, this message translates to:
+  /// **'引用来源'**
+  String get citationSource;
 }
 
 class _SDelegate extends LocalizationsDelegate<S> {

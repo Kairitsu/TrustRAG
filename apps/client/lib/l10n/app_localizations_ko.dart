@@ -830,4 +830,7 @@ class SKo extends S {
 
   @override
   String get expandSidebar => '사이드바 펼치기';
+
+  @override
+  String get citationSource => '인용 출처';
 }

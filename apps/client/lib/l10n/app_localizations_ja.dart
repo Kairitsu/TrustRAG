@@ -828,4 +828,7 @@ class SJa extends S {
 
   @override
   String get expandSidebar => 'サイドバーを展開';
+
+  @override
+  String get citationSource => '引用元';
 }

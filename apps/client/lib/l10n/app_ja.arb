@@ -277,5 +277,6 @@
   "roleViewerDesc": "ドキュメントと会話の閲覧、レビューの提出",
   "team": "チーム",
   "collapseSidebar": "サイドバーを折りたたむ",
-  "expandSidebar": "サイドバーを展開"
+  "expandSidebar": "サイドバーを展開",
+  "citationSource": "引用元"
 }
