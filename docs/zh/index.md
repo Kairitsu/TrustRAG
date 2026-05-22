@@ -6,7 +6,7 @@ hero:
   tagline: 上传文档、提出问题，每个回答都可追溯到原始来源——引用验证、审核流程、桌面端自包含。
   actions:
     - theme: brand
-      text: 下载 v0.2.2
+      text: 下载 v0.2.4
       link: https://github.com/XimilalaXiang/TrustRAG/releases/latest
     - theme: alt
       text: 快速开始 →

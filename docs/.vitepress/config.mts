@@ -34,7 +34,7 @@ export default defineConfig({
           { text: 'API Reference', link: '/api/overview' },
           { text: 'Development', link: '/development/setup' },
           {
-            text: 'v0.2.2',
+            text: 'v0.2.4',
             items: [
               { text: 'Changelog', link: 'https://github.com/XimilalaXiang/TrustRAG/blob/master/CHANGELOG.md' },
               { text: 'Download', link: 'https://github.com/XimilalaXiang/TrustRAG/releases/latest' },
@@ -114,7 +114,7 @@ export default defineConfig({
           { text: 'API 参考', link: '/zh/api/overview' },
           { text: '开发', link: '/zh/development/setup' },
           {
-            text: 'v0.2.2',
+            text: 'v0.2.4',
             items: [
               { text: '更新日志', link: 'https://github.com/XimilalaXiang/TrustRAG/blob/master/CHANGELOG.md' },
               { text: '下载', link: 'https://github.com/XimilalaXiang/TrustRAG/releases/latest' },

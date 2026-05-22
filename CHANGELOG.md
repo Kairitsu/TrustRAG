@@ -14,6 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.4] - 2026-05-22
+
+### Added / 新增
+- 👥 **团队协作** — 全新的团队工作区机制：创建/加入团队、邀请码系统、角色权限（owner/admin/editor/viewer）、成员管理。（Issue #7.5）
+- 🔗 **内联可点击引用链接** — AI 回答正文中的引用标记 `[1]` `[9]` 渲染为可点击链接，直接打开右侧详情面板。无效引用编号自动过滤。（Issue #7.1）
+- 🔽 **引用来源默认折叠** — 回答下方的引用来源区域改为 ExpansionTile 默认折叠，减少屏幕空间占用。（Issue #7.2）
+- 📐 **侧栏宽度调整与折叠** — 左侧导航栏支持拖拽调整宽度（72~360px），一键折叠为图标模式，偏好持久化保存。（Issue #7.6）
+- 🇰🇷 **韩语 UI** — 新增韩语（ko）完整本地化，覆盖全部 UI 文案。
+- 🏢 **团队管理页** — 专属团队设置页面：邀请码管理、成员角色调整、所有权转让、团队解散。
+- 🗄️ **后端团队 API** — 新增 `/workspaces/join`、`/regenerate-invite-code`、`/transfer-ownership` 接口，DB migration 新增 `type`/`invite_code` 字段。
+
+### Changed / 变更
+- 🔒 **权限中间件增强** — 团队工作区的模型配置操作限制为 admin 以上角色。
+- 📖 **GitHub Pages 文档更新** — 新增团队协作指南、更新引用系统文档、API 参考和首页特性介绍。
+
+### Fixed / 修复
+- 🐛 修复后端 `workspaces.rs` 中 SQL 查询元组类型不匹配（invite_code/updated_at 类型位置互换）导致的编译错误。
+- 🌐 修复引用相关硬编码中文文案，替换为 i18n 国际化版本。
+
+---
+
 ## [0.2.2] - 2026-05-22
 
 ### Added / 新增
