@@ -26,6 +26,16 @@ Citations can be reviewed for accuracy:
 
 Review records are stored with timestamps and reviewer information, providing a full audit trail.
 
+## Inline Citation Links
+
+Citation markers like `[1]`, `[9]` in the AI answer text are rendered as **clickable inline links**. Clicking a citation number opens the right-side detail panel showing the quoted text, source document, and review controls.
+
+Invalid citation numbers (referencing non-existent sources) are automatically detected and rendered as plain text — no broken links.
+
+## Collapsible Citation Sources
+
+Below each AI response, a collapsible **"Citation Sources"** section lists all citations as compact chips. This section is **collapsed by default** to save screen space. Expand it to browse all citations at a glance, or simply click inline citation links in the answer text.
+
 ## Viewing Citations
 
 When you re-enter a conversation, all citations are loaded alongside the messages. Click any citation to see:

@@ -35,7 +35,10 @@ features:
     details: Interactive graph visualization with entity browsing and search. Color-coded nodes, relationship labels, and cross-document exploration.
   - icon: 🌐
     title: Multi-Language (i18n)
-    details: Full UI localization with Chinese, English, and Japanese support. Language switching with persistent preferences.
+    details: Full UI localization with Chinese, English, Japanese, and Korean support. Language switching with persistent preferences.
+  - icon: 👥
+    title: Team Collaboration
+    details: Create or join team workspaces with invite codes. Role-based access control (owner/admin/editor/viewer) with data isolation between personal and team spaces.
   - icon: 📄
     title: Review Reports
     details: Generate Markdown reports with citation statistics, hallucination rate, approval rate, and detailed review records. Copy or share reports.

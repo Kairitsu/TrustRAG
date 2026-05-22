@@ -31,6 +31,7 @@ For teams that need PostgreSQL vector search, Redis caching, and MinIO file stor
 | Knowledge Graph | Interactive visualization with entity browsing, search, and color-coded graph |
 | Full-Text Search | FTS5-powered search across all documents |
 | Native PDF Parsing | Desktop builds parse PDF locally via Rust `lopdf` (no server needed) |
-| Multi-Language (i18n) | Chinese, English, Japanese UI with persistent language preference |
-| Workspace Collaboration | Multi-user with role-based access and member management |
+| Multi-Language (i18n) | Chinese, English, Japanese, Korean UI with persistent language preference |
+| Team Collaboration | Personal & team workspaces, invite codes, role-based access (owner/admin/editor/viewer) |
+| Resizable Sidebar | Drag to resize, one-click collapse to icon-only mode, persisted preferences |
 | Multi-Platform | Windows, macOS, Linux, Android, iOS, Web |
