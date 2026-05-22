@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../../core/services/backend_manager.dart';
 import '../../../core/services/update_checker.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../../main.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../settings/widgets/update_dialog.dart';
@@ -28,14 +29,19 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   int _selectedIndex = 0;
   bool _checkingUpdate = false;
 
-  static const _navItems = <({IconData icon, IconData selectedIcon, String label})>[
-    (icon: Icons.chat_outlined, selectedIcon: Icons.chat, label: '对话'),
-    (icon: Icons.folder_outlined, selectedIcon: Icons.folder, label: '资料库'),
-    (icon: Icons.rate_review_outlined, selectedIcon: Icons.rate_review, label: '审核'),
-    (icon: Icons.workspaces_outlined, selectedIcon: Icons.workspaces, label: '工作区'),
-    (icon: Icons.search_outlined, selectedIcon: Icons.search, label: '搜索'),
-    (icon: Icons.settings_outlined, selectedIcon: Icons.settings, label: '设置'),
+  static const _navIcons = <({IconData icon, IconData selectedIcon})>[
+    (icon: Icons.chat_outlined, selectedIcon: Icons.chat),
+    (icon: Icons.folder_outlined, selectedIcon: Icons.folder),
+    (icon: Icons.rate_review_outlined, selectedIcon: Icons.rate_review),
+    (icon: Icons.workspaces_outlined, selectedIcon: Icons.workspaces),
+    (icon: Icons.search_outlined, selectedIcon: Icons.search),
+    (icon: Icons.settings_outlined, selectedIcon: Icons.settings),
   ];
+
+  List<String> _navLabels(BuildContext context) {
+    final s = S.of(context);
+    return [s.navChat, s.navDocuments, s.navReview, s.navWorkspaces, s.navSearch, s.navSettings];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -66,13 +72,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         bottomNavigationBar: NavigationBar(
           selectedIndex: _selectedIndex,
           onDestinationSelected: (i) => setState(() => _selectedIndex = i),
-          destinations: _navItems
-              .map((n) => NavigationDestination(
-                    icon: Icon(n.icon),
-                    selectedIcon: Icon(n.selectedIcon),
-                    label: n.label,
-                  ))
-              .toList(),
+          destinations: List.generate(_navIcons.length, (i) => NavigationDestination(
+                    icon: Icon(_navIcons[i].icon),
+                    selectedIcon: Icon(_navIcons[i].selectedIcon),
+                    label: _navLabels(context)[i],
+                  )),
         ),
       );
     }
@@ -116,7 +120,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                   padding: const EdgeInsets.only(bottom: 16),
                   child: IconButton(
                     icon: const Icon(Icons.logout),
-                    tooltip: '退出登录',
+                    tooltip: S.of(context).logout,
                     onPressed: () {
                       ref.read(authProvider.notifier).logout();
                       context.go('/login');
@@ -125,13 +129,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 ),
               ),
             ),
-            destinations: _navItems
-                .map((n) => NavigationRailDestination(
-                      icon: Icon(n.icon),
-                      selectedIcon: Icon(n.selectedIcon),
-                      label: Text(n.label),
-                    ))
-                .toList(),
+            destinations: List.generate(_navIcons.length, (i) => NavigationRailDestination(
+                      icon: Icon(_navIcons[i].icon),
+                      selectedIcon: Icon(_navIcons[i].selectedIcon),
+                      label: Text(_navLabels(context)[i]),
+                    )),
           ),
           const VerticalDivider(width: 1),
           Expanded(child: contentArea),
@@ -174,19 +176,19 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     return Column(
       children: [
         _buildHeader(
-          '工作区',
+          S.of(context).workspaces,
           actions: [
             FilledButton.icon(
               onPressed: () => _showCreateWorkspaceDialog(),
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('新建'),
+              label: Text(S.of(context).createNew),
             ),
           ],
         ),
         Expanded(
           child: workspaces.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text('加载失败: $e')),
+            error: (e, _) => Center(child: Text(S.of(context).loadFailed(e.toString()))),
             data: (list) {
               if (list.isEmpty) {
                 return Center(
@@ -197,7 +199,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                           size: 80, color: Colors.grey.shade300),
                       const SizedBox(height: 16),
                       Text(
-                        '还没有工作区',
+                        S.of(context).noWorkspaces,
                         style:
                             Theme.of(context).textTheme.headlineSmall?.copyWith(
                                   color: Colors.grey,
@@ -207,7 +209,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                       FilledButton.icon(
                         onPressed: () => _showCreateWorkspaceDialog(),
                         icon: const Icon(Icons.add),
-                        label: const Text('创建第一个工作区'),
+                        label: Text(S.of(context).createFirstWorkspace),
                       ),
                     ],
                   ),
@@ -240,7 +242,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                       ),
                       title: Text(ws.name,
                           style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text(ws.description ?? '无描述'),
+                      subtitle: Text(ws.description ?? S.of(context).noDescription),
                       trailing: isSelected
                           ? Icon(Icons.check_circle,
                               color: Theme.of(context).colorScheme.primary)
@@ -264,7 +266,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   Widget _buildSettingsView() {
     return Column(
       children: [
-        _buildHeader('设置'),
+        _buildHeader(S.of(context).settings),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.all(16),
@@ -272,8 +274,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.model_training),
-                  title: const Text('模型配置'),
-                  subtitle: const Text('管理 LLM 和 Embedding 模型'),
+                  title: Text(S.of(context).modelConfig),
+                  subtitle: Text(S.of(context).modelConfigSubtitle),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
                     Navigator.of(context).push(
@@ -287,8 +289,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.group),
-                  title: const Text('团队成员'),
-                  subtitle: const Text('管理工作区的成员和权限'),
+                  title: Text(S.of(context).teamMembers),
+                  subtitle: Text(S.of(context).teamMembersSubtitle),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
                     Navigator.of(context).push(
@@ -302,9 +304,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.person),
-                  title: const Text('账户信息'),
+                  title: Text(S.of(context).accountInfo),
                   subtitle: Text(
-                      ref.watch(authProvider).user?['email'] ?? '未知'),
+                      ref.watch(authProvider).user?['email'] ?? S.of(context).unknown),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _showAccountDialog(),
                 ),
@@ -319,7 +321,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                             ? Icons.light_mode
                             : Icons.brightness_auto,
                   ),
-                  title: const Text('外观'),
+                  title: Text(S.of(context).appearance),
                   subtitle: Text(_themeLabel(ref.watch(themeModeProvider))),
                   trailing: SegmentedButton<ThemeMode>(
                     segments: const [
@@ -341,15 +343,25 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               ),
               const SizedBox(height: 8),
               Card(
+                child: ListTile(
+                  leading: const Icon(Icons.language),
+                  title: Text(S.of(context).language),
+                  subtitle: Text(_currentLanguageLabel(context)),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _showLanguagePicker(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
                 child: SwitchListTile(
                   secondary: Icon(
                     Icons.developer_mode,
                     color: ref.watch(devModeProvider) ? Colors.orange : null,
                   ),
-                  title: const Text('开发者模式'),
+                  title: Text(S.of(context).developerMode),
                   subtitle: Text(ref.watch(devModeProvider)
-                      ? '已开启 — 显示调试工具'
-                      : '开启后可查看日志、API 请求等调试信息'),
+                      ? S.of(context).devModeOn
+                      : S.of(context).devModeOff),
                   value: ref.watch(devModeProvider),
                   onChanged: (_) => ref.read(devModeProvider.notifier).toggle(),
                 ),
@@ -359,8 +371,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 Card(
                   child: ListTile(
                     leading: const Icon(Icons.terminal, color: Colors.orange),
-                    title: const Text('调试日志'),
-                    subtitle: const Text('查看运行时日志和 API 请求记录'),
+                    title: Text(S.of(context).debugLog),
+                    subtitle: Text(S.of(context).debugLogSubtitle),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _showDebugLogPanel(),
                   ),
@@ -369,7 +381,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 Card(
                   child: ListTile(
                     leading: const Icon(Icons.info_outline, color: Colors.orange),
-                    title: const Text('运行环境'),
+                    title: Text(S.of(context).runtimeEnv),
                     subtitle: Text(
                       'Backend: ${BackendManager().baseUrl}\n'
                       'Embedded: ${BackendManager.shouldRunEmbedded}',
@@ -383,7 +395,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                               'Embedded: ${BackendManager.shouldRunEmbedded}',
                         ));
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('环境信息已复制'), duration: Duration(seconds: 2)),
+                          SnackBar(content: Text(S.of(context).envInfoCopied), duration: const Duration(seconds: 2)),
                         );
                       },
                     ),
@@ -399,8 +411,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.system_update_alt_rounded),
-                  title: const Text('检查更新'),
-                  subtitle: Text('当前版本 v$appVersion'),
+                  title: Text(S.of(context).checkUpdate),
+                  subtitle: Text(S.of(context).currentVersion(appVersion)),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _checkingUpdate ? null : () => _manualCheckUpdate(),
                 ),
@@ -409,7 +421,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.info_outline),
-                  title: const Text('关于'),
+                  title: Text(S.of(context).about),
                   subtitle: Text('TrustRAG v$appVersion'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _showAboutDialog(),
@@ -457,6 +469,62 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     );
   }
 
+  String _currentLanguageLabel(BuildContext context) {
+    final locale = ref.watch(localeProvider);
+    if (locale == null) return S.of(context).themeSystem;
+    switch (locale.languageCode) {
+      case 'zh': return S.of(context).languageZh;
+      case 'en': return S.of(context).languageEn;
+      case 'ja': return S.of(context).languageJa;
+      default: return locale.languageCode;
+    }
+  }
+
+  void _showLanguagePicker() {
+    final s = S.of(context);
+    showDialog(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text(s.language),
+        children: [
+          SimpleDialogOption(
+            onPressed: () { Navigator.pop(ctx); setAppLocale(ref, null); },
+            child: ListTile(
+              leading: const Icon(Icons.brightness_auto),
+              title: Text(s.themeSystem),
+              dense: true,
+              selected: ref.read(localeProvider) == null,
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () { Navigator.pop(ctx); setAppLocale(ref, const Locale('zh')); },
+            child: ListTile(
+              title: Text(s.languageZh),
+              dense: true,
+              selected: ref.read(localeProvider)?.languageCode == 'zh',
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () { Navigator.pop(ctx); setAppLocale(ref, const Locale('en')); },
+            child: ListTile(
+              title: Text(s.languageEn),
+              dense: true,
+              selected: ref.read(localeProvider)?.languageCode == 'en',
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () { Navigator.pop(ctx); setAppLocale(ref, const Locale('ja')); },
+            child: ListTile(
+              title: Text(s.languageJa),
+              dense: true,
+              selected: ref.read(localeProvider)?.languageCode == 'ja',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _manualCheckUpdate() async {
     setState(() => _checkingUpdate = true);
     try {
@@ -466,16 +534,16 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         UpdateDialog.show(context, release: release, currentVersion: appVersion);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('已是最新版本'),
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text(S.of(context).alreadyLatest),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('检查更新失败: $e')),
+          SnackBar(content: Text(S.of(context).checkUpdateFailed(e.toString()))),
         );
       }
     } finally {
@@ -492,7 +560,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           children: [
             const Icon(Icons.terminal, color: Colors.orange, size: 22),
             const SizedBox(width: 8),
-            const Text('调试日志'),
+            Text(S.of(context).debugLogTitle),
             const Spacer(),
             TextButton.icon(
               onPressed: () {
@@ -501,7 +569,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 _showDebugLogPanel();
               },
               icon: const Icon(Icons.delete_sweep, size: 16),
-              label: const Text('清空'),
+              label: Text(S.of(context).clearLog),
             ),
           ],
         ),
@@ -509,8 +577,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           width: 600,
           height: 400,
           child: logs.isEmpty
-              ? const Center(
-                  child: Text('暂无日志', style: TextStyle(color: Colors.grey)),
+              ? Center(
+                  child: Text(S.of(context).noLogs, style: const TextStyle(color: Colors.grey)),
                 )
               : ListView.builder(
                   reverse: true,
@@ -540,15 +608,15 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: logs.join('\n')));
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('日志已复制到剪贴板'), duration: Duration(seconds: 2)),
+                SnackBar(content: Text(S.of(context).logCopied), duration: const Duration(seconds: 2)),
               );
             },
             icon: const Icon(Icons.copy, size: 16),
-            label: const Text('复制全部'),
+            label: Text(S.of(context).copyAll),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('关闭'),
+            child: Text(S.of(context).close),
           ),
         ],
       ),
@@ -560,7 +628,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('账户信息'),
+        title: Text(S.of(context).accountInfoTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -573,17 +641,17 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               ),
             ),
             const SizedBox(height: 16),
-            _infoRow('用户名', user?['display_name'] ?? '未知'),
+            _infoRow(S.of(context).username, user?['display_name'] ?? S.of(context).unknown),
             const SizedBox(height: 8),
-            _infoRow('邮箱', user?['email'] ?? '未知'),
+            _infoRow(S.of(context).email, user?['email'] ?? S.of(context).unknown),
             const SizedBox(height: 8),
-            _infoRow('角色', user?['role'] ?? 'user'),
+            _infoRow(S.of(context).role, user?['role'] ?? 'user'),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('关闭'),
+            child: Text(S.of(context).close),
           ),
         ],
       ),
@@ -591,13 +659,14 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   }
 
   String _themeLabel(ThemeMode mode) {
+    final s = S.of(context);
     switch (mode) {
       case ThemeMode.light:
-        return '浅色';
+        return s.themeLight;
       case ThemeMode.dark:
-        return '深色';
+        return s.themeDark;
       case ThemeMode.system:
-        return '跟随系统';
+        return s.themeSystem;
     }
   }
 
@@ -621,36 +690,36 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             Icon(Icons.auto_stories_rounded,
                 color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 8),
-            const Text('关于 TrustRAG'),
+            Text(S.of(context).aboutTrustRAG),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('TrustRAG - 可信赖的 RAG 知识工作台',
-                style: TextStyle(fontWeight: FontWeight.w600)),
+            Text(S.of(context).trustragDescription,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
-            _infoRow('版本', 'v$appVersion'),
+            _infoRow(S.of(context).version, 'v$appVersion'),
             const SizedBox(height: 4),
-            _infoRow('后端', 'Rust (Axum)'),
+            _infoRow(S.of(context).backend, 'Rust (Axum)'),
             const SizedBox(height: 4),
-            _infoRow('前端', 'Flutter Web'),
+            _infoRow(S.of(context).frontend, 'Flutter'),
             const SizedBox(height: 4),
-            _infoRow('数据库', 'PostgreSQL + pgvector'),
+            _infoRow(S.of(context).database, 'PostgreSQL + pgvector'),
             const SizedBox(height: 4),
-            _infoRow('存储', 'MinIO (S3-compatible)'),
+            _infoRow(S.of(context).storage, 'MinIO (S3-compatible)'),
             const SizedBox(height: 12),
-            const Text(
-              '基于文档检索增强生成（RAG）技术，提供带引用溯源的可信赖 AI 问答。',
-              style: TextStyle(color: Colors.grey, fontSize: 13),
+            Text(
+              S.of(context).aboutDescription,
+              style: const TextStyle(color: Colors.grey, fontSize: 13),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('关闭'),
+            child: Text(S.of(context).close),
           ),
         ],
       ),
@@ -664,26 +733,26 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('新建工作区'),
+        title: Text(S.of(context).createWorkspace),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: nameController,
-              decoration: const InputDecoration(labelText: '名称'),
+              decoration: InputDecoration(labelText: S.of(context).nameLabel),
               autofocus: true,
             ),
             const SizedBox(height: 12),
             TextField(
               controller: descController,
-              decoration: const InputDecoration(labelText: '描述（可选）'),
+              decoration: InputDecoration(labelText: S.of(context).descriptionLabel),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
+            child: Text(S.of(context).cancel),
           ),
           FilledButton(
             onPressed: () async {
@@ -702,7 +771,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 Navigator.pop(ctx);
               }
             },
-            child: const Text('创建'),
+            child: Text(S.of(context).create),
           ),
         ],
       ),
