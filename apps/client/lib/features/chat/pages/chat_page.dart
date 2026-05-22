@@ -652,6 +652,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
+  static String _injectCitationLinks(String content) {
+    return content.replaceAllMapped(
+      RegExp(r'\[(\d+)\]'),
+      (m) {
+        final num = m.group(1)!;
+        return '[`[$num]`](#cite-$num)';
+      },
+    );
+  }
+
   Widget _buildMessageBubble(ChatMessage msg) {
     final isUser = msg.role == 'user';
     final theme = Theme.of(context);
@@ -680,6 +690,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
 
     final modelLabel = _resolveModelLabel(msg);
+    final processedContent = msg.citations.isNotEmpty
+        ? _injectCitationLinks(msg.content)
+        : msg.content;
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
@@ -695,13 +709,30 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 MarkdownBody(
-                  data: msg.content,
+                  data: processedContent,
                   selectable: true,
+                  onTapLink: (text, href, title) {
+                    if (href != null && href.startsWith('#cite-')) {
+                      final idx = int.tryParse(href.substring(6));
+                      if (idx != null) {
+                        final match = msg.citations.where((c) => c.index == idx);
+                        if (match.isNotEmpty) {
+                          _showCitationDetail(match.first);
+                        }
+                      }
+                    }
+                  },
                   styleSheet: MarkdownStyleSheet(
                     p: theme.textTheme.bodyLarge,
                     h1: theme.textTheme.headlineMedium,
                     h2: theme.textTheme.titleLarge,
                     code: GoogleFonts.jetBrainsMono(fontSize: 14, height: 1.5),
+                    a: TextStyle(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      decoration: TextDecoration.none,
+                    ),
                     codeblockDecoration: BoxDecoration(
                       color: theme.colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(8),
@@ -710,7 +741,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ),
                 ),
                 _buildMessageActions(msg, isUser: false),
-                if (msg.citations.isNotEmpty) _buildCitationCards(msg.citations),
+                if (msg.citations.isNotEmpty) _buildCollapsibleCitations(msg.citations),
                 if (msg.suggestions.isNotEmpty) _buildSuggestionPills(msg.suggestions),
               ],
             ),
@@ -865,44 +896,45 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  Widget _buildCitationCards(List<Citation> citations) {
+  Widget _buildCollapsibleCitations(List<Citation> citations) {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 4, bottom: 6),
-            child: Text(
-              '引用来源 (${citations.length})',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.primary,
-              ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.only(left: 4, right: 4),
+          childrenPadding: const EdgeInsets.only(left: 4, bottom: 8),
+          initiallyExpanded: false,
+          dense: true,
+          title: Text(
+            '引用来源 (${citations.length})',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.primary,
             ),
           ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: citations.map((c) => _buildCitationChip(c)).toList(),
-          ),
-        ],
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: citations.map((c) => _buildCitationChip(c)).toList(),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildCitationChip(Citation citation) {
     final scorePercent = (citation.score * 100).toStringAsFixed(0);
+    final previewText = citation.text.length > 80
+        ? '${citation.text.substring(0, 80)}...'
+        : citation.text;
     return Tooltip(
-      richMessage: TextSpan(
-        children: [
-          TextSpan(
-            text: citation.text,
-            style: const TextStyle(fontSize: 12),
-          ),
-        ],
-      ),
+      message: previewText,
+      preferBelow: true,
+      verticalOffset: 12,
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: () => _showCitationDetail(citation),
@@ -1053,7 +1085,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     selectable: true,
                   ),
                 if (_streamingCitations.isNotEmpty)
-                  _buildCitationCards(_streamingCitations),
+                  _buildCollapsibleCitations(_streamingCitations),
               ],
             ),
           ),
