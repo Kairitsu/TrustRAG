@@ -310,20 +310,22 @@
 
 ## Phase 2: 增强功能（后续）
 
-#### 🔲 P2.1 审核系统
-- [ ] 引用旁审核徽章（✓ ⚠ ✗）
-- [ ] 审核面板：逐条审核
-- [ ] 审核历史
+#### ✅ P2.1 审核系统
+- [x] 引用旁审核徽章（✓ ⚠ ✗）
+- [x] 审核面板：逐条审核
+- [x] 审核历史
+- [x] 全局审核记录页面
+- [x] 审核报告导出（Markdown + 统计指标）
 - 参考：`docs/api-design.md` → §7 审核
 
-#### 🔲 P2.2 Re-Ranking
-- [ ] Cross-encoder 重排序
-- [ ] LLM re-rank
+#### ✅ P2.2 Re-Ranking
+- [x] Cross-encoder 重排序
+- [x] LLM re-rank
 - 参考：`docs/rag-pipeline.md` → 阶段 4
 
-#### 🔲 P2.3 Query Expansion
-- [ ] LLM 多查询生成
-- [ ] 同义词扩展
+#### ✅ P2.3 Query Expansion
+- [x] LLM 多查询生成
+- [x] 同义词扩展
 - 参考：`docs/rag-pipeline.md` → 阶段 2
 
 #### ✅ P2.4 桌面端本地化架构
@@ -339,9 +341,10 @@
 - [x] CI 交叉编译 Rust 后端并打包到桌面安装包
 - [x] Windows Inno Setup / macOS .app / Linux tar.gz 打包
 
-#### 🔲 P2.5 移动端 (Android)
-- [ ] 响应式适配
-- [ ] 移动端特有交互
+#### ✅ P2.5 移动端 (Android)
+- [x] 响应式适配（单栏/双栏自动切换）
+- [x] SafeArea 状态栏适配
+- [x] 工作区状态持久化
 
 ---
 
