@@ -5,6 +5,7 @@ export default defineConfig({
   description: 'Trustworthy RAG Knowledge Workbench — Verifiable Answers, Precise Citations, Document-Grounded Review',
   base: '/TrustRAG/',
   head: [
+    ['link', { rel: 'icon', href: '/TrustRAG/favicon.ico' }],
     ['meta', { property: 'og:title', content: 'TrustRAG — Trustworthy RAG Knowledge Workbench' }],
     ['meta', { property: 'og:description', content: 'Multi-platform RAG workbench with citation tracking, review workflows, and self-contained desktop mode.' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
@@ -182,6 +183,8 @@ export default defineConfig({
     },
   },
   themeConfig: {
+    logo: '/logo.png',
+    siteTitle: 'TrustRAG',
     socialLinks: [
       { icon: 'github', link: 'https://github.com/XimilalaXiang/TrustRAG' },
     ],

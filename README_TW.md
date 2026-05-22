@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo-200.png" alt="TrustRAG Logo" width="120" />
+
 # TrustRAG
 
 **可信賴的檢索增強生成知識工作台**
