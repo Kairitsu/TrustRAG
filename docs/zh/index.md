@@ -6,7 +6,7 @@ hero:
   tagline: 上传文档、提出问题，每个回答都可追溯到原始来源——引用验证、审核流程、桌面端自包含。
   actions:
     - theme: brand
-      text: 下载 v0.1.2
+      text: 下载 v0.2.1
       link: https://github.com/XimilalaXiang/TrustRAG/releases/latest
     - theme: alt
       text: 快速开始 →
@@ -19,20 +19,26 @@ features:
     title: 引用追踪
     details: 每条 AI 回复都包含可追溯的引用，关联到文档、分块、页码和标题。每个答案都可验证。
   - icon: ✅
-    title: 引用审核
-    details: 通过、拒绝或标记引用的准确性。完整审核历史，确保可追责和持续改进。
+    title: 引用审核与报告
+    details: 通过、拒绝或标记引用的准确性。导出审核报告，含通过率、幻觉率、审核覆盖率等统计指标。
   - icon: 🖥️
     title: 多平台桌面
-    details: Windows（.exe 安装包 + 便携版）、macOS、Linux、Android、iOS、Web，全平台一套 Flutter 代码。
+    details: Windows（.exe 安装包 + 便携版）、macOS、Linux、Android、iOS、Web，全平台一套 Flutter 代码，自适应布局。
   - icon: 📦
     title: 桌面端自包含
-    details: 内嵌 SQLite + Rust 后端。无需外部数据库，无需服务器配置。下载、安装、开始提问。
+    details: 内嵌 SQLite + Rust 后端。桌面端原生 PDF 解析。无需外部数据库，无需服务器配置。
   - icon: 🤖
     title: RAG 管线
     details: 基于文档的检索增强生成，可配置 LLM 和 Embedding 提供商。混合搜索：向量 + 全文检索。
   - icon: 🧠
     title: 知识图谱
-    details: 实体与关系提取，支持跨文档探索。在整个知识库中建立概念之间的联系。
+    details: 交互式图谱可视化，支持实体浏览和搜索。颜色编码节点、关系标签、跨文档探索。
+  - icon: 🌐
+    title: 多语言 (i18n)
+    details: 完整的 UI 本地化，支持中文、英文、日文切换。语言偏好持久化保存。
+  - icon: 📄
+    title: 审核报告
+    details: 生成 Markdown 审核报告，含引用统计、幻觉率、通过率和详细审核记录。支持一键复制分享。
 ---
 
 <style>

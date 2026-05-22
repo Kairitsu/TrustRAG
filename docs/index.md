@@ -6,7 +6,7 @@ hero:
   tagline: Upload documents. Ask questions. Trace every answer back to its source — with verifiable citations, review workflows, and a self-contained desktop app.
   actions:
     - theme: brand
-      text: Download v0.1.2
+      text: Download v0.2.1
       link: https://github.com/XimilalaXiang/TrustRAG/releases/latest
     - theme: alt
       text: Get Started →
@@ -19,20 +19,26 @@ features:
     title: Citation Tracking
     details: Every AI response includes traceable citations linked to document, chunk, page, and heading. Never trust an answer blindly — verify it.
   - icon: ✅
-    title: Citation Review
-    details: Approve, reject, or flag citations for accuracy. Full review history for accountability and continuous improvement.
+    title: Citation Review & Reports
+    details: Approve, reject, or flag citations. Export review reports with approval rates, hallucination metrics, and review coverage statistics.
   - icon: 🖥️
     title: Multi-Platform Desktop
-    details: Windows (.exe installer + portable), macOS, Linux, Android, iOS, and Web — all from a single Flutter codebase.
+    details: Windows (.exe installer + portable), macOS, Linux, Android, iOS, and Web — all from a single Flutter codebase with responsive layouts.
   - icon: 📦
     title: Self-Contained Desktop
-    details: Embedded SQLite + Rust backend inside the app. No external database, no server setup. Download, install, and start asking questions.
+    details: Embedded SQLite + Rust backend inside the app. Native PDF parsing on desktop. No external database, no server setup.
   - icon: 🤖
     title: RAG Pipeline
     details: Document-grounded retrieval-augmented generation with configurable LLM and embedding providers. Hybrid search with vector + full-text retrieval.
   - icon: 🧠
     title: Knowledge Graph
-    details: Entity and relation extraction for cross-document exploration. Build connections between concepts across your entire knowledge base.
+    details: Interactive graph visualization with entity browsing and search. Color-coded nodes, relationship labels, and cross-document exploration.
+  - icon: 🌐
+    title: Multi-Language (i18n)
+    details: Full UI localization with Chinese, English, and Japanese support. Language switching with persistent preferences.
+  - icon: 📄
+    title: Review Reports
+    details: Generate Markdown reports with citation statistics, hallucination rate, approval rate, and detailed review records. Copy or share reports.
 ---
 
 <style>

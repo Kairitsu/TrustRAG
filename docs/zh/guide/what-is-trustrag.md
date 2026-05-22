@@ -25,6 +25,21 @@ TrustRAG 同时支持两种运行模式：
 - 适合团队协作和大规模知识库
 - Docker Compose 一键部署
 
+## 核心功能
+
+| 功能 | 说明 |
+|------|------|
+| RAG 对话 | 基于文档的问答，流式响应 |
+| 引用追踪 | 每个回答引用具体文档分块 |
+| 引用审核 | 通过/拒绝/标记引用，完整审核历史 |
+| 审核报告 | 导出 Markdown 报告，含幻觉率、通过率、审核覆盖率 |
+| 知识图谱 | 交互式图谱可视化，实体浏览和搜索 |
+| 全文搜索 | FTS5 全文检索 |
+| 本地 PDF 解析 | 桌面端通过 Rust `lopdf` 原生解析 PDF |
+| 多语言 (i18n) | 中文、英文、日文 UI，语言偏好持久化 |
+| 工作区协作 | 多用户、角色权限、成员管理 |
+| 多平台 | Windows、macOS、Linux、Android、iOS、Web |
+
 ## 技术栈
 
 | 组件 | 技术 |
@@ -33,4 +48,4 @@ TrustRAG 同时支持两种运行模式：
 | 前端 | Flutter (跨平台) |
 | 桌面数据库 | SQLite + FTS5 |
 | 服务器数据库 | PostgreSQL + pgvector |
-| 文档处理 | Python (PDF/DOCX/TXT) |
+| 文档处理 | Python (PDF/DOCX/TXT) + Rust (lopdf) |

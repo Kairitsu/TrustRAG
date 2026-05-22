@@ -26,8 +26,11 @@ For teams that need PostgreSQL vector search, Redis caching, and MinIO file stor
 |---------|-------------|
 | RAG Chat | Document-grounded Q&A with streaming responses |
 | Citation Tracking | Every answer cites specific document chunks |
-| Citation Review | Approve/reject/flag citations |
+| Citation Review | Approve/reject/flag citations with full audit trail |
+| Review Reports | Export Markdown reports with hallucination rate, approval rate, review coverage |
+| Knowledge Graph | Interactive visualization with entity browsing, search, and color-coded graph |
 | Full-Text Search | FTS5-powered search across all documents |
-| Knowledge Graph | Entity and relation extraction |
-| Workspace Collaboration | Multi-user with role-based access |
+| Native PDF Parsing | Desktop builds parse PDF locally via Rust `lopdf` (no server needed) |
+| Multi-Language (i18n) | Chinese, English, Japanese UI with persistent language preference |
+| Workspace Collaboration | Multi-user with role-based access and member management |
 | Multi-Platform | Windows, macOS, Linux, Android, iOS, Web |

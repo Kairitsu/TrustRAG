@@ -34,3 +34,22 @@ When you re-enter a conversation, all citations are loaded alongside the message
 - The source document and page
 - The heading path
 - Review status and history
+
+## Review Reports
+
+Export comprehensive review reports from the Review Records page. Reports include:
+
+- **Overview**: Total citations, reviewed/unreviewed counts, review coverage percentage
+- **Key Metrics**: Approval rate, rejection rate, hallucination rate (rejected + flagged / reviewed)
+- **Review Results**: Distribution across approved, rejected, flagged, and pending statuses
+- **Review Details**: Individual review records with document context, quoted text, comments, and corrections
+
+Reports are generated as Markdown and can be copied to clipboard for sharing or documentation.
+
+## Review Statistics per Conversation
+
+Each conversation shows real-time review statistics:
+- Total citations in the conversation
+- Breakdown by status (approved/rejected/flagged/pending/unreviewed)
+
+Access via the review stats endpoint: `GET /conversations/{conv_id}/review-stats`
