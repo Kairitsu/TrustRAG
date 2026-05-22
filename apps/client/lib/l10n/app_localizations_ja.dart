@@ -541,6 +541,53 @@ class SJa extends S {
   String get languageJa => '日本語';
 
   @override
+  String get navKnowledgeGraph => 'グラフ';
+
+  @override
+  String get knowledgeGraph => 'ナレッジグラフ';
+
+  @override
+  String knowledgeGraphDesc(String name) {
+    return '「$name」のエンティティと関係';
+  }
+
+  @override
+  String get graphView => '関係図';
+
+  @override
+  String get entityList => 'エンティティ一覧';
+
+  @override
+  String get noGraphData => 'グラフデータなし';
+
+  @override
+  String get noGraphDataHint => 'ドキュメントをアップロードして解析すると、ナレッジグラフが自動生成されます';
+
+  @override
+  String get noEntities => 'エンティティなし';
+
+  @override
+  String get searchEntities => 'エンティティ名またはタイプで検索...';
+
+  @override
+  String get entitiesCount => 'エンティティ';
+
+  @override
+  String get typesCount => 'タイプ';
+
+  @override
+  String get entityType => 'タイプ';
+
+  @override
+  String get relatedEntities => '関連エンティティ';
+
+  @override
+  String get nodes => 'ノード';
+
+  @override
+  String get edges => 'エッジ';
+
+  @override
   String get noReviewRecords => 'レビュー記録なし';
 
   @override

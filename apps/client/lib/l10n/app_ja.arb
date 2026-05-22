@@ -175,6 +175,23 @@
   "languageEn": "English",
   "languageJa": "日本語",
 
+  "navKnowledgeGraph": "グラフ",
+  "knowledgeGraph": "ナレッジグラフ",
+  "knowledgeGraphDesc": "「{name}」のエンティティと関係",
+  "@knowledgeGraphDesc": { "placeholders": { "name": { "type": "String" } } },
+  "graphView": "関係図",
+  "entityList": "エンティティ一覧",
+  "noGraphData": "グラフデータなし",
+  "noGraphDataHint": "ドキュメントをアップロードして解析すると、ナレッジグラフが自動生成されます",
+  "noEntities": "エンティティなし",
+  "searchEntities": "エンティティ名またはタイプで検索...",
+  "entitiesCount": "エンティティ",
+  "typesCount": "タイプ",
+  "entityType": "タイプ",
+  "relatedEntities": "関連エンティティ",
+  "nodes": "ノード",
+  "edges": "エッジ",
+
   "noReviewRecords": "レビュー記録なし",
   "reviewRecordsHint": "会話でAI引用をレビューすると、ここに記録が表示されます",
 

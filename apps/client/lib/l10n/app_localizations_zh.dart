@@ -539,6 +539,53 @@ class SZh extends S {
   String get languageJa => '日本語';
 
   @override
+  String get navKnowledgeGraph => '图谱';
+
+  @override
+  String get knowledgeGraph => '知识图谱';
+
+  @override
+  String knowledgeGraphDesc(String name) {
+    return '「$name」中的实体与关系';
+  }
+
+  @override
+  String get graphView => '关系图';
+
+  @override
+  String get entityList => '实体列表';
+
+  @override
+  String get noGraphData => '暂无图谱数据';
+
+  @override
+  String get noGraphDataHint => '上传文档并完成解析后，知识图谱将自动生成';
+
+  @override
+  String get noEntities => '暂无实体';
+
+  @override
+  String get searchEntities => '搜索实体名称或类型...';
+
+  @override
+  String get entitiesCount => '个实体';
+
+  @override
+  String get typesCount => '种类型';
+
+  @override
+  String get entityType => '类型';
+
+  @override
+  String get relatedEntities => '关联实体';
+
+  @override
+  String get nodes => '节点';
+
+  @override
+  String get edges => '关系';
+
+  @override
   String get noReviewRecords => '暂无审核记录';
 
   @override

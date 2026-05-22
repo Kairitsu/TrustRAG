@@ -175,6 +175,23 @@
   "languageEn": "English",
   "languageJa": "日本語",
 
+  "navKnowledgeGraph": "Graph",
+  "knowledgeGraph": "Knowledge Graph",
+  "knowledgeGraphDesc": "Entities and relations in \"{name}\"",
+  "@knowledgeGraphDesc": { "placeholders": { "name": { "type": "String" } } },
+  "graphView": "Graph View",
+  "entityList": "Entity List",
+  "noGraphData": "No graph data",
+  "noGraphDataHint": "Upload and process documents to auto-generate the knowledge graph",
+  "noEntities": "No entities",
+  "searchEntities": "Search entity name or type...",
+  "entitiesCount": "entities",
+  "typesCount": "types",
+  "entityType": "Type",
+  "relatedEntities": "Related Entities",
+  "nodes": "Nodes",
+  "edges": "Edges",
+
   "noReviewRecords": "No review records",
   "reviewRecordsHint": "Review AI citations in conversations to see records here",
 

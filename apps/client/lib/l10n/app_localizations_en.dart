@@ -546,6 +546,54 @@ class SEn extends S {
   String get languageJa => '日本語';
 
   @override
+  String get navKnowledgeGraph => 'Graph';
+
+  @override
+  String get knowledgeGraph => 'Knowledge Graph';
+
+  @override
+  String knowledgeGraphDesc(String name) {
+    return 'Entities and relations in \"$name\"';
+  }
+
+  @override
+  String get graphView => 'Graph View';
+
+  @override
+  String get entityList => 'Entity List';
+
+  @override
+  String get noGraphData => 'No graph data';
+
+  @override
+  String get noGraphDataHint =>
+      'Upload and process documents to auto-generate the knowledge graph';
+
+  @override
+  String get noEntities => 'No entities';
+
+  @override
+  String get searchEntities => 'Search entity name or type...';
+
+  @override
+  String get entitiesCount => 'entities';
+
+  @override
+  String get typesCount => 'types';
+
+  @override
+  String get entityType => 'Type';
+
+  @override
+  String get relatedEntities => 'Related Entities';
+
+  @override
+  String get nodes => 'Nodes';
+
+  @override
+  String get edges => 'Edges';
+
+  @override
   String get noReviewRecords => 'No review records';
 
   @override

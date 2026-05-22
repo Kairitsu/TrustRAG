@@ -14,6 +14,7 @@ import '../../chat/pages/chat_page.dart';
 import '../../documents/pages/documents_page.dart';
 import '../../review/pages/review_list_page.dart';
 import '../../search/pages/workspace_search_page.dart';
+import '../../search/pages/knowledge_graph_page.dart';
 import '../../settings/pages/model_config_page.dart';
 import '../../settings/pages/workspace_members_page.dart';
 import '../providers/workspace_provider.dart';
@@ -35,12 +36,13 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     (icon: Icons.rate_review_outlined, selectedIcon: Icons.rate_review),
     (icon: Icons.workspaces_outlined, selectedIcon: Icons.workspaces),
     (icon: Icons.search_outlined, selectedIcon: Icons.search),
+    (icon: Icons.hub_outlined, selectedIcon: Icons.hub),
     (icon: Icons.settings_outlined, selectedIcon: Icons.settings),
   ];
 
   List<String> _navLabels(BuildContext context) {
     final s = S.of(context);
-    return [s.navChat, s.navDocuments, s.navReview, s.navWorkspaces, s.navSearch, s.navSettings];
+    return [s.navChat, s.navDocuments, s.navReview, s.navWorkspaces, s.navSearch, s.navKnowledgeGraph, s.navSettings];
   }
 
   @override
@@ -155,6 +157,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       case 4:
         return const WorkspaceSearchPage();
       case 5:
+        return const KnowledgeGraphPage();
+      case 6:
         return _buildSettingsView();
       default:
         return const SizedBox.shrink();

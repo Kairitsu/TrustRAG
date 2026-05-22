@@ -1071,6 +1071,96 @@ abstract class S {
   /// **'日本語'**
   String get languageJa;
 
+  /// No description provided for @navKnowledgeGraph.
+  ///
+  /// In zh, this message translates to:
+  /// **'图谱'**
+  String get navKnowledgeGraph;
+
+  /// No description provided for @knowledgeGraph.
+  ///
+  /// In zh, this message translates to:
+  /// **'知识图谱'**
+  String get knowledgeGraph;
+
+  /// No description provided for @knowledgeGraphDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'「{name}」中的实体与关系'**
+  String knowledgeGraphDesc(String name);
+
+  /// No description provided for @graphView.
+  ///
+  /// In zh, this message translates to:
+  /// **'关系图'**
+  String get graphView;
+
+  /// No description provided for @entityList.
+  ///
+  /// In zh, this message translates to:
+  /// **'实体列表'**
+  String get entityList;
+
+  /// No description provided for @noGraphData.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无图谱数据'**
+  String get noGraphData;
+
+  /// No description provided for @noGraphDataHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'上传文档并完成解析后，知识图谱将自动生成'**
+  String get noGraphDataHint;
+
+  /// No description provided for @noEntities.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无实体'**
+  String get noEntities;
+
+  /// No description provided for @searchEntities.
+  ///
+  /// In zh, this message translates to:
+  /// **'搜索实体名称或类型...'**
+  String get searchEntities;
+
+  /// No description provided for @entitiesCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'个实体'**
+  String get entitiesCount;
+
+  /// No description provided for @typesCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'种类型'**
+  String get typesCount;
+
+  /// No description provided for @entityType.
+  ///
+  /// In zh, this message translates to:
+  /// **'类型'**
+  String get entityType;
+
+  /// No description provided for @relatedEntities.
+  ///
+  /// In zh, this message translates to:
+  /// **'关联实体'**
+  String get relatedEntities;
+
+  /// No description provided for @nodes.
+  ///
+  /// In zh, this message translates to:
+  /// **'节点'**
+  String get nodes;
+
+  /// No description provided for @edges.
+  ///
+  /// In zh, this message translates to:
+  /// **'关系'**
+  String get edges;
+
   /// No description provided for @noReviewRecords.
   ///
   /// In zh, this message translates to:

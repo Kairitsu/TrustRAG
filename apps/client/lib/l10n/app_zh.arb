@@ -197,6 +197,23 @@
   "languageEn": "English",
   "languageJa": "日本語",
 
+  "navKnowledgeGraph": "图谱",
+  "knowledgeGraph": "知识图谱",
+  "knowledgeGraphDesc": "「{name}」中的实体与关系",
+  "@knowledgeGraphDesc": { "placeholders": { "name": { "type": "String" } } },
+  "graphView": "关系图",
+  "entityList": "实体列表",
+  "noGraphData": "暂无图谱数据",
+  "noGraphDataHint": "上传文档并完成解析后，知识图谱将自动生成",
+  "noEntities": "暂无实体",
+  "searchEntities": "搜索实体名称或类型...",
+  "entitiesCount": "个实体",
+  "typesCount": "种类型",
+  "entityType": "类型",
+  "relatedEntities": "关联实体",
+  "nodes": "节点",
+  "edges": "关系",
+
   "noReviewRecords": "暂无审核记录",
   "reviewRecordsHint": "在对话中审核 AI 引用后，记录将在此处显示",
 
