@@ -5,7 +5,6 @@ use axum::{
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
@@ -82,7 +81,7 @@ async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<WorkspaceResponse>>, AppError> {
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, String, String, Option<String>)>(
+    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, String, String)>(
         r#"
         SELECT w.id, w.name, w.description, w.owner_id, w.visibility,
                COALESCE(w.type, 'personal') as type, w.invite_code,
