@@ -819,4 +819,10 @@ class SZh extends S {
 
   @override
   String get team => '团队';
+
+  @override
+  String get collapseSidebar => '收起侧栏';
+
+  @override
+  String get expandSidebar => '展开侧栏';
 }

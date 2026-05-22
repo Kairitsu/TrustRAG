@@ -822,4 +822,10 @@ class SJa extends S {
 
   @override
   String get team => 'チーム';
+
+  @override
+  String get collapseSidebar => 'サイドバーを折りたたむ';
+
+  @override
+  String get expandSidebar => 'サイドバーを展開';
 }

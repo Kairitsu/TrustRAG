@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../../core/services/backend_manager.dart';
@@ -30,6 +31,31 @@ class DashboardPage extends ConsumerStatefulWidget {
 class _DashboardPageState extends ConsumerState<DashboardPage> {
   int _selectedIndex = 0;
   bool _checkingUpdate = false;
+  double _sidebarWidth = 220;
+  bool _sidebarCollapsed = false;
+  static const _minSidebarWidth = 72.0;
+  static const _maxSidebarWidth = 360.0;
+  static const _collapsedWidth = 72.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSidebarState();
+  }
+
+  Future<void> _loadSidebarState() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _sidebarWidth = prefs.getDouble('sidebar_width') ?? 220;
+      _sidebarCollapsed = prefs.getBool('sidebar_collapsed') ?? false;
+    });
+  }
+
+  Future<void> _saveSidebarState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('sidebar_width', _sidebarWidth);
+    await prefs.setBool('sidebar_collapsed', _sidebarCollapsed);
+  }
 
   static const _navIcons = <({IconData icon, IconData selectedIcon})>[
     (icon: Icons.chat_outlined, selectedIcon: Icons.chat),
@@ -84,70 +110,145 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       );
     }
 
-    // ≥600px: side navigation rail
-    final extended = width >= 900;
+    // ≥600px: resizable side navigation
+    final effectiveWidth = _sidebarCollapsed ? _collapsedWidth : _sidebarWidth;
+    final extended = !_sidebarCollapsed && _sidebarWidth >= 160;
 
     return Scaffold(
       body: Row(
         children: [
-          NavigationRail(
-            extended: extended,
-            selectedIndex: _selectedIndex,
-            onDestinationSelected: (i) => setState(() => _selectedIndex = i),
-            leading: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.auto_stories_rounded,
-                        color: theme.colorScheme.primary,
-                        size: 28,
-                      ),
-                      if (extended) ...[
-                        const SizedBox(width: 8),
-                        Text(
-                          'TrustRAG',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            width: effectiveWidth,
+            child: NavigationRail(
+              extended: extended,
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: (i) => setState(() => _selectedIndex = i),
+              leading: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.auto_stories_rounded,
+                          color: theme.colorScheme.primary,
+                          size: 28,
                         ),
+                        if (extended) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            'TrustRAG',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  _buildWorkspaceSwitcher(extended),
-                ],
+                    ),
+                    const SizedBox(height: 8),
+                    _buildWorkspaceSwitcher(extended),
+                    const SizedBox(height: 4),
+                    _buildCollapseToggle(extended),
+                  ],
+                ),
               ),
-            ),
-            trailing: Expanded(
-              child: Align(
-                alignment: Alignment.bottomCenter,
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: IconButton(
-                    icon: const Icon(Icons.logout),
-                    tooltip: S.of(context).logout,
-                    onPressed: () {
-                      ref.read(authProvider.notifier).logout();
-                      context.go('/login');
-                    },
+              trailing: Expanded(
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: IconButton(
+                      icon: const Icon(Icons.logout),
+                      tooltip: S.of(context).logout,
+                      onPressed: () {
+                        ref.read(authProvider.notifier).logout();
+                        context.go('/login');
+                      },
+                    ),
                   ),
                 ),
               ),
+              destinations: List.generate(_navIcons.length, (i) => NavigationRailDestination(
+                        icon: Icon(_navIcons[i].icon),
+                        selectedIcon: Icon(_navIcons[i].selectedIcon),
+                        label: Text(_navLabels(context)[i]),
+                      )),
             ),
-            destinations: List.generate(_navIcons.length, (i) => NavigationRailDestination(
-                      icon: Icon(_navIcons[i].icon),
-                      selectedIcon: Icon(_navIcons[i].selectedIcon),
-                      label: Text(_navLabels(context)[i]),
-                    )),
           ),
-          const VerticalDivider(width: 1),
+          if (!_sidebarCollapsed) _buildDragHandle(theme),
+          if (_sidebarCollapsed) const VerticalDivider(width: 1),
           Expanded(child: contentArea),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCollapseToggle(bool extended) {
+    return Tooltip(
+      message: _sidebarCollapsed
+          ? S.of(context).expandSidebar
+          : S.of(context).collapseSidebar,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () {
+          setState(() {
+            _sidebarCollapsed = !_sidebarCollapsed;
+          });
+          _saveSidebarState();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _sidebarCollapsed
+                    ? Icons.keyboard_double_arrow_right
+                    : Icons.keyboard_double_arrow_left,
+                size: 20,
+              ),
+              if (extended) ...[
+                const SizedBox(width: 4),
+                Text(
+                  _sidebarCollapsed
+                      ? S.of(context).expandSidebar
+                      : S.of(context).collapseSidebar,
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDragHandle(ThemeData theme) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        onHorizontalDragUpdate: (details) {
+          setState(() {
+            _sidebarWidth = (_sidebarWidth + details.delta.dx)
+                .clamp(_minSidebarWidth, _maxSidebarWidth);
+          });
+        },
+        onHorizontalDragEnd: (_) => _saveSidebarState(),
+        child: Container(
+          width: 6,
+          color: Colors.transparent,
+          child: Center(
+            child: Container(
+              width: 2,
+              height: double.infinity,
+              color: theme.dividerColor,
+            ),
+          ),
+        ),
       ),
     );
   }

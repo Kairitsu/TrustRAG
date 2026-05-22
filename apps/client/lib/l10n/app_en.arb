@@ -275,5 +275,7 @@
   "roleAdminDesc": "Manage members, LLM configs, and API keys",
   "roleEditorDesc": "Edit documents and conversations",
   "roleViewerDesc": "View documents, conversations, and submit reviews",
-  "team": "Team"
+  "team": "Team",
+  "collapseSidebar": "Collapse sidebar",
+  "expandSidebar": "Expand sidebar"
 }

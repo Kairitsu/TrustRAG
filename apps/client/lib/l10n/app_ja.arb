@@ -275,5 +275,7 @@
   "roleAdminDesc": "メンバー、LLM設定、APIキーの管理",
   "roleEditorDesc": "ドキュメントと会話の編集",
   "roleViewerDesc": "ドキュメントと会話の閲覧、レビューの提出",
-  "team": "チーム"
+  "team": "チーム",
+  "collapseSidebar": "サイドバーを折りたたむ",
+  "expandSidebar": "サイドバーを展開"
 }

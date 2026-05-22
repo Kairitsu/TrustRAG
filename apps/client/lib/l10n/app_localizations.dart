@@ -1600,6 +1600,18 @@ abstract class S {
   /// In zh, this message translates to:
   /// **'团队'**
   String get team;
+
+  /// No description provided for @collapseSidebar.
+  ///
+  /// In zh, this message translates to:
+  /// **'收起侧栏'**
+  String get collapseSidebar;
+
+  /// No description provided for @expandSidebar.
+  ///
+  /// In zh, this message translates to:
+  /// **'展开侧栏'**
+  String get expandSidebar;
 }
 
 class _SDelegate extends LocalizationsDelegate<S> {

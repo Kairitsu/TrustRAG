@@ -824,4 +824,10 @@ class SKo extends S {
 
   @override
   String get team => '팀';
+
+  @override
+  String get collapseSidebar => '사이드바 접기';
+
+  @override
+  String get expandSidebar => '사이드바 펼치기';
 }

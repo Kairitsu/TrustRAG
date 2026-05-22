@@ -298,5 +298,7 @@
   "roleAdminDesc": "可管理成员、LLM 配置和 API Key",
   "roleEditorDesc": "可编辑文档和对话",
   "roleViewerDesc": "仅可查看文档和对话，提交审核",
-  "team": "团队"
+  "team": "团队",
+  "collapseSidebar": "收起侧栏",
+  "expandSidebar": "展开侧栏"
 }

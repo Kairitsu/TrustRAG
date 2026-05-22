@@ -275,5 +275,7 @@
   "roleAdminDesc": "멤버, LLM 설정, API 키 관리",
   "roleEditorDesc": "문서 및 대화 편집",
   "roleViewerDesc": "문서 및 대화 열람, 검토 제출",
-  "team": "팀"
+  "team": "팀",
+  "collapseSidebar": "사이드바 접기",
+  "expandSidebar": "사이드바 펼치기"
 }

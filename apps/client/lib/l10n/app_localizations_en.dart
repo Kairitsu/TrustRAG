@@ -833,4 +833,10 @@ class SEn extends S {
 
   @override
   String get team => 'Team';
+
+  @override
+  String get collapseSidebar => 'Collapse sidebar';
+
+  @override
+  String get expandSidebar => 'Expand sidebar';
 }
