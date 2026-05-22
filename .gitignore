@@ -33,3 +33,4 @@ Thumbs.db
 infra/postgres/data/
 infra/redis/data/
 infra/minio/data/
+issue7-images/

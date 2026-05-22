@@ -7,6 +7,7 @@ import 'package:intl/intl.dart' as intl;
 
 import 'app_localizations_en.dart';
 import 'app_localizations_ja.dart';
+import 'app_localizations_ko.dart';
 import 'app_localizations_zh.dart';
 
 // ignore_for_file: type=lint
@@ -96,6 +97,7 @@ abstract class S {
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('ja'),
+    Locale('ko'),
     Locale('zh'),
   ];
 
@@ -1071,6 +1073,12 @@ abstract class S {
   /// **'日本語'**
   String get languageJa;
 
+  /// No description provided for @languageKo.
+  ///
+  /// In zh, this message translates to:
+  /// **'한국어'**
+  String get languageKo;
+
   /// No description provided for @navKnowledgeGraph.
   ///
   /// In zh, this message translates to:
@@ -1340,7 +1348,7 @@ class _SDelegate extends LocalizationsDelegate<S> {
 
   @override
   bool isSupported(Locale locale) =>
-      <String>['en', 'ja', 'zh'].contains(locale.languageCode);
+      <String>['en', 'ja', 'ko', 'zh'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_SDelegate old) => false;
@@ -1353,6 +1361,8 @@ S lookupS(Locale locale) {
       return SEn();
     case 'ja':
       return SJa();
+    case 'ko':
+      return SKo();
     case 'zh':
       return SZh();
   }

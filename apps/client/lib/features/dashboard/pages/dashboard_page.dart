@@ -480,6 +480,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       case 'zh': return S.of(context).languageZh;
       case 'en': return S.of(context).languageEn;
       case 'ja': return S.of(context).languageJa;
+      case 'ko': return S.of(context).languageKo;
       default: return locale.languageCode;
     }
   }
@@ -522,6 +523,14 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               title: Text(s.languageJa),
               dense: true,
               selected: ref.read(localeProvider)?.languageCode == 'ja',
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () { Navigator.pop(ctx); setAppLocale(ref, const Locale('ko')); },
+            child: ListTile(
+              title: Text(s.languageKo),
+              dense: true,
+              selected: ref.read(localeProvider)?.languageCode == 'ko',
             ),
           ),
         ],

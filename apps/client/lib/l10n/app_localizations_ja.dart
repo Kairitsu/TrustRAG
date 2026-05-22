@@ -541,6 +541,9 @@ class SJa extends S {
   String get languageJa => '日本語';
 
   @override
+  String get languageKo => '한국어';
+
+  @override
   String get navKnowledgeGraph => 'グラフ';
 
   @override

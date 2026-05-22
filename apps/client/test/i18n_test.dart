@@ -4,12 +4,12 @@ import 'package:client/l10n/app_localizations.dart';
 
 void main() {
   group('i18n / Localization', () {
-    test('S supports zh, en, ja locales', () {
-      expect(S.supportedLocales.map((l) => l.languageCode), containsAll(['zh', 'en', 'ja']));
+    test('S supports zh, en, ja, ko locales', () {
+      expect(S.supportedLocales.map((l) => l.languageCode), containsAll(['zh', 'en', 'ja', 'ko']));
     });
 
-    test('S.supportedLocales has at least 3 entries', () {
-      expect(S.supportedLocales.length, greaterThanOrEqualTo(3));
+    test('S.supportedLocales has at least 4 entries', () {
+      expect(S.supportedLocales.length, greaterThanOrEqualTo(4));
     });
 
     test('S.localizationsDelegates is not empty', () {
@@ -72,6 +72,25 @@ void main() {
       expect(strings.cancel, 'キャンセル');
     });
 
+    testWidgets('Korean locale resolves correctly', (tester) async {
+      late S strings;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('ko'),
+          localizationsDelegates: S.localizationsDelegates,
+          supportedLocales: S.supportedLocales,
+          home: Builder(builder: (context) {
+            strings = S.of(context);
+            return const SizedBox();
+          }),
+        ),
+      );
+      expect(strings.navChat, '채팅');
+      expect(strings.settings, '설정');
+      expect(strings.cancel, '취소');
+      expect(strings.languageKo, '한국어');
+    });
+
     testWidgets('Parameterized strings work correctly', (tester) async {
       late S strings;
       await tester.pumpWidget(
@@ -91,8 +110,8 @@ void main() {
       expect(strings.currentVersion('0.2.1'), contains('0.2.1'));
     });
 
-    testWidgets('All three locales have same keys (no missing translations)', (tester) async {
-      final locales = [const Locale('zh'), const Locale('en'), const Locale('ja')];
+    testWidgets('All four locales have same keys (no missing translations)', (tester) async {
+      final locales = [const Locale('zh'), const Locale('en'), const Locale('ja'), const Locale('ko')];
       final results = <String, S>{};
 
       for (final locale in locales) {
@@ -123,6 +142,7 @@ void main() {
         expect(s.languageZh, isNotEmpty);
         expect(s.languageEn, isNotEmpty);
         expect(s.languageJa, isNotEmpty);
+        expect(s.languageKo, isNotEmpty);
       }
     });
   });

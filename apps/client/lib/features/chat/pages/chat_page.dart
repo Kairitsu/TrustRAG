@@ -652,11 +652,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  static String _injectCitationLinks(String content) {
+  static String _injectCitationLinks(String content, Set<int> validIndices) {
     return content.replaceAllMapped(
       RegExp(r'\[(\d+)\]'),
       (m) {
-        final num = m.group(1)!;
+        final num = int.tryParse(m.group(1)!);
+        if (num == null || !validIndices.contains(num)) return m.group(0)!;
         return '[`[$num]`](#cite-$num)';
       },
     );
@@ -691,7 +692,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     final modelLabel = _resolveModelLabel(msg);
     final processedContent = msg.citations.isNotEmpty
-        ? _injectCitationLinks(msg.content)
+        ? _injectCitationLinks(
+            msg.content,
+            msg.citations.map((c) => c.index).toSet(),
+          )
         : msg.content;
 
     return Container(
