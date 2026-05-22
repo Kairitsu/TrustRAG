@@ -17,6 +17,7 @@ import '../../search/pages/workspace_search_page.dart';
 import '../../search/pages/knowledge_graph_page.dart';
 import '../../settings/pages/model_config_page.dart';
 import '../../settings/pages/workspace_members_page.dart';
+import '../../settings/pages/team_management_page.dart';
 import '../providers/workspace_provider.dart';
 
 class DashboardPage extends ConsumerStatefulWidget {
@@ -95,23 +96,30 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             onDestinationSelected: (i) => setState(() => _selectedIndex = i),
             leading: Padding(
               padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Row(
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.auto_stories_rounded,
-                    color: theme.colorScheme.primary,
-                    size: 28,
-                  ),
-                  if (extended) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      'TrustRAG',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.auto_stories_rounded,
+                        color: theme.colorScheme.primary,
+                        size: 28,
                       ),
-                    ),
-                  ],
+                      if (extended) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          'TrustRAG',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _buildWorkspaceSwitcher(extended),
                 ],
               ),
             ),
@@ -182,7 +190,19 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         _buildHeader(
           S.of(context).workspaces,
           actions: [
+            OutlinedButton.icon(
+              onPressed: () => _showJoinTeamDialog(),
+              icon: const Icon(Icons.login, size: 18),
+              label: const Text('加入团队'),
+            ),
+            const SizedBox(width: 8),
             FilledButton.icon(
+              onPressed: () => _showCreateTeamDialog(),
+              icon: const Icon(Icons.group_add, size: 18),
+              label: const Text('创建团队'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonalIcon(
               onPressed: () => _showCreateWorkspaceDialog(),
               icon: const Icon(Icons.add, size: 18),
               label: Text(S.of(context).createNew),
@@ -220,45 +240,28 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 );
               }
 
-              return ListView.builder(
+              final personal = list.where((w) => w.isPersonal).toList();
+              final teams = list.where((w) => w.isTeam).toList();
+
+              return ListView(
                 padding: const EdgeInsets.all(16),
-                itemCount: list.length,
-                itemBuilder: (context, index) {
-                  final ws = list[index];
-                  final isSelected = selectedWs?.id == ws.id;
-                  return Card(
-                    color: isSelected
-                        ? Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withValues(alpha: 0.08)
-                        : null,
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: isSelected
-                            ? Theme.of(context).colorScheme.primary
-                            : Colors.grey.shade300,
-                        child: Icon(
-                          Icons.workspaces,
-                          color: isSelected ? Colors.white : Colors.grey,
-                          size: 20,
-                        ),
-                      ),
-                      title: Text(ws.name,
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text(ws.description ?? S.of(context).noDescription),
-                      trailing: isSelected
-                          ? Icon(Icons.check_circle,
-                              color: Theme.of(context).colorScheme.primary)
-                          : null,
-                      onTap: () {
-                        ref.read(selectedWorkspaceProvider.notifier).state = ws;
-                        saveLastWorkspaceId(ws.id);
-                        setState(() => _selectedIndex = 0);
-                      },
+                children: [
+                  if (personal.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text('个人空间', style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey)),
                     ),
-                  );
-                },
+                    ...personal.map((ws) => _buildWorkspaceCard(ws, selectedWs)),
+                    const SizedBox(height: 16),
+                  ],
+                  if (teams.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text('团队空间', style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey)),
+                    ),
+                    ...teams.map((ws) => _buildWorkspaceCard(ws, selectedWs)),
+                  ],
+                ],
               );
             },
           ),
@@ -267,7 +270,70 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     );
   }
 
+  Widget _buildWorkspaceCard(Workspace ws, Workspace? selectedWs) {
+    final isSelected = selectedWs?.id == ws.id;
+    return Card(
+      color: isSelected
+          ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.08)
+          : null,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: isSelected
+              ? Theme.of(context).colorScheme.primary
+              : Colors.grey.shade300,
+          child: Icon(
+            ws.isTeam ? Icons.groups : Icons.person,
+            color: isSelected ? Colors.white : Colors.grey,
+            size: 20,
+          ),
+        ),
+        title: Row(
+          children: [
+            Expanded(child: Text(ws.name, style: const TextStyle(fontWeight: FontWeight.w600))),
+            if (ws.isTeam)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('团队', style: TextStyle(fontSize: 10, color: Colors.blue)),
+              ),
+          ],
+        ),
+        subtitle: Text(ws.description ?? S.of(context).noDescription),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (ws.isTeam)
+              IconButton(
+                icon: const Icon(Icons.settings, size: 18),
+                tooltip: '团队设置',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => TeamManagementPage(workspace: ws),
+                    ),
+                  );
+                },
+              ),
+            if (isSelected)
+              Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary),
+          ],
+        ),
+        onTap: () {
+          ref.read(selectedWorkspaceProvider.notifier).state = ws;
+          saveLastWorkspaceId(ws.id);
+          setState(() => _selectedIndex = 0);
+        },
+      ),
+    );
+  }
+
   Widget _buildSettingsView() {
+    final selectedWs = ref.watch(selectedWorkspaceProvider);
+    final isTeamWs = selectedWs?.isTeam == true;
+
     return Column(
       children: [
         _buildHeader(S.of(context).settings),
@@ -290,6 +356,24 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 ),
               ),
               const SizedBox(height: 8),
+              if (isTeamWs) ...[
+                Card(
+                  child: ListTile(
+                    leading: Icon(Icons.groups, color: Theme.of(context).colorScheme.primary),
+                    title: const Text('团队设置'),
+                    subtitle: Text('管理「${selectedWs!.name}」团队'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => TeamManagementPage(workspace: selectedWs),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.group),
@@ -691,6 +775,222 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 fontWeight: FontWeight.w600, color: Colors.grey)),
         Expanded(child: Text(value)),
       ],
+    );
+  }
+
+  Widget _buildWorkspaceSwitcher(bool extended) {
+    final workspaces = ref.watch(workspaceProvider);
+    final selectedWs = ref.watch(selectedWorkspaceProvider);
+
+    return workspaces.when(
+      loading: () => const SizedBox(width: 40, height: 40, child: CircularProgressIndicator(strokeWidth: 2)),
+      error: (_, __) => IconButton(
+        icon: const Icon(Icons.error_outline, color: Colors.red),
+        onPressed: () => ref.read(workspaceProvider.notifier).loadWorkspaces(),
+        tooltip: S.of(context).loadFailed(''),
+      ),
+      data: (list) {
+        if (!extended) {
+          return PopupMenuButton<String>(
+            tooltip: S.of(context).workspaces,
+            icon: Icon(
+              selectedWs?.isTeam == true ? Icons.groups : Icons.person,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            onSelected: (id) {
+              if (id == '__create_team__') {
+                _showCreateTeamDialog();
+              } else if (id == '__join_team__') {
+                _showJoinTeamDialog();
+              } else {
+                final ws = list.firstWhere((w) => w.id == id);
+                ref.read(selectedWorkspaceProvider.notifier).state = ws;
+                saveLastWorkspaceId(ws.id);
+              }
+            },
+            itemBuilder: (_) {
+              final items = <PopupMenuEntry<String>>[];
+              final personal = list.where((w) => w.isPersonal).toList();
+              final teams = list.where((w) => w.isTeam).toList();
+
+              if (personal.isNotEmpty) {
+                items.add(const PopupMenuItem(enabled: false, child: Text('── 个人空间 ──', style: TextStyle(fontSize: 11, color: Colors.grey))));
+                for (final ws in personal) {
+                  items.add(PopupMenuItem(
+                    value: ws.id,
+                    child: Row(children: [
+                      Icon(Icons.person, size: 16, color: selectedWs?.id == ws.id ? Theme.of(context).colorScheme.primary : null),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(ws.name, overflow: TextOverflow.ellipsis)),
+                      if (selectedWs?.id == ws.id) Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.primary),
+                    ]),
+                  ));
+                }
+              }
+              if (teams.isNotEmpty) {
+                items.add(const PopupMenuDivider());
+                items.add(const PopupMenuItem(enabled: false, child: Text('── 团队空间 ──', style: TextStyle(fontSize: 11, color: Colors.grey))));
+                for (final ws in teams) {
+                  items.add(PopupMenuItem(
+                    value: ws.id,
+                    child: Row(children: [
+                      Icon(Icons.groups, size: 16, color: selectedWs?.id == ws.id ? Theme.of(context).colorScheme.primary : null),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(ws.name, overflow: TextOverflow.ellipsis)),
+                      if (selectedWs?.id == ws.id) Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.primary),
+                    ]),
+                  ));
+                }
+              }
+              items.add(const PopupMenuDivider());
+              items.add(const PopupMenuItem(value: '__create_team__', child: Row(children: [Icon(Icons.add, size: 16), SizedBox(width: 8), Text('创建团队')])));
+              items.add(const PopupMenuItem(value: '__join_team__', child: Row(children: [Icon(Icons.login, size: 16), SizedBox(width: 8), Text('加入团队')])));
+              return items;
+            },
+          );
+        }
+
+        return Container(
+          width: 200,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              isExpanded: true,
+              value: selectedWs?.id,
+              hint: Text(S.of(context).workspaces, style: const TextStyle(fontSize: 13)),
+              icon: const Icon(Icons.unfold_more, size: 16),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              items: [
+                ...list.map((ws) => DropdownMenuItem(
+                  value: ws.id,
+                  child: Row(children: [
+                    Icon(ws.isTeam ? Icons.groups : Icons.person, size: 14, color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(ws.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13))),
+                  ]),
+                )),
+              ],
+              onChanged: (id) {
+                if (id == null) return;
+                final ws = list.firstWhere((w) => w.id == id);
+                ref.read(selectedWorkspaceProvider.notifier).state = ws;
+                saveLastWorkspaceId(ws.id);
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showCreateTeamDialog() {
+    final nameController = TextEditingController();
+    final descController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('创建团队'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: '团队名称', border: OutlineInputBorder()),
+              autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: descController,
+              decoration: const InputDecoration(labelText: '团队描述（可选）', border: OutlineInputBorder()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(S.of(context).cancel)),
+          FilledButton(
+            onPressed: () async {
+              if (nameController.text.trim().isEmpty) return;
+              final ws = await ref.read(workspaceProvider.notifier).createWorkspace(
+                nameController.text.trim(),
+                descController.text.trim().isEmpty ? null : descController.text.trim(),
+                type: 'team',
+              );
+              if (ws != null && ctx.mounted) {
+                ref.read(selectedWorkspaceProvider.notifier).state = ws;
+                saveLastWorkspaceId(ws.id);
+                Navigator.pop(ctx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('团队「${ws.name}」创建成功！邀请码: ${ws.inviteCode ?? "N/A"}')),
+                  );
+                }
+              }
+            },
+            child: Text(S.of(context).create),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showJoinTeamDialog() {
+    final codeController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('加入团队'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: codeController,
+              decoration: const InputDecoration(
+                labelText: '邀请码',
+                hintText: '输入 8 位邀请码',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.vpn_key),
+              ),
+              autofocus: true,
+              textCapitalization: TextCapitalization.characters,
+              maxLength: 8,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(S.of(context).cancel)),
+          FilledButton(
+            onPressed: () async {
+              final code = codeController.text.trim();
+              if (code.isEmpty) return;
+              final ws = await ref.read(workspaceProvider.notifier).joinWorkspace(code);
+              if (ws != null && ctx.mounted) {
+                ref.read(selectedWorkspaceProvider.notifier).state = ws;
+                saveLastWorkspaceId(ws.id);
+                Navigator.pop(ctx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('已加入团队「${ws.name}」！')),
+                  );
+                }
+              } else if (ctx.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('加入失败，请检查邀请码是否正确')),
+                );
+              }
+            },
+            child: const Text('加入'),
+          ),
+        ],
+      ),
     );
   }
 

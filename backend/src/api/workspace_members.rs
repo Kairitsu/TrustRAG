@@ -13,6 +13,57 @@ use crate::error::AppError;
 
 use super::AppState;
 
+/// Returns the user's role in a workspace, considering both workspace_members
+/// table and workspace ownership. Returns None if user has no access.
+pub async fn get_user_workspace_role(
+    pool: &crate::db::DbPool,
+    ws_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<String>, AppError> {
+    let role = sqlx::query_scalar::<_, String>(
+        "SELECT wm.role FROM workspace_members wm WHERE wm.workspace_id = $1 AND wm.user_id = $2",
+    )
+    .bind(ws_id.to_string())
+    .bind(user_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    if role.is_some() {
+        return Ok(role);
+    }
+
+    let is_owner: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM workspaces WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(ws_id.to_string())
+    .bind(user_id.to_string())
+    .fetch_one(pool)
+    .await?;
+
+    if is_owner > 0 {
+        return Ok(Some("owner".to_string()));
+    }
+
+    Ok(None)
+}
+
+/// Check if a user has at least admin-level access (owner or admin) in a workspace.
+/// Viewers and editors cannot manage sensitive configs like API keys.
+pub async fn require_admin_access(
+    pool: &crate::db::DbPool,
+    ws_id: Uuid,
+    user_id: Uuid,
+) -> Result<String, AppError> {
+    let role = get_user_workspace_role(pool, ws_id, user_id).await?;
+    match role {
+        Some(r) if r == "owner" || r == "admin" => Ok(r),
+        Some(_) => Err(AppError::Forbidden(
+            "Admin or owner access required for this operation".into(),
+        )),
+        None => Err(AppError::NotFound("Workspace not found or no access".into())),
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route(

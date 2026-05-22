@@ -11,6 +11,7 @@ use crate::auth::middleware::AuthUser;
 use crate::db::compat;
 use crate::error::AppError;
 
+use super::workspace_members::require_admin_access;
 use super::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -176,6 +177,19 @@ async fn create_config(
             req.provider,
             valid_providers.join(", ")
         )));
+    }
+
+    if let Some(ws_id) = req.workspace_id {
+        let ws_type: Option<String> = sqlx::query_scalar(
+            "SELECT COALESCE(type, 'personal') FROM workspaces WHERE id = $1",
+        )
+        .bind(ws_id.to_string())
+        .fetch_optional(&state.pool)
+        .await?;
+
+        if ws_type.as_deref() == Some("team") {
+            require_admin_access(&state.pool, ws_id, auth.id).await?;
+        }
     }
 
     let api_key_enc = req

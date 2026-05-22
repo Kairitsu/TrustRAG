@@ -88,7 +88,7 @@ class _WorkspaceMembersPageState extends ConsumerState<WorkspaceMembersPage> {
   }
 
   bool get _canManage =>
-      _currentUserRole == 'owner' || _currentUserRole == 'editor';
+      _currentUserRole == 'owner' || _currentUserRole == 'admin' || _currentUserRole == 'editor';
 
   Future<void> _inviteMember() async {
     final ws = ref.read(selectedWorkspaceProvider);
@@ -179,7 +179,7 @@ class _WorkspaceMembersPageState extends ConsumerState<WorkspaceMembersPage> {
       builder: (ctx) => SimpleDialog(
         title: Text('修改 ${member.displayName} 的角色'),
         children: [
-          for (final role in ['owner', 'editor', 'viewer'])
+          for (final role in ['owner', 'admin', 'editor', 'viewer'])
             SimpleDialogOption(
               onPressed: () => Navigator.pop(ctx, role),
               child: ListTile(
@@ -266,11 +266,13 @@ class _WorkspaceMembersPageState extends ConsumerState<WorkspaceMembersPage> {
   String _roleDescription(String role) {
     switch (role) {
       case 'owner':
-        return '完全控制权限，可管理成员和设置';
+        return '完全控制权限，可管理成员、设置和 API 配置';
+      case 'admin':
+        return '可管理成员、LLM 配置和 API Key';
       case 'editor':
-        return '可编辑文档和对话，管理成员';
+        return '可编辑文档和对话';
       default:
-        return '仅可查看文档和对话';
+        return '仅可查看文档和对话，提交审核';
     }
   }
 

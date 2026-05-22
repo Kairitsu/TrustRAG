@@ -206,7 +206,7 @@ class SZh extends S {
   String get newFolderName => '新文件夹名';
 
   @override
-  String get confirm => '确定';
+  String get confirm => '确认';
 
   @override
   String get switchWorkspaceTooltip => '切换工作区/资料库';
@@ -673,4 +673,150 @@ class SZh extends S {
 
   @override
   String get overview => '概览';
+
+  @override
+  String get personalSpace => '个人空间';
+
+  @override
+  String get teamSpace => '团队空间';
+
+  @override
+  String get createTeam => '创建团队';
+
+  @override
+  String get joinTeam => '加入团队';
+
+  @override
+  String get teamName => '团队名称';
+
+  @override
+  String get teamDescription => '团队描述（可选）';
+
+  @override
+  String get inviteCode => '邀请码';
+
+  @override
+  String get enterInviteCode => '输入 8 位邀请码';
+
+  @override
+  String get joinButton => '加入';
+
+  @override
+  String teamCreated(Object name, Object code) {
+    return '团队「$name」创建成功！邀请码: $code';
+  }
+
+  @override
+  String joinedTeam(Object name) {
+    return '已加入团队「$name」！';
+  }
+
+  @override
+  String get joinFailed => '加入失败，请检查邀请码是否正确';
+
+  @override
+  String get teamSettings => '团队设置';
+
+  @override
+  String manageTeam(Object name) {
+    return '管理「$name」团队';
+  }
+
+  @override
+  String get regenerateInviteCode => '重新生成邀请码';
+
+  @override
+  String get regenerateConfirm => '重新生成后，旧邀请码将失效。确认继续？';
+
+  @override
+  String newInviteCode(Object code) {
+    return '新邀请码: $code';
+  }
+
+  @override
+  String get copyInviteCode => '复制邀请码';
+
+  @override
+  String get inviteCodeCopied => '邀请码已复制';
+
+  @override
+  String get shareInvite => '分享邀请';
+
+  @override
+  String get shareInviteSubtitle => '将邀请码发送给团队成员';
+
+  @override
+  String inviteMessage(Object name, Object code) {
+    return '邀请你加入 TrustRAG 团队「$name」\n邀请码: $code';
+  }
+
+  @override
+  String get inviteInfoCopied => '邀请信息已复制到剪贴板';
+
+  @override
+  String get memberManagementSubtitle => '查看和管理团队成员';
+
+  @override
+  String get transferOwnership => '转让管理员';
+
+  @override
+  String get transferOwnershipDesc => '将团队所有权转让给其他成员';
+
+  @override
+  String get goToMemberManagement => '前往成员管理';
+
+  @override
+  String get disbandTeam => '解散团队';
+
+  @override
+  String get disbandTeamDesc => '永久删除团队及所有数据';
+
+  @override
+  String get disbandWarning => '此操作不可撤销！团队中的所有文档、对话和审核记录将被永久删除。';
+
+  @override
+  String disbandConfirmPrompt(Object name) {
+    return '请输入团队名称「$name」确认：';
+  }
+
+  @override
+  String get confirmDisband => '确认解散';
+
+  @override
+  String get teamNameMismatch => '团队名称不匹配';
+
+  @override
+  String get teamDisbanded => '团队已解散';
+
+  @override
+  String disbandFailed(Object error) {
+    return '解散失败: $error';
+  }
+
+  @override
+  String get roleOwner => '所有者';
+
+  @override
+  String get roleAdmin => '管理员';
+
+  @override
+  String get roleEditor => '编辑者';
+
+  @override
+  String get roleViewer => '查看者';
+
+  @override
+  String get roleOwnerDesc => '完全控制权限，可管理成员、设置和 API 配置';
+
+  @override
+  String get roleAdminDesc => '可管理成员、LLM 配置和 API Key';
+
+  @override
+  String get roleEditorDesc => '可编辑文档和对话';
+
+  @override
+  String get roleViewerDesc => '仅可查看文档和对话，提交审核';
+
+  @override
+  String get team => '团队';
 }

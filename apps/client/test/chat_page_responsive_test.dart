@@ -63,8 +63,23 @@ class _FakeWorkspaceNotifier
   Future<void> loadWorkspaces() async {}
 
   @override
-  Future<Workspace?> createWorkspace(String name, String? description) async {
+  Future<Workspace?> createWorkspace(String name, String? description, {String type = 'personal'}) async {
     return null;
+  }
+
+  @override
+  Future<Workspace?> joinWorkspace(String inviteCode) async {
+    return null;
+  }
+
+  @override
+  Future<String?> regenerateInviteCode(String workspaceId) async {
+    return null;
+  }
+
+  @override
+  Future<bool> transferOwnership(String workspaceId, String newOwnerId) async {
+    return false;
   }
 }
 

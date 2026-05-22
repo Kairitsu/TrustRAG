@@ -208,7 +208,7 @@ class SJa extends S {
   String get newFolderName => '新しいフォルダ名';
 
   @override
-  String get confirm => '確定';
+  String get confirm => '確認';
 
   @override
   String get switchWorkspaceTooltip => 'ワークスペース/ドキュメント切り替え';
@@ -675,4 +675,151 @@ class SJa extends S {
 
   @override
   String get overview => '概要';
+
+  @override
+  String get personalSpace => '個人スペース';
+
+  @override
+  String get teamSpace => 'チームスペース';
+
+  @override
+  String get createTeam => 'チーム作成';
+
+  @override
+  String get joinTeam => 'チームに参加';
+
+  @override
+  String get teamName => 'チーム名';
+
+  @override
+  String get teamDescription => 'チームの説明（任意）';
+
+  @override
+  String get inviteCode => '招待コード';
+
+  @override
+  String get enterInviteCode => '8桁の招待コードを入力';
+
+  @override
+  String get joinButton => '参加';
+
+  @override
+  String teamCreated(Object name, Object code) {
+    return 'チーム「$name」を作成しました！招待コード: $code';
+  }
+
+  @override
+  String joinedTeam(Object name) {
+    return 'チーム「$name」に参加しました！';
+  }
+
+  @override
+  String get joinFailed => '参加に失敗しました。招待コードを確認してください。';
+
+  @override
+  String get teamSettings => 'チーム設定';
+
+  @override
+  String manageTeam(Object name) {
+    return '「$name」チームの管理';
+  }
+
+  @override
+  String get regenerateInviteCode => '招待コードを再生成';
+
+  @override
+  String get regenerateConfirm => '再生成すると、古い招待コードは無効になります。続行しますか？';
+
+  @override
+  String newInviteCode(Object code) {
+    return '新しい招待コード: $code';
+  }
+
+  @override
+  String get copyInviteCode => '招待コードをコピー';
+
+  @override
+  String get inviteCodeCopied => '招待コードをコピーしました';
+
+  @override
+  String get shareInvite => '招待を共有';
+
+  @override
+  String get shareInviteSubtitle => '招待コードをチームメンバーに送信';
+
+  @override
+  String inviteMessage(Object name, Object code) {
+    return 'TrustRAGチーム「$name」に参加しませんか\n招待コード: $code';
+  }
+
+  @override
+  String get inviteInfoCopied => '招待情報をクリップボードにコピーしました';
+
+  @override
+  String get memberManagementSubtitle => 'チームメンバーの表示と管理';
+
+  @override
+  String get transferOwnership => '管理者の移譲';
+
+  @override
+  String get transferOwnershipDesc => 'チームの所有権を他のメンバーに移譲';
+
+  @override
+  String get goToMemberManagement => 'メンバー管理へ';
+
+  @override
+  String get disbandTeam => 'チーム解散';
+
+  @override
+  String get disbandTeamDesc => 'チームとすべてのデータを永久に削除';
+
+  @override
+  String get disbandWarning =>
+      'この操作は元に戻せません！チーム内のすべてのドキュメント、会話、レビュー記録が永久に削除されます。';
+
+  @override
+  String disbandConfirmPrompt(Object name) {
+    return '確認のためチーム名「$name」を入力してください：';
+  }
+
+  @override
+  String get confirmDisband => '解散を確認';
+
+  @override
+  String get teamNameMismatch => 'チーム名が一致しません';
+
+  @override
+  String get teamDisbanded => 'チームが解散されました';
+
+  @override
+  String disbandFailed(Object error) {
+    return '解散に失敗しました: $error';
+  }
+
+  @override
+  String get roleOwner => 'オーナー';
+
+  @override
+  String get roleAdmin => '管理者';
+
+  @override
+  String get roleEditor => '編集者';
+
+  @override
+  String get roleViewer => '閲覧者';
+
+  @override
+  String get roleOwnerDesc => '完全な権限、メンバー・設定・API設定の管理';
+
+  @override
+  String get roleAdminDesc => 'メンバー、LLM設定、APIキーの管理';
+
+  @override
+  String get roleEditorDesc => 'ドキュメントと会話の編集';
+
+  @override
+  String get roleViewerDesc => 'ドキュメントと会話の閲覧、レビューの提出';
+
+  @override
+  String get team => 'チーム';
 }

@@ -677,4 +677,151 @@ class SKo extends S {
 
   @override
   String get overview => '개요';
+
+  @override
+  String get personalSpace => '개인 공간';
+
+  @override
+  String get teamSpace => '팀 공간';
+
+  @override
+  String get createTeam => '팀 만들기';
+
+  @override
+  String get joinTeam => '팀 참가';
+
+  @override
+  String get teamName => '팀 이름';
+
+  @override
+  String get teamDescription => '팀 설명 (선택)';
+
+  @override
+  String get inviteCode => '초대 코드';
+
+  @override
+  String get enterInviteCode => '8자리 초대 코드 입력';
+
+  @override
+  String get joinButton => '참가';
+
+  @override
+  String teamCreated(Object name, Object code) {
+    return '팀 \"$name\" 생성 완료! 초대 코드: $code';
+  }
+
+  @override
+  String joinedTeam(Object name) {
+    return '팀 \"$name\"에 참가했습니다!';
+  }
+
+  @override
+  String get joinFailed => '참가 실패. 초대 코드를 확인해주세요.';
+
+  @override
+  String get teamSettings => '팀 설정';
+
+  @override
+  String manageTeam(Object name) {
+    return '\"$name\" 팀 관리';
+  }
+
+  @override
+  String get regenerateInviteCode => '초대 코드 재생성';
+
+  @override
+  String get regenerateConfirm => '재생성 시 기존 초대 코드가 무효화됩니다. 계속하시겠습니까?';
+
+  @override
+  String newInviteCode(Object code) {
+    return '새 초대 코드: $code';
+  }
+
+  @override
+  String get copyInviteCode => '초대 코드 복사';
+
+  @override
+  String get inviteCodeCopied => '초대 코드가 복사되었습니다';
+
+  @override
+  String get shareInvite => '초대 공유';
+
+  @override
+  String get shareInviteSubtitle => '팀 멤버에게 초대 코드 보내기';
+
+  @override
+  String inviteMessage(Object name, Object code) {
+    return 'TrustRAG 팀 \"$name\"에 참가하세요\n초대 코드: $code';
+  }
+
+  @override
+  String get inviteInfoCopied => '초대 정보가 클립보드에 복사되었습니다';
+
+  @override
+  String get memberManagementSubtitle => '팀 멤버 보기 및 관리';
+
+  @override
+  String get transferOwnership => '소유권 이전';
+
+  @override
+  String get transferOwnershipDesc => '팀 소유권을 다른 멤버에게 이전';
+
+  @override
+  String get goToMemberManagement => '멤버 관리로 이동';
+
+  @override
+  String get disbandTeam => '팀 해체';
+
+  @override
+  String get disbandTeamDesc => '팀과 모든 데이터를 영구 삭제';
+
+  @override
+  String get disbandWarning =>
+      '이 작업은 되돌릴 수 없습니다! 팀의 모든 문서, 대화, 검토 기록이 영구 삭제됩니다.';
+
+  @override
+  String disbandConfirmPrompt(Object name) {
+    return '확인을 위해 팀 이름 \"$name\"을(를) 입력하세요:';
+  }
+
+  @override
+  String get confirmDisband => '해체 확인';
+
+  @override
+  String get teamNameMismatch => '팀 이름이 일치하지 않습니다';
+
+  @override
+  String get teamDisbanded => '팀이 해체되었습니다';
+
+  @override
+  String disbandFailed(Object error) {
+    return '해체 실패: $error';
+  }
+
+  @override
+  String get roleOwner => '소유자';
+
+  @override
+  String get roleAdmin => '관리자';
+
+  @override
+  String get roleEditor => '편집자';
+
+  @override
+  String get roleViewer => '뷰어';
+
+  @override
+  String get roleOwnerDesc => '모든 권한, 멤버·설정·API 설정 관리';
+
+  @override
+  String get roleAdminDesc => '멤버, LLM 설정, API 키 관리';
+
+  @override
+  String get roleEditorDesc => '문서 및 대화 편집';
+
+  @override
+  String get roleViewerDesc => '문서 및 대화 열람, 검토 제출';
+
+  @override
+  String get team => '팀';
 }

@@ -210,7 +210,7 @@ class SEn extends S {
   String get newFolderName => 'New folder name';
 
   @override
-  String get confirm => 'OK';
+  String get confirm => 'Confirm';
 
   @override
   String get switchWorkspaceTooltip => 'Switch workspace/documents';
@@ -682,4 +682,155 @@ class SEn extends S {
 
   @override
   String get overview => 'Overview';
+
+  @override
+  String get personalSpace => 'Personal Space';
+
+  @override
+  String get teamSpace => 'Team Space';
+
+  @override
+  String get createTeam => 'Create Team';
+
+  @override
+  String get joinTeam => 'Join Team';
+
+  @override
+  String get teamName => 'Team Name';
+
+  @override
+  String get teamDescription => 'Team Description (optional)';
+
+  @override
+  String get inviteCode => 'Invite Code';
+
+  @override
+  String get enterInviteCode => 'Enter 8-digit invite code';
+
+  @override
+  String get joinButton => 'Join';
+
+  @override
+  String teamCreated(Object name, Object code) {
+    return 'Team \"$name\" created! Invite code: $code';
+  }
+
+  @override
+  String joinedTeam(Object name) {
+    return 'Joined team \"$name\"!';
+  }
+
+  @override
+  String get joinFailed => 'Join failed. Please check the invite code.';
+
+  @override
+  String get teamSettings => 'Team Settings';
+
+  @override
+  String manageTeam(Object name) {
+    return 'Manage \"$name\" team';
+  }
+
+  @override
+  String get regenerateInviteCode => 'Regenerate Invite Code';
+
+  @override
+  String get regenerateConfirm =>
+      'The old invite code will be invalidated. Continue?';
+
+  @override
+  String newInviteCode(Object code) {
+    return 'New invite code: $code';
+  }
+
+  @override
+  String get copyInviteCode => 'Copy Invite Code';
+
+  @override
+  String get inviteCodeCopied => 'Invite code copied';
+
+  @override
+  String get shareInvite => 'Share Invite';
+
+  @override
+  String get shareInviteSubtitle => 'Send invite code to team members';
+
+  @override
+  String inviteMessage(Object name, Object code) {
+    return 'Join TrustRAG team \"$name\"\nInvite code: $code';
+  }
+
+  @override
+  String get inviteInfoCopied => 'Invite info copied to clipboard';
+
+  @override
+  String get memberManagementSubtitle => 'View and manage team members';
+
+  @override
+  String get transferOwnership => 'Transfer Ownership';
+
+  @override
+  String get transferOwnershipDesc =>
+      'Transfer team ownership to another member';
+
+  @override
+  String get goToMemberManagement => 'Go to Member Management';
+
+  @override
+  String get disbandTeam => 'Disband Team';
+
+  @override
+  String get disbandTeamDesc => 'Permanently delete team and all data';
+
+  @override
+  String get disbandWarning =>
+      'This action is irreversible! All documents, conversations, and review records in the team will be permanently deleted.';
+
+  @override
+  String disbandConfirmPrompt(Object name) {
+    return 'Enter team name \"$name\" to confirm:';
+  }
+
+  @override
+  String get confirmDisband => 'Confirm Disband';
+
+  @override
+  String get teamNameMismatch => 'Team name does not match';
+
+  @override
+  String get teamDisbanded => 'Team disbanded';
+
+  @override
+  String disbandFailed(Object error) {
+    return 'Disband failed: $error';
+  }
+
+  @override
+  String get roleOwner => 'Owner';
+
+  @override
+  String get roleAdmin => 'Admin';
+
+  @override
+  String get roleEditor => 'Editor';
+
+  @override
+  String get roleViewer => 'Viewer';
+
+  @override
+  String get roleOwnerDesc =>
+      'Full control, manage members, settings, and API configs';
+
+  @override
+  String get roleAdminDesc => 'Manage members, LLM configs, and API keys';
+
+  @override
+  String get roleEditorDesc => 'Edit documents and conversations';
+
+  @override
+  String get roleViewerDesc =>
+      'View documents, conversations, and submit reviews';
+
+  @override
+  String get team => 'Team';
 }

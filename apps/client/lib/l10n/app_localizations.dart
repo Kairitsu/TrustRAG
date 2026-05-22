@@ -458,7 +458,7 @@ abstract class S {
   /// No description provided for @confirm.
   ///
   /// In zh, this message translates to:
-  /// **'确定'**
+  /// **'确认'**
   String get confirm;
 
   /// No description provided for @switchWorkspaceTooltip.
@@ -1336,6 +1336,270 @@ abstract class S {
   /// In zh, this message translates to:
   /// **'概览'**
   String get overview;
+
+  /// No description provided for @personalSpace.
+  ///
+  /// In zh, this message translates to:
+  /// **'个人空间'**
+  String get personalSpace;
+
+  /// No description provided for @teamSpace.
+  ///
+  /// In zh, this message translates to:
+  /// **'团队空间'**
+  String get teamSpace;
+
+  /// No description provided for @createTeam.
+  ///
+  /// In zh, this message translates to:
+  /// **'创建团队'**
+  String get createTeam;
+
+  /// No description provided for @joinTeam.
+  ///
+  /// In zh, this message translates to:
+  /// **'加入团队'**
+  String get joinTeam;
+
+  /// No description provided for @teamName.
+  ///
+  /// In zh, this message translates to:
+  /// **'团队名称'**
+  String get teamName;
+
+  /// No description provided for @teamDescription.
+  ///
+  /// In zh, this message translates to:
+  /// **'团队描述（可选）'**
+  String get teamDescription;
+
+  /// No description provided for @inviteCode.
+  ///
+  /// In zh, this message translates to:
+  /// **'邀请码'**
+  String get inviteCode;
+
+  /// No description provided for @enterInviteCode.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入 8 位邀请码'**
+  String get enterInviteCode;
+
+  /// No description provided for @joinButton.
+  ///
+  /// In zh, this message translates to:
+  /// **'加入'**
+  String get joinButton;
+
+  /// No description provided for @teamCreated.
+  ///
+  /// In zh, this message translates to:
+  /// **'团队「{name}」创建成功！邀请码: {code}'**
+  String teamCreated(Object name, Object code);
+
+  /// No description provided for @joinedTeam.
+  ///
+  /// In zh, this message translates to:
+  /// **'已加入团队「{name}」！'**
+  String joinedTeam(Object name);
+
+  /// No description provided for @joinFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'加入失败，请检查邀请码是否正确'**
+  String get joinFailed;
+
+  /// No description provided for @teamSettings.
+  ///
+  /// In zh, this message translates to:
+  /// **'团队设置'**
+  String get teamSettings;
+
+  /// No description provided for @manageTeam.
+  ///
+  /// In zh, this message translates to:
+  /// **'管理「{name}」团队'**
+  String manageTeam(Object name);
+
+  /// No description provided for @regenerateInviteCode.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新生成邀请码'**
+  String get regenerateInviteCode;
+
+  /// No description provided for @regenerateConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新生成后，旧邀请码将失效。确认继续？'**
+  String get regenerateConfirm;
+
+  /// No description provided for @newInviteCode.
+  ///
+  /// In zh, this message translates to:
+  /// **'新邀请码: {code}'**
+  String newInviteCode(Object code);
+
+  /// No description provided for @copyInviteCode.
+  ///
+  /// In zh, this message translates to:
+  /// **'复制邀请码'**
+  String get copyInviteCode;
+
+  /// No description provided for @inviteCodeCopied.
+  ///
+  /// In zh, this message translates to:
+  /// **'邀请码已复制'**
+  String get inviteCodeCopied;
+
+  /// No description provided for @shareInvite.
+  ///
+  /// In zh, this message translates to:
+  /// **'分享邀请'**
+  String get shareInvite;
+
+  /// No description provided for @shareInviteSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'将邀请码发送给团队成员'**
+  String get shareInviteSubtitle;
+
+  /// No description provided for @inviteMessage.
+  ///
+  /// In zh, this message translates to:
+  /// **'邀请你加入 TrustRAG 团队「{name}」\n邀请码: {code}'**
+  String inviteMessage(Object name, Object code);
+
+  /// No description provided for @inviteInfoCopied.
+  ///
+  /// In zh, this message translates to:
+  /// **'邀请信息已复制到剪贴板'**
+  String get inviteInfoCopied;
+
+  /// No description provided for @memberManagementSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'查看和管理团队成员'**
+  String get memberManagementSubtitle;
+
+  /// No description provided for @transferOwnership.
+  ///
+  /// In zh, this message translates to:
+  /// **'转让管理员'**
+  String get transferOwnership;
+
+  /// No description provided for @transferOwnershipDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'将团队所有权转让给其他成员'**
+  String get transferOwnershipDesc;
+
+  /// No description provided for @goToMemberManagement.
+  ///
+  /// In zh, this message translates to:
+  /// **'前往成员管理'**
+  String get goToMemberManagement;
+
+  /// No description provided for @disbandTeam.
+  ///
+  /// In zh, this message translates to:
+  /// **'解散团队'**
+  String get disbandTeam;
+
+  /// No description provided for @disbandTeamDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'永久删除团队及所有数据'**
+  String get disbandTeamDesc;
+
+  /// No description provided for @disbandWarning.
+  ///
+  /// In zh, this message translates to:
+  /// **'此操作不可撤销！团队中的所有文档、对话和审核记录将被永久删除。'**
+  String get disbandWarning;
+
+  /// No description provided for @disbandConfirmPrompt.
+  ///
+  /// In zh, this message translates to:
+  /// **'请输入团队名称「{name}」确认：'**
+  String disbandConfirmPrompt(Object name);
+
+  /// No description provided for @confirmDisband.
+  ///
+  /// In zh, this message translates to:
+  /// **'确认解散'**
+  String get confirmDisband;
+
+  /// No description provided for @teamNameMismatch.
+  ///
+  /// In zh, this message translates to:
+  /// **'团队名称不匹配'**
+  String get teamNameMismatch;
+
+  /// No description provided for @teamDisbanded.
+  ///
+  /// In zh, this message translates to:
+  /// **'团队已解散'**
+  String get teamDisbanded;
+
+  /// No description provided for @disbandFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'解散失败: {error}'**
+  String disbandFailed(Object error);
+
+  /// No description provided for @roleOwner.
+  ///
+  /// In zh, this message translates to:
+  /// **'所有者'**
+  String get roleOwner;
+
+  /// No description provided for @roleAdmin.
+  ///
+  /// In zh, this message translates to:
+  /// **'管理员'**
+  String get roleAdmin;
+
+  /// No description provided for @roleEditor.
+  ///
+  /// In zh, this message translates to:
+  /// **'编辑者'**
+  String get roleEditor;
+
+  /// No description provided for @roleViewer.
+  ///
+  /// In zh, this message translates to:
+  /// **'查看者'**
+  String get roleViewer;
+
+  /// No description provided for @roleOwnerDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'完全控制权限，可管理成员、设置和 API 配置'**
+  String get roleOwnerDesc;
+
+  /// No description provided for @roleAdminDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'可管理成员、LLM 配置和 API Key'**
+  String get roleAdminDesc;
+
+  /// No description provided for @roleEditorDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'可编辑文档和对话'**
+  String get roleEditorDesc;
+
+  /// No description provided for @roleViewerDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'仅可查看文档和对话，提交审核'**
+  String get roleViewerDesc;
+
+  /// No description provided for @team.
+  ///
+  /// In zh, this message translates to:
+  /// **'团队'**
+  String get team;
 }
 
 class _SDelegate extends LocalizationsDelegate<S> {
