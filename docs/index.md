@@ -6,7 +6,7 @@ hero:
   tagline: Upload documents. Ask questions. Trace every answer back to its source — with verifiable citations, review workflows, and a self-contained desktop app.
   actions:
     - theme: brand
-      text: Download v0.2.1
+      text: Download v0.2.2
       link: https://github.com/XimilalaXiang/TrustRAG/releases/latest
     - theme: alt
       text: Get Started →

@@ -14,6 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-05-22
+
+### Added / 新增
+- 🌐 **多语言 UI（i18n）** — 完整的三语支持（中文/英文/日语），基于 Flutter 官方 l10n 框架，涵盖全部界面文本。
+- 📄 **原生 PDF 解析** — 桌面/移动端使用 Rust 原生 PDF 解析器，无需依赖 Python 文档处理服务。（Issue #4.1）
+- 🔄 **应用内更新检查** — 启动时自动检查 GitHub Releases 最新版本，支持跳过版本、稍后提醒，6 小时缓存避免频繁请求。
+- 📊 **审核报告导出** — 审核记录页新增报告按钮，展示审核统计指标（通过率、总数等），支持 Markdown 格式导出。
+- 🕸️ **知识图谱可视化** — 新增知识图谱页面，使用自定义力导向图（CustomPainter + InteractiveViewer），支持节点交互、图例、实体搜索。
+
+### Changed / 变更
+- 🎨 **全新应用图标** — 更换为蓝色六边形 TrustRAG 图标，覆盖 Android（5 密度 + 自适应）、iOS、macOS、Windows、Web 全平台。
+- 🖼️ **README 横幅更新** — 所有语言版本的 README（EN/ZH/JA/TW）换用新设计的 banner 图。
+- 📖 **GitHub Pages 文档大更新** — 新增审核报告、知识图谱、i18n 等功能的指南和 API 参考页面，同步中英文内容。
+
+### Infrastructure / 基础设施
+- 🔧 **VitePress 站点更新** — 新增 favicon、导航栏 logo、多语言文档页面。
+
+---
+
 ## [0.2.1] - 2026-05-21
 
 ### Added / 新增

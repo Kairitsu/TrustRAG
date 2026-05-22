@@ -10,7 +10,7 @@ import 'core/theme/app_theme.dart';
 import 'features/settings/widgets/update_dialog.dart';
 import 'l10n/app_localizations.dart';
 
-const appVersion = '0.2.1';
+const appVersion = '0.2.2';
 
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 

@@ -1,6 +1,6 @@
 [package]
 name = "trustrag-backend"
-version = "0.1.2"
+version = "0.2.2"
 edition = "2021"
 description = "TrustRAG - Trustworthy RAG Knowledge Workbench Backend"
 license = "Apache-2.0"
