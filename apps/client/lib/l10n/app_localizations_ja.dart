@@ -248,7 +248,7 @@ class SJa extends S {
 
   @override
   String correction(String text) {
-    return '修正: $text';
+    return '訂正';
   }
 
   @override
@@ -539,4 +539,90 @@ class SJa extends S {
 
   @override
   String get languageJa => '日本語';
+
+  @override
+  String get noReviewRecords => 'レビュー記録なし';
+
+  @override
+  String get reviewRecordsHint => '会話でAI引用をレビューすると、ここに記録が表示されます';
+
+  @override
+  String get exportReport => 'レポート出力';
+
+  @override
+  String get reviewReport => 'レビューレポート';
+
+  @override
+  String get generating => '生成中...';
+
+  @override
+  String reportGeneratedAt(String time) {
+    return '生成日時: $time';
+  }
+
+  @override
+  String get totalCitations => '引用総数';
+
+  @override
+  String get reviewed => 'レビュー済み';
+
+  @override
+  String get unreviewedCount => '未レビュー';
+
+  @override
+  String get reviewCoverage => 'レビューカバー率';
+
+  @override
+  String get approvalRate => '承認率';
+
+  @override
+  String get rejectionRate => '却下率';
+
+  @override
+  String get hallucinationRate => 'ハルシネーション率';
+
+  @override
+  String get keyMetrics => '主要指標';
+
+  @override
+  String get reviewResults => 'レビュー結果';
+
+  @override
+  String get reviewDetails => 'レビュー詳細';
+
+  @override
+  String get approved => '承認';
+
+  @override
+  String get rejected => '却下';
+
+  @override
+  String get flagged => '要確認';
+
+  @override
+  String get pending => '保留';
+
+  @override
+  String get document => 'ドキュメント';
+
+  @override
+  String get section => 'セクション';
+
+  @override
+  String get page => 'ページ';
+
+  @override
+  String get quote => '引用';
+
+  @override
+  String get copyMarkdown => 'Markdownをコピー';
+
+  @override
+  String get copiedToClipboard => 'クリップボードにコピーしました';
+
+  @override
+  String get reportLoadFailed => 'レポート生成に失敗しました';
+
+  @override
+  String get overview => '概要';
 }

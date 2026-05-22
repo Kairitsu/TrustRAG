@@ -251,7 +251,7 @@ class SEn extends S {
 
   @override
   String correction(String text) {
-    return 'Correction: $text';
+    return 'Correction';
   }
 
   @override
@@ -544,4 +544,91 @@ class SEn extends S {
 
   @override
   String get languageJa => '日本語';
+
+  @override
+  String get noReviewRecords => 'No review records';
+
+  @override
+  String get reviewRecordsHint =>
+      'Review AI citations in conversations to see records here';
+
+  @override
+  String get exportReport => 'Export Report';
+
+  @override
+  String get reviewReport => 'Review Report';
+
+  @override
+  String get generating => 'Generating...';
+
+  @override
+  String reportGeneratedAt(String time) {
+    return 'Generated: $time';
+  }
+
+  @override
+  String get totalCitations => 'Total Citations';
+
+  @override
+  String get reviewed => 'Reviewed';
+
+  @override
+  String get unreviewedCount => 'Unreviewed';
+
+  @override
+  String get reviewCoverage => 'Review Coverage';
+
+  @override
+  String get approvalRate => 'Approval Rate';
+
+  @override
+  String get rejectionRate => 'Rejection Rate';
+
+  @override
+  String get hallucinationRate => 'Hallucination Rate';
+
+  @override
+  String get keyMetrics => 'Key Metrics';
+
+  @override
+  String get reviewResults => 'Review Results';
+
+  @override
+  String get reviewDetails => 'Review Details';
+
+  @override
+  String get approved => 'Approved';
+
+  @override
+  String get rejected => 'Rejected';
+
+  @override
+  String get flagged => 'Flagged';
+
+  @override
+  String get pending => 'Pending';
+
+  @override
+  String get document => 'Document';
+
+  @override
+  String get section => 'Section';
+
+  @override
+  String get page => 'Page';
+
+  @override
+  String get quote => 'Quote';
+
+  @override
+  String get copyMarkdown => 'Copy Markdown';
+
+  @override
+  String get copiedToClipboard => 'Copied to clipboard';
+
+  @override
+  String get reportLoadFailed => 'Report generation failed';
+
+  @override
+  String get overview => 'Overview';
 }

@@ -246,7 +246,7 @@ class SZh extends S {
 
   @override
   String correction(String text) {
-    return '修正: $text';
+    return '修正';
   }
 
   @override
@@ -537,4 +537,90 @@ class SZh extends S {
 
   @override
   String get languageJa => '日本語';
+
+  @override
+  String get noReviewRecords => '暂无审核记录';
+
+  @override
+  String get reviewRecordsHint => '在对话中审核 AI 引用后，记录将在此处显示';
+
+  @override
+  String get exportReport => '导出报告';
+
+  @override
+  String get reviewReport => '审核报告';
+
+  @override
+  String get generating => '生成中...';
+
+  @override
+  String reportGeneratedAt(String time) {
+    return '生成时间: $time';
+  }
+
+  @override
+  String get totalCitations => '总引用数';
+
+  @override
+  String get reviewed => '已审核';
+
+  @override
+  String get unreviewedCount => '未审核';
+
+  @override
+  String get reviewCoverage => '审核覆盖率';
+
+  @override
+  String get approvalRate => '通过率';
+
+  @override
+  String get rejectionRate => '拒绝率';
+
+  @override
+  String get hallucinationRate => '幻觉率';
+
+  @override
+  String get keyMetrics => '关键指标';
+
+  @override
+  String get reviewResults => '审核结果分布';
+
+  @override
+  String get reviewDetails => '审核明细';
+
+  @override
+  String get approved => '通过';
+
+  @override
+  String get rejected => '拒绝';
+
+  @override
+  String get flagged => '存疑';
+
+  @override
+  String get pending => '待定';
+
+  @override
+  String get document => '文档';
+
+  @override
+  String get section => '章节';
+
+  @override
+  String get page => '页码';
+
+  @override
+  String get quote => '引用';
+
+  @override
+  String get copyMarkdown => '复制 Markdown';
+
+  @override
+  String get copiedToClipboard => '已复制到剪贴板';
+
+  @override
+  String get reportLoadFailed => '报告生成失败';
+
+  @override
+  String get overview => '概览';
 }

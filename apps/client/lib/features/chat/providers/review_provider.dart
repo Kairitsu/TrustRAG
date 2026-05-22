@@ -34,6 +34,81 @@ class ReviewRecord {
   }
 }
 
+class ReviewReportData {
+  final String generatedAt;
+  final ReviewStats stats;
+  final double approvalRate;
+  final double rejectionRate;
+  final double hallucinationRate;
+  final double reviewCoverage;
+  final List<ReviewRecordWithContext> recentReviews;
+
+  ReviewReportData({
+    required this.generatedAt,
+    required this.stats,
+    required this.approvalRate,
+    required this.rejectionRate,
+    required this.hallucinationRate,
+    required this.reviewCoverage,
+    required this.recentReviews,
+  });
+
+  factory ReviewReportData.fromJson(Map<String, dynamic> json) {
+    return ReviewReportData(
+      generatedAt: json['generated_at'] ?? '',
+      stats: ReviewStats.fromJson(json['stats'] ?? {}),
+      approvalRate: (json['approval_rate'] ?? 0).toDouble(),
+      rejectionRate: (json['rejection_rate'] ?? 0).toDouble(),
+      hallucinationRate: (json['hallucination_rate'] ?? 0).toDouble(),
+      reviewCoverage: (json['review_coverage'] ?? 0).toDouble(),
+      recentReviews: (json['recent_reviews'] as List? ?? [])
+          .map((e) => ReviewRecordWithContext.fromJson(e))
+          .toList(),
+    );
+  }
+}
+
+class ReviewRecordWithContext {
+  final String id;
+  final String citationId;
+  final String status;
+  final String? comment;
+  final String? correctedText;
+  final String? quotedText;
+  final String? documentTitle;
+  final String? headingPath;
+  final int? pageNumber;
+  final String createdAt;
+
+  ReviewRecordWithContext({
+    required this.id,
+    required this.citationId,
+    required this.status,
+    this.comment,
+    this.correctedText,
+    this.quotedText,
+    this.documentTitle,
+    this.headingPath,
+    this.pageNumber,
+    required this.createdAt,
+  });
+
+  factory ReviewRecordWithContext.fromJson(Map<String, dynamic> json) {
+    return ReviewRecordWithContext(
+      id: json['id'] ?? '',
+      citationId: json['citation_id'] ?? '',
+      status: json['status'] ?? 'pending',
+      comment: json['comment'],
+      correctedText: json['corrected_text'],
+      quotedText: json['quoted_text'],
+      documentTitle: json['document_title'],
+      headingPath: json['heading_path'],
+      pageNumber: json['page_number'],
+      createdAt: json['created_at'] ?? '',
+    );
+  }
+}
+
 class ReviewStats {
   final int totalCitations;
   final int approved;
@@ -112,5 +187,17 @@ class ReviewService {
       queryParameters: {'limit': limit, 'offset': offset},
     );
     return (resp.data as List).map((e) => ReviewRecord.fromJson(e)).toList();
+  }
+
+  Future<ReviewReportData> getReport() async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get('/reviews/report');
+    return ReviewReportData.fromJson(resp.data);
+  }
+
+  Future<String> getReportMarkdown() async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get('/reviews/report/markdown');
+    return resp.data as String;
   }
 }

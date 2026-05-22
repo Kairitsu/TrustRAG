@@ -534,7 +534,7 @@ abstract class S {
   /// No description provided for @correction.
   ///
   /// In zh, this message translates to:
-  /// **'修正: {text}'**
+  /// **'修正'**
   String correction(String text);
 
   /// No description provided for @citationId.
@@ -1070,6 +1070,174 @@ abstract class S {
   /// In zh, this message translates to:
   /// **'日本語'**
   String get languageJa;
+
+  /// No description provided for @noReviewRecords.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无审核记录'**
+  String get noReviewRecords;
+
+  /// No description provided for @reviewRecordsHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'在对话中审核 AI 引用后，记录将在此处显示'**
+  String get reviewRecordsHint;
+
+  /// No description provided for @exportReport.
+  ///
+  /// In zh, this message translates to:
+  /// **'导出报告'**
+  String get exportReport;
+
+  /// No description provided for @reviewReport.
+  ///
+  /// In zh, this message translates to:
+  /// **'审核报告'**
+  String get reviewReport;
+
+  /// No description provided for @generating.
+  ///
+  /// In zh, this message translates to:
+  /// **'生成中...'**
+  String get generating;
+
+  /// No description provided for @reportGeneratedAt.
+  ///
+  /// In zh, this message translates to:
+  /// **'生成时间: {time}'**
+  String reportGeneratedAt(String time);
+
+  /// No description provided for @totalCitations.
+  ///
+  /// In zh, this message translates to:
+  /// **'总引用数'**
+  String get totalCitations;
+
+  /// No description provided for @reviewed.
+  ///
+  /// In zh, this message translates to:
+  /// **'已审核'**
+  String get reviewed;
+
+  /// No description provided for @unreviewedCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'未审核'**
+  String get unreviewedCount;
+
+  /// No description provided for @reviewCoverage.
+  ///
+  /// In zh, this message translates to:
+  /// **'审核覆盖率'**
+  String get reviewCoverage;
+
+  /// No description provided for @approvalRate.
+  ///
+  /// In zh, this message translates to:
+  /// **'通过率'**
+  String get approvalRate;
+
+  /// No description provided for @rejectionRate.
+  ///
+  /// In zh, this message translates to:
+  /// **'拒绝率'**
+  String get rejectionRate;
+
+  /// No description provided for @hallucinationRate.
+  ///
+  /// In zh, this message translates to:
+  /// **'幻觉率'**
+  String get hallucinationRate;
+
+  /// No description provided for @keyMetrics.
+  ///
+  /// In zh, this message translates to:
+  /// **'关键指标'**
+  String get keyMetrics;
+
+  /// No description provided for @reviewResults.
+  ///
+  /// In zh, this message translates to:
+  /// **'审核结果分布'**
+  String get reviewResults;
+
+  /// No description provided for @reviewDetails.
+  ///
+  /// In zh, this message translates to:
+  /// **'审核明细'**
+  String get reviewDetails;
+
+  /// No description provided for @approved.
+  ///
+  /// In zh, this message translates to:
+  /// **'通过'**
+  String get approved;
+
+  /// No description provided for @rejected.
+  ///
+  /// In zh, this message translates to:
+  /// **'拒绝'**
+  String get rejected;
+
+  /// No description provided for @flagged.
+  ///
+  /// In zh, this message translates to:
+  /// **'存疑'**
+  String get flagged;
+
+  /// No description provided for @pending.
+  ///
+  /// In zh, this message translates to:
+  /// **'待定'**
+  String get pending;
+
+  /// No description provided for @document.
+  ///
+  /// In zh, this message translates to:
+  /// **'文档'**
+  String get document;
+
+  /// No description provided for @section.
+  ///
+  /// In zh, this message translates to:
+  /// **'章节'**
+  String get section;
+
+  /// No description provided for @page.
+  ///
+  /// In zh, this message translates to:
+  /// **'页码'**
+  String get page;
+
+  /// No description provided for @quote.
+  ///
+  /// In zh, this message translates to:
+  /// **'引用'**
+  String get quote;
+
+  /// No description provided for @copyMarkdown.
+  ///
+  /// In zh, this message translates to:
+  /// **'复制 Markdown'**
+  String get copyMarkdown;
+
+  /// No description provided for @copiedToClipboard.
+  ///
+  /// In zh, this message translates to:
+  /// **'已复制到剪贴板'**
+  String get copiedToClipboard;
+
+  /// No description provided for @reportLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'报告生成失败'**
+  String get reportLoadFailed;
+
+  /// No description provided for @overview.
+  ///
+  /// In zh, this message translates to:
+  /// **'概览'**
+  String get overview;
 }
 
 class _SDelegate extends LocalizationsDelegate<S> {

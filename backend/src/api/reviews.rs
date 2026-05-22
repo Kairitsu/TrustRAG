@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
-use crate::services::review::{self, CreateReviewInput, ReviewRecord, ReviewStats};
+use crate::services::review::{self, CreateReviewInput, ReviewRecord, ReviewReportData, ReviewStats};
 
 #[derive(Debug, Deserialize)]
 struct ListReviewsQuery {
@@ -19,6 +19,8 @@ struct ListReviewsQuery {
 pub fn router() -> Router<crate::api::AppState> {
     Router::new()
         .route("/reviews", get(list_all_reviews))
+        .route("/reviews/report", get(get_review_report))
+        .route("/reviews/report/markdown", get(get_review_report_markdown))
         .route(
             "/citations/{citation_id}/reviews",
             get(list_reviews).post(create_review),
@@ -70,6 +72,22 @@ async fn list_reviews(
 ) -> Result<Json<Vec<ReviewRecord>>, AppError> {
     let reviews = review::list_reviews_for_citation(&state.pool, citation_id).await?;
     Ok(Json(reviews))
+}
+
+async fn get_review_report(
+    _auth: AuthUser,
+    State(state): State<crate::api::AppState>,
+) -> Result<Json<ReviewReportData>, AppError> {
+    let report = review::generate_report(&state.pool).await?;
+    Ok(Json(report))
+}
+
+async fn get_review_report_markdown(
+    _auth: AuthUser,
+    State(state): State<crate::api::AppState>,
+) -> Result<String, AppError> {
+    let report = review::generate_report(&state.pool).await?;
+    Ok(review::report_to_markdown(&report))
 }
 
 async fn get_conversation_review_stats(
