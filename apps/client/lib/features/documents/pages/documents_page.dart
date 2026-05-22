@@ -11,7 +11,7 @@ import '../../dashboard/providers/workspace_provider.dart';
 import '../providers/document_provider.dart';
 import 'document_viewer_page.dart';
 
-const _desktopSupportedExtensions = {'txt', 'md', 'html', 'htm'};
+const _desktopSupportedExtensions = {'txt', 'md', 'html', 'htm', 'pdf'};
 
 class DocumentsPage extends ConsumerStatefulWidget {
   const DocumentsPage({super.key});
@@ -209,8 +209,8 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                 if (_isDesktopEmbedded) ...[
                   const SizedBox(width: 8),
                   Tooltip(
-                    message: '桌面模式仅支持 TXT/MD/HTML\n'
-                        'PDF/DOCX 需要部署服务器模式',
+                    message: '桌面模式支持 TXT/MD/HTML/PDF\n'
+                        'DOCX 需要部署服务器模式',
                     child: Icon(Icons.info_outline,
                         size: 18, color: Colors.orange.shade600),
                   ),
@@ -245,7 +245,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                       const SizedBox(height: 8),
                       Text(
                           _isDesktopEmbedded
-                              ? '点击"上传文档"添加 TXT、MD 或 HTML 文件'
+                              ? '点击"上传文档"添加 PDF、TXT、MD 或 HTML 文件'
                               : '点击"上传文档"添加 PDF、DOCX 或 TXT 文件',
                           style: TextStyle(color: Colors.grey.shade500)),
                       if (_isDesktopEmbedded) ...[

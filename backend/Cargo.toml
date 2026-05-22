@@ -8,8 +8,9 @@ license = "Apache-2.0"
 [features]
 default = ["postgres"]
 postgres = ["sqlx/postgres", "opendal/services-s3"]
-desktop = ["sqlx/sqlite", "opendal/services-fs", "usearch"]
-mobile = ["sqlx/sqlite", "opendal/services-fs", "openssl-vendored"]
+desktop = ["sqlx/sqlite", "opendal/services-fs", "usearch", "local-pdf"]
+mobile = ["sqlx/sqlite", "opendal/services-fs", "openssl-vendored", "local-pdf"]
+local-pdf = ["dep:lopdf"]
 openssl-vendored = ["openssl/vendored"]
 
 [dependencies]
@@ -51,3 +52,4 @@ urlencoding = "2.1.3"
 usearch = { version = "2", optional = true }
 openssl = { version = "0.10", optional = true }
 directories = "5"
+lopdf = { version = "0.40", optional = true }
