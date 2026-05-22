@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo-200.png" alt="TrustRAG Logo" width="120" />
+<img src="assets/banner.png" alt="TrustRAG Banner" width="800" />
 
 # TrustRAG
 
