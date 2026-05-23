@@ -7,6 +7,7 @@ use crate::db::DbPool;
 use crate::services::storage::StorageService;
 use crate::traits::embedding_provider::EmbeddingProvider;
 
+pub mod answer_status;
 pub mod audit;
 pub mod users;
 pub mod workspaces;
