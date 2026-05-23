@@ -85,7 +85,7 @@ impl RetrievalPipelineConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssembledSource {
     pub index: usize,
     pub chunk_id: Uuid,
@@ -97,14 +97,14 @@ pub struct AssembledSource {
     pub score: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievalPipelineOutput {
     pub context: String,
     pub sources: Vec<AssembledSource>,
     pub trace: Option<RetrievalTrace>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoredChunkRef {
     pub chunk_id: Uuid,
     pub document_id: Uuid,
@@ -112,7 +112,7 @@ pub struct ScoredChunkRef {
     pub rank: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievalTimings {
     pub query_expansion_ms: u64,
     pub search_ms: u64,
@@ -121,7 +121,7 @@ pub struct RetrievalTimings {
     pub total_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievalTrace {
     pub original_query: String,
     pub rewritten_query: String,
