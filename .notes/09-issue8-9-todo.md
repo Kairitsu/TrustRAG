@@ -8,7 +8,7 @@
 
 1. ~~Issue #8 Phase A+B (用户体验改善，复杂度低)~~ ✅
 2. ~~Issue #9 Phase 1-8 (核心检索架构升级)~~ ✅
-3. Issue #8 Phase C (服务器配置) - 待完成
+3. ~~Issue #8 Phase C (服务器配置)~~ ✅
 
 ---
 
@@ -22,12 +22,22 @@
 
 - [x] B1-B4: 用户友好错误提示、重试按钮、离线切换、多语言
 
-### Phase C: 服务器配置 (优先级: 中) ⏳ 待完成
+### Phase C: 服务器配置 ✅ 已完成
 
-- [ ] C1. 设置页面添加"服务器地址"配置项
-- [ ] C2. 内置默认官方服务器地址（预留）
-- [ ] C3. 添加服务器连接状态指示器
-- [ ] C4. 支持"官方服务 / 自定义服务器"切换开关
+- [x] C1. 设置页面添加"服务器地址"配置项
+  - 新增 `server_config_provider.dart` 状态管理（ServerMode, ServerConfig, SharedPreferences 持久化）
+  - 新增 `server_config_page.dart` 独立配置页面
+- [x] C2. 内置默认官方服务器地址（`https://api.trustrag.app`）
+  - ApiClient 支持从 SharedPreferences 加载自定义服务器 URL
+  - main.dart 启动时预加载服务器配置
+- [x] C3. 添加服务器连接状态指示器
+  - 4 种连接状态：unknown/checking/connected/disconnected
+  - 实时 HTTP /health 端点检测
+  - 状态图标显示在设置页和服务器配置页
+- [x] C4. 支持"官方服务 / 自定义服务器"切换开关
+  - 卡片式单选切换（官方服务 vs 自定义服务器）
+  - 自定义 URL 输入框 + 保存 + 连接测试
+  - 四语言 i18n（中/英/日/韩）完整支持
 
 ---
 

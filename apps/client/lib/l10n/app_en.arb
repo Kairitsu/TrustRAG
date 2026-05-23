@@ -290,5 +290,27 @@
   "reLogin": "Log In Again",
   "offlineMode": "Offline Mode",
   "offlineModeHint": "Cannot connect to server. Some features are temporarily unavailable. Data will sync when connection is restored.",
-  "offlineBannerText": "Currently offline. Team features are temporarily unavailable."
+  "offlineBannerText": "Currently offline. Team features are temporarily unavailable.",
+
+  "serverConfig": "Server Configuration",
+  "serverConfigSubtitle": "Configure backend server connection",
+  "officialServer": "Official Service",
+  "customServer": "Custom Server",
+  "officialServerDesc": "Use TrustRAG official hosted service",
+  "customServerDesc": "Connect to a self-hosted TrustRAG backend",
+  "serverAddress": "Server Address",
+  "serverAddressHint": "e.g. https://your-server.com",
+  "testConnection": "Test Connection",
+  "connectionSuccess": "Connection successful",
+  "connectionFailed": "Connection failed",
+  "connectionChecking": "Checking...",
+  "connectionUnknown": "Not tested",
+  "serverConnected": "Connected",
+  "serverDisconnected": "Disconnected",
+  "saveServerConfig": "Save",
+  "serverConfigSaved": "Server configuration saved. Restart the app to apply.",
+  "serverAddressEmpty": "Please enter a server address",
+  "embeddedServerNote": "Using embedded backend. No remote server configuration needed.",
+  "currentServerUrl": "Current server: {url}",
+  "@currentServerUrl": { "placeholders": { "url": { "type": "String" } } }
 }

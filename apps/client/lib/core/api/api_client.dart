@@ -49,6 +49,16 @@ class ApiClient {
     dio.interceptors.add(DioCacheInterceptor(options: cacheOptions));
   }
 
+  static String? _savedServerUrl;
+
+  static Future<void> loadSavedServerUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = prefs.getString('server_mode') ?? 'official';
+    if (mode == 'custom') {
+      _savedServerUrl = prefs.getString('custom_server_url');
+    }
+  }
+
   static String _resolveBaseUrl() {
     if (BackendManager.shouldRunEmbedded) {
       if (BackendManager().isRunning || BackendManager().startAttempted) {
@@ -61,6 +71,10 @@ class ApiClient {
       defaultValue: '',
     );
     if (envUrl.isNotEmpty) return envUrl;
+
+    if (_savedServerUrl != null && _savedServerUrl!.isNotEmpty) {
+      return _savedServerUrl!;
+    }
 
     if (kIsWeb) {
       return const String.fromEnvironment('API_BASE_URL', defaultValue: '/api');

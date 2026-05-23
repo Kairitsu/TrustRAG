@@ -290,5 +290,27 @@
   "reLogin": "다시 로그인",
   "offlineMode": "오프라인 모드",
   "offlineModeHint": "서버에 연결할 수 없습니다. 일부 기능이 일시적으로 사용할 수 없습니다. 연결이 복원되면 자동으로 동기화됩니다.",
-  "offlineBannerText": "현재 오프라인 상태입니다. 팀 기능이 일시적으로 사용할 수 없습니다."
+  "offlineBannerText": "현재 오프라인 상태입니다. 팀 기능이 일시적으로 사용할 수 없습니다.",
+
+  "serverConfig": "서버 설정",
+  "serverConfigSubtitle": "백엔드 서버 연결 설정",
+  "officialServer": "공식 서비스",
+  "customServer": "커스텀 서버",
+  "officialServerDesc": "TrustRAG 공식 호스팅 서비스 사용",
+  "customServerDesc": "자체 호스팅 TrustRAG 백엔드에 연결",
+  "serverAddress": "서버 주소",
+  "serverAddressHint": "예: https://your-server.com",
+  "testConnection": "연결 테스트",
+  "connectionSuccess": "연결 성공",
+  "connectionFailed": "연결 실패",
+  "connectionChecking": "확인 중...",
+  "connectionUnknown": "미확인",
+  "serverConnected": "연결됨",
+  "serverDisconnected": "연결 안 됨",
+  "saveServerConfig": "저장",
+  "serverConfigSaved": "서버 설정이 저장되었습니다. 앱을 재시작하면 적용됩니다.",
+  "serverAddressEmpty": "서버 주소를 입력하세요",
+  "embeddedServerNote": "임베디드 백엔드를 사용 중입니다. 원격 서버 설정이 필요하지 않습니다.",
+  "currentServerUrl": "현재 서버: {url}",
+  "@currentServerUrl": { "placeholders": { "url": { "type": "String" } } }
 }

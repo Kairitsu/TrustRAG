@@ -1684,6 +1684,126 @@ abstract class S {
   /// In zh, this message translates to:
   /// **'当前处于离线状态，团队功能暂不可用'**
   String get offlineBannerText;
+
+  /// No description provided for @serverConfig.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器配置'**
+  String get serverConfig;
+
+  /// No description provided for @serverConfigSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'配置后端服务器连接地址'**
+  String get serverConfigSubtitle;
+
+  /// No description provided for @officialServer.
+  ///
+  /// In zh, this message translates to:
+  /// **'官方服务'**
+  String get officialServer;
+
+  /// No description provided for @customServer.
+  ///
+  /// In zh, this message translates to:
+  /// **'自定义服务器'**
+  String get customServer;
+
+  /// No description provided for @officialServerDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'使用 TrustRAG 官方托管服务'**
+  String get officialServerDesc;
+
+  /// No description provided for @customServerDesc.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接到自部署的 TrustRAG 后端'**
+  String get customServerDesc;
+
+  /// No description provided for @serverAddress.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器地址'**
+  String get serverAddress;
+
+  /// No description provided for @serverAddressHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'如 https://your-server.com'**
+  String get serverAddressHint;
+
+  /// No description provided for @testConnection.
+  ///
+  /// In zh, this message translates to:
+  /// **'测试连接'**
+  String get testConnection;
+
+  /// No description provided for @connectionSuccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接成功'**
+  String get connectionSuccess;
+
+  /// No description provided for @connectionFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接失败'**
+  String get connectionFailed;
+
+  /// No description provided for @connectionChecking.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在检测...'**
+  String get connectionChecking;
+
+  /// No description provided for @connectionUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'未检测'**
+  String get connectionUnknown;
+
+  /// No description provided for @serverConnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'已连接'**
+  String get serverConnected;
+
+  /// No description provided for @serverDisconnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'未连接'**
+  String get serverDisconnected;
+
+  /// No description provided for @saveServerConfig.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存'**
+  String get saveServerConfig;
+
+  /// No description provided for @serverConfigSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器配置已保存，重启应用后生效'**
+  String get serverConfigSaved;
+
+  /// No description provided for @serverAddressEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'请输入服务器地址'**
+  String get serverAddressEmpty;
+
+  /// No description provided for @embeddedServerNote.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前使用内嵌后端，无需配置远程服务器'**
+  String get embeddedServerNote;
+
+  /// No description provided for @currentServerUrl.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前服务器: {url}'**
+  String currentServerUrl(String url);
 }
 
 class _SDelegate extends LocalizationsDelegate<S> {

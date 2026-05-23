@@ -313,5 +313,27 @@
   "reLogin": "重新登录",
   "offlineMode": "离线模式",
   "offlineModeHint": "无法连接到服务器，部分功能暂时不可用。连接恢复后将自动同步。",
-  "offlineBannerText": "当前处于离线状态，团队功能暂不可用"
+  "offlineBannerText": "当前处于离线状态，团队功能暂不可用",
+
+  "serverConfig": "服务器配置",
+  "serverConfigSubtitle": "配置后端服务器连接地址",
+  "officialServer": "官方服务",
+  "customServer": "自定义服务器",
+  "officialServerDesc": "使用 TrustRAG 官方托管服务",
+  "customServerDesc": "连接到自部署的 TrustRAG 后端",
+  "serverAddress": "服务器地址",
+  "serverAddressHint": "如 https://your-server.com",
+  "testConnection": "测试连接",
+  "connectionSuccess": "连接成功",
+  "connectionFailed": "连接失败",
+  "connectionChecking": "正在检测...",
+  "connectionUnknown": "未检测",
+  "serverConnected": "已连接",
+  "serverDisconnected": "未连接",
+  "saveServerConfig": "保存",
+  "serverConfigSaved": "服务器配置已保存，重启应用后生效",
+  "serverAddressEmpty": "请输入服务器地址",
+  "embeddedServerNote": "当前使用内嵌后端，无需配置远程服务器",
+  "currentServerUrl": "当前服务器: {url}",
+  "@currentServerUrl": { "placeholders": { "url": { "type": "String" } } }
 }

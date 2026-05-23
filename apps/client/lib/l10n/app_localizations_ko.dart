@@ -869,4 +869,66 @@ class SKo extends S {
 
   @override
   String get offlineBannerText => '현재 오프라인 상태입니다. 팀 기능이 일시적으로 사용할 수 없습니다.';
+
+  @override
+  String get serverConfig => '서버 설정';
+
+  @override
+  String get serverConfigSubtitle => '백엔드 서버 연결 설정';
+
+  @override
+  String get officialServer => '공식 서비스';
+
+  @override
+  String get customServer => '커스텀 서버';
+
+  @override
+  String get officialServerDesc => 'TrustRAG 공식 호스팅 서비스 사용';
+
+  @override
+  String get customServerDesc => '자체 호스팅 TrustRAG 백엔드에 연결';
+
+  @override
+  String get serverAddress => '서버 주소';
+
+  @override
+  String get serverAddressHint => '예: https://your-server.com';
+
+  @override
+  String get testConnection => '연결 테스트';
+
+  @override
+  String get connectionSuccess => '연결 성공';
+
+  @override
+  String get connectionFailed => '연결 실패';
+
+  @override
+  String get connectionChecking => '확인 중...';
+
+  @override
+  String get connectionUnknown => '미확인';
+
+  @override
+  String get serverConnected => '연결됨';
+
+  @override
+  String get serverDisconnected => '연결 안 됨';
+
+  @override
+  String get saveServerConfig => '저장';
+
+  @override
+  String get serverConfigSaved => '서버 설정이 저장되었습니다. 앱을 재시작하면 적용됩니다.';
+
+  @override
+  String get serverAddressEmpty => '서버 주소를 입력하세요';
+
+  @override
+  String get embeddedServerNote => '임베디드 백엔드를 사용 중입니다. 원격 서버 설정이 필요하지 않습니다.';
+
+  @override
+  String currentServerUrl(String url) {
+    return '현재 서버: $url';
+  }
 }

@@ -861,4 +861,66 @@ class SZh extends S {
 
   @override
   String get offlineBannerText => '当前处于离线状态，团队功能暂不可用';
+
+  @override
+  String get serverConfig => '服务器配置';
+
+  @override
+  String get serverConfigSubtitle => '配置后端服务器连接地址';
+
+  @override
+  String get officialServer => '官方服务';
+
+  @override
+  String get customServer => '自定义服务器';
+
+  @override
+  String get officialServerDesc => '使用 TrustRAG 官方托管服务';
+
+  @override
+  String get customServerDesc => '连接到自部署的 TrustRAG 后端';
+
+  @override
+  String get serverAddress => '服务器地址';
+
+  @override
+  String get serverAddressHint => '如 https://your-server.com';
+
+  @override
+  String get testConnection => '测试连接';
+
+  @override
+  String get connectionSuccess => '连接成功';
+
+  @override
+  String get connectionFailed => '连接失败';
+
+  @override
+  String get connectionChecking => '正在检测...';
+
+  @override
+  String get connectionUnknown => '未检测';
+
+  @override
+  String get serverConnected => '已连接';
+
+  @override
+  String get serverDisconnected => '未连接';
+
+  @override
+  String get saveServerConfig => '保存';
+
+  @override
+  String get serverConfigSaved => '服务器配置已保存，重启应用后生效';
+
+  @override
+  String get serverAddressEmpty => '请输入服务器地址';
+
+  @override
+  String get embeddedServerNote => '当前使用内嵌后端，无需配置远程服务器';
+
+  @override
+  String currentServerUrl(String url) {
+    return '当前服务器: $url';
+  }
 }

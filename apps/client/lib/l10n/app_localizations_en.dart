@@ -881,4 +881,68 @@ class SEn extends S {
   @override
   String get offlineBannerText =>
       'Currently offline. Team features are temporarily unavailable.';
+
+  @override
+  String get serverConfig => 'Server Configuration';
+
+  @override
+  String get serverConfigSubtitle => 'Configure backend server connection';
+
+  @override
+  String get officialServer => 'Official Service';
+
+  @override
+  String get customServer => 'Custom Server';
+
+  @override
+  String get officialServerDesc => 'Use TrustRAG official hosted service';
+
+  @override
+  String get customServerDesc => 'Connect to a self-hosted TrustRAG backend';
+
+  @override
+  String get serverAddress => 'Server Address';
+
+  @override
+  String get serverAddressHint => 'e.g. https://your-server.com';
+
+  @override
+  String get testConnection => 'Test Connection';
+
+  @override
+  String get connectionSuccess => 'Connection successful';
+
+  @override
+  String get connectionFailed => 'Connection failed';
+
+  @override
+  String get connectionChecking => 'Checking...';
+
+  @override
+  String get connectionUnknown => 'Not tested';
+
+  @override
+  String get serverConnected => 'Connected';
+
+  @override
+  String get serverDisconnected => 'Disconnected';
+
+  @override
+  String get saveServerConfig => 'Save';
+
+  @override
+  String get serverConfigSaved =>
+      'Server configuration saved. Restart the app to apply.';
+
+  @override
+  String get serverAddressEmpty => 'Please enter a server address';
+
+  @override
+  String get embeddedServerNote =>
+      'Using embedded backend. No remote server configuration needed.';
+
+  @override
+  String currentServerUrl(String url) {
+    return 'Current server: $url';
+  }
 }

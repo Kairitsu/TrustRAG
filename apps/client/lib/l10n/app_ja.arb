@@ -290,5 +290,27 @@
   "reLogin": "再ログイン",
   "offlineMode": "オフラインモード",
   "offlineModeHint": "サーバーに接続できません。一部の機能は一時的に利用できません。接続が回復すると自動的に同期されます。",
-  "offlineBannerText": "現在オフラインです。チーム機能は一時的に利用できません。"
+  "offlineBannerText": "現在オフラインです。チーム機能は一時的に利用できません。",
+
+  "serverConfig": "サーバー設定",
+  "serverConfigSubtitle": "バックエンドサーバーの接続先を設定",
+  "officialServer": "公式サービス",
+  "customServer": "カスタムサーバー",
+  "officialServerDesc": "TrustRAG公式ホスティングサービスを使用",
+  "customServerDesc": "自前のTrustRAGバックエンドに接続",
+  "serverAddress": "サーバーアドレス",
+  "serverAddressHint": "例: https://your-server.com",
+  "testConnection": "接続テスト",
+  "connectionSuccess": "接続成功",
+  "connectionFailed": "接続失敗",
+  "connectionChecking": "確認中...",
+  "connectionUnknown": "未確認",
+  "serverConnected": "接続済み",
+  "serverDisconnected": "未接続",
+  "saveServerConfig": "保存",
+  "serverConfigSaved": "サーバー設定を保存しました。アプリを再起動すると適用されます。",
+  "serverAddressEmpty": "サーバーアドレスを入力してください",
+  "embeddedServerNote": "組み込みバックエンドを使用中。リモートサーバーの設定は不要です。",
+  "currentServerUrl": "現在のサーバー: {url}",
+  "@currentServerUrl": { "placeholders": { "url": { "type": "String" } } }
 }

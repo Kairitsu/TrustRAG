@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/api/api_client.dart';
 import 'core/router/app_router.dart';
 import 'core/services/backend_manager.dart';
 import 'core/services/update_checker.dart';
@@ -32,6 +33,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   GoogleFonts.config.allowRuntimeFetching = false;
+
+  await ApiClient.loadSavedServerUrl();
 
   if (BackendManager.shouldRunEmbedded) {
     debugPrint('[App] Starting embedded backend...');

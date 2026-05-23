@@ -17,8 +17,10 @@ import '../../review/pages/review_list_page.dart';
 import '../../search/pages/workspace_search_page.dart';
 import '../../search/pages/knowledge_graph_page.dart';
 import '../../settings/pages/model_config_page.dart';
+import '../../settings/pages/server_config_page.dart';
 import '../../settings/pages/workspace_members_page.dart';
 import '../../settings/pages/team_management_page.dart';
+import '../../settings/providers/server_config_provider.dart';
 import '../providers/workspace_provider.dart';
 
 class DashboardPage extends ConsumerStatefulWidget {
@@ -465,6 +467,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 ),
               ),
               const SizedBox(height: 8),
+              _buildServerConfigCard(),
+              const SizedBox(height: 8),
               if (isTeamWs) ...[
                 Card(
                   child: ListTile(
@@ -628,6 +632,49 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildServerConfigCard() {
+    final s = S.of(context);
+    final serverConfig = ref.watch(serverConfigProvider);
+
+    final IconData statusIcon;
+    final Color statusColor;
+    switch (serverConfig.connectionStatus) {
+      case ServerConnectionStatus.connected:
+        statusIcon = Icons.check_circle;
+        statusColor = Colors.green;
+      case ServerConnectionStatus.disconnected:
+        statusIcon = Icons.cancel;
+        statusColor = Colors.red;
+      case ServerConnectionStatus.checking:
+        statusIcon = Icons.sync;
+        statusColor = Colors.orange;
+      case ServerConnectionStatus.unknown:
+        statusIcon = Icons.cloud_queue;
+        statusColor = Colors.grey;
+    }
+
+    final subtitle = serverConfig.mode == ServerMode.official
+        ? s.officialServer
+        : '${s.customServer}: ${serverConfig.customUrl}';
+
+    return Card(
+      child: ListTile(
+        leading: Icon(statusIcon, color: statusColor),
+        title: Text(s.serverConfig),
+        subtitle: Text(
+          subtitle,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const ServerConfigPage()),
+          );
+        },
+      ),
     );
   }
 

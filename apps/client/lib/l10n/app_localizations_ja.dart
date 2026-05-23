@@ -866,4 +866,66 @@ class SJa extends S {
 
   @override
   String get offlineBannerText => '現在オフラインです。チーム機能は一時的に利用できません。';
+
+  @override
+  String get serverConfig => 'サーバー設定';
+
+  @override
+  String get serverConfigSubtitle => 'バックエンドサーバーの接続先を設定';
+
+  @override
+  String get officialServer => '公式サービス';
+
+  @override
+  String get customServer => 'カスタムサーバー';
+
+  @override
+  String get officialServerDesc => 'TrustRAG公式ホスティングサービスを使用';
+
+  @override
+  String get customServerDesc => '自前のTrustRAGバックエンドに接続';
+
+  @override
+  String get serverAddress => 'サーバーアドレス';
+
+  @override
+  String get serverAddressHint => '例: https://your-server.com';
+
+  @override
+  String get testConnection => '接続テスト';
+
+  @override
+  String get connectionSuccess => '接続成功';
+
+  @override
+  String get connectionFailed => '接続失敗';
+
+  @override
+  String get connectionChecking => '確認中...';
+
+  @override
+  String get connectionUnknown => '未確認';
+
+  @override
+  String get serverConnected => '接続済み';
+
+  @override
+  String get serverDisconnected => '未接続';
+
+  @override
+  String get saveServerConfig => '保存';
+
+  @override
+  String get serverConfigSaved => 'サーバー設定を保存しました。アプリを再起動すると適用されます。';
+
+  @override
+  String get serverAddressEmpty => 'サーバーアドレスを入力してください';
+
+  @override
+  String get embeddedServerNote => '組み込みバックエンドを使用中。リモートサーバーの設定は不要です。';
+
+  @override
+  String currentServerUrl(String url) {
+    return '現在のサーバー: $url';
+  }
 }
