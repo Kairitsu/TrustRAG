@@ -6,6 +6,7 @@ pub mod llm;
 pub mod embedding;
 #[cfg(sqlite_mode)]
 pub mod local_doc_processor;
+pub mod metadata;
 pub mod reranker;
 pub mod retrieval_pipeline;
 pub mod search;
