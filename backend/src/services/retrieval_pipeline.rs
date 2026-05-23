@@ -55,6 +55,7 @@ impl RetrievalPipelineConfig {
             use_mmr: false,
             mmr_lambda: 0.7,
             rrf_k: self.rrf_k,
+            metadata_filter: Default::default(),
         }
     }
 }

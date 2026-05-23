@@ -4,6 +4,59 @@ use uuid::Uuid;
 use crate::db::DbPool;
 use crate::traits::embedding_provider::EmbeddingProvider;
 
+/// Structured metadata filters for domain-aware retrieval.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MetadataFilter {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub topics: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
+}
+
+impl MetadataFilter {
+    pub fn is_empty(&self) -> bool {
+        self.domains.is_empty()
+            && self.languages.is_empty()
+            && self.topics.is_empty()
+            && self.keywords.is_empty()
+    }
+
+    /// Build a SQL WHERE clause fragment for JSONB metadata filtering (PostgreSQL).
+    /// Returns (clause, bind_values) where clause uses $N placeholders starting at `param_offset`.
+    pub fn to_sql_conditions(&self, param_offset: usize) -> (Vec<String>, Vec<String>) {
+        let mut conditions = Vec::new();
+        let mut values = Vec::new();
+        let mut idx = param_offset;
+
+        for domain in &self.domains {
+            conditions.push(format!("d.metadata->>'domain' ILIKE ${}", idx));
+            values.push(format!("%{}%", domain));
+            idx += 1;
+        }
+        for lang in &self.languages {
+            conditions.push(format!("d.metadata->>'language' ILIKE ${}", idx));
+            values.push(format!("%{}%", lang));
+            idx += 1;
+        }
+        for topic in &self.topics {
+            conditions.push(format!("d.metadata->'topics' @> ${}::jsonb", idx));
+            values.push(serde_json::json!([topic]).to_string());
+            idx += 1;
+        }
+        for keyword in &self.keywords {
+            conditions.push(format!("d.metadata->'keywords' @> ${}::jsonb", idx));
+            values.push(serde_json::json!([keyword]).to_string());
+            idx += 1;
+        }
+
+        (conditions, values)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
     pub mode: SearchMode,
@@ -12,6 +65,8 @@ pub struct SearchConfig {
     pub use_mmr: bool,
     pub mmr_lambda: f64,
     pub rrf_k: f64,
+    #[serde(default)]
+    pub metadata_filter: MetadataFilter,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,6 +87,7 @@ impl Default for SearchConfig {
             use_mmr: false,
             mmr_lambda: 0.7,
             rrf_k: 60.0,
+            metadata_filter: MetadataFilter::default(),
         }
     }
 }
@@ -821,5 +877,73 @@ mod tests {
         assert!(json2.contains("fusion_score"));
         assert!(!json2.contains("sparse_score"));
         assert!(!json2.contains("rerank_score"));
+    }
+
+    #[test]
+    fn test_metadata_filter_empty() {
+        let filter = MetadataFilter::default();
+        assert!(filter.is_empty());
+        let (conditions, values) = filter.to_sql_conditions(1);
+        assert!(conditions.is_empty());
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_filter_domains() {
+        let filter = MetadataFilter {
+            domains: vec!["legal".to_string()],
+            ..Default::default()
+        };
+        assert!(!filter.is_empty());
+        let (conditions, values) = filter.to_sql_conditions(5);
+        assert_eq!(conditions.len(), 1);
+        assert!(conditions[0].contains("$5"));
+        assert!(conditions[0].contains("domain"));
+        assert_eq!(values[0], "%legal%");
+    }
+
+    #[test]
+    fn test_metadata_filter_multiple_fields() {
+        let filter = MetadataFilter {
+            domains: vec!["finance".to_string()],
+            languages: vec!["en".to_string()],
+            topics: vec!["investment".to_string()],
+            keywords: vec!["portfolio".to_string()],
+        };
+        let (conditions, values) = filter.to_sql_conditions(1);
+        assert_eq!(conditions.len(), 4);
+        assert_eq!(values.len(), 4);
+        assert!(conditions[0].contains("$1"));
+        assert!(conditions[1].contains("$2"));
+        assert!(conditions[2].contains("$3"));
+        assert!(conditions[3].contains("$4"));
+    }
+
+    #[test]
+    fn test_metadata_filter_serde_roundtrip() {
+        let filter = MetadataFilter {
+            domains: vec!["legal".to_string()],
+            languages: vec!["zh".to_string()],
+            topics: vec![],
+            keywords: vec!["contract".to_string()],
+        };
+        let json = serde_json::to_string(&filter).unwrap();
+        let deserialized: MetadataFilter = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.domains, filter.domains);
+        assert_eq!(deserialized.languages, filter.languages);
+        assert!(deserialized.topics.is_empty());
+        assert_eq!(deserialized.keywords, filter.keywords);
+        assert!(!json.contains("topics"));
+    }
+
+    #[test]
+    fn test_search_config_includes_metadata_filter() {
+        let config = SearchConfig::default();
+        assert!(config.metadata_filter.is_empty());
+
+        let json = r#"{"mode":"hybrid","top_k":10,"min_score":0.3,"use_mmr":false,"mmr_lambda":0.7,"rrf_k":60.0,"metadata_filter":{"domains":["legal"],"keywords":["contract"]}}"#;
+        let config: SearchConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.metadata_filter.domains, vec!["legal"]);
+        assert_eq!(config.metadata_filter.keywords, vec!["contract"]);
     }
 }
