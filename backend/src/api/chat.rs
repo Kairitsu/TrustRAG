@@ -220,6 +220,25 @@ struct CitationsStoredEvent {
 }
 
 #[derive(Serialize)]
+struct RetrievalStartedEvent {
+    query: String,
+    timestamp_ms: u64,
+}
+
+#[derive(Serialize)]
+struct RetrievalFinishedEvent {
+    sources_count: usize,
+    elapsed_ms: u64,
+    retrieval_trace_id: String,
+}
+
+#[derive(Serialize)]
+struct VerificationWarningEvent {
+    message: String,
+    severity: String,
+}
+
+#[derive(Serialize)]
 struct NonStreamingResponse {
     message: MessageResponse,
     citations: Vec<CitationEvent>,
@@ -658,7 +677,16 @@ fn build_sse_stream(
             };
 
             let pipeline_config = rag_config.to_pipeline_config();
+            let retrieval_trace_id = Uuid::new_v4().to_string();
 
+            if let Ok(data) = serde_json::to_string(&RetrievalStartedEvent {
+                query: analysis.rewritten_query.clone(),
+                timestamp_ms: start.elapsed().as_millis() as u64,
+            }) {
+                yield Ok(Event::default().event("retrieval_started").data(data));
+            }
+
+            let retrieval_start = std::time::Instant::now();
             match crate::services::retrieval_pipeline::run(
                 &pool,
                 emb_provider.as_ref(),
@@ -671,6 +699,14 @@ fn build_sse_stream(
                 Ok(pipeline_output) => {
                     let context = pipeline_output.context;
                     let sources = pipeline_output.sources;
+
+                    if let Ok(data) = serde_json::to_string(&RetrievalFinishedEvent {
+                        sources_count: sources.len(),
+                        elapsed_ms: retrieval_start.elapsed().as_millis() as u64,
+                        retrieval_trace_id: retrieval_trace_id.clone(),
+                    }) {
+                        yield Ok(Event::default().event("retrieval_finished").data(data));
+                    }
 
                     // Emit citations
                     for s in &sources {
@@ -789,7 +825,7 @@ fn build_sse_stream(
                         prompt_tokens: final_prompt_tokens,
                         completion_tokens: final_completion_tokens,
                         latency_ms: start.elapsed().as_millis() as u64,
-                        retrieval_trace_id: Some(Uuid::new_v4().to_string()),
+                        retrieval_trace_id: Some(retrieval_trace_id.clone()),
                         answer_status: Some("draft".to_string()),
                     }).unwrap_or_default();
                     yield Ok(Event::default().event("message_end").data(end_data));
