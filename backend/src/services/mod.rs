@@ -1,4 +1,5 @@
 pub mod answer_status;
+pub mod answer_versions;
 pub mod audit;
 pub mod chunking;
 pub mod citation;
