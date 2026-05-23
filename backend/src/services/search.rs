@@ -19,6 +19,7 @@ pub struct SearchConfig {
 pub enum SearchMode {
     Vector,
     Fulltext,
+    Sparse,
     Hybrid,
 }
 
@@ -168,6 +169,85 @@ pub async fn fulltext_search(
     };
 
     Ok(rows)
+}
+
+/// tsvector-based sparse search using ts_rank (PostgreSQL only).
+/// Uses the `tsv` column populated by migration 0008.
+/// Falls back to pg_trgm fulltext_search if the tsv column is empty.
+#[cfg(feature = "postgres")]
+pub async fn sparse_search(
+    pool: &DbPool,
+    workspace_id: Uuid,
+    query: &str,
+    top_k: usize,
+    document_ids: Option<&[Uuid]>,
+) -> anyhow::Result<Vec<SearchRow>> {
+    let tsquery = build_tsquery(query);
+    if tsquery.is_empty() {
+        return fulltext_search(pool, workspace_id, query, top_k, document_ids).await;
+    }
+
+    let rows = if let Some(doc_ids) = document_ids {
+        sqlx::query_as::<_, SearchRow>(
+            r#"
+            SELECT dc.id, dc.document_id, dc.content, dc.heading_path,
+                   dc.page_start, dc.page_end,
+                   ts_rank_cd(dc.tsv, to_tsquery('simple', $1), 32)::float8 AS score
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE d.workspace_id = $2
+              AND dc.document_id = ANY($3)
+              AND dc.tsv @@ to_tsquery('simple', $1)
+            ORDER BY score DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(&tsquery)
+        .bind(workspace_id)
+        .bind(doc_ids)
+        .bind(top_k as i64)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, SearchRow>(
+            r#"
+            SELECT dc.id, dc.document_id, dc.content, dc.heading_path,
+                   dc.page_start, dc.page_end,
+                   ts_rank_cd(dc.tsv, to_tsquery('simple', $1), 32)::float8 AS score
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE d.workspace_id = $2
+              AND dc.tsv @@ to_tsquery('simple', $1)
+            ORDER BY score DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(&tsquery)
+        .bind(workspace_id)
+        .bind(top_k as i64)
+        .fetch_all(pool)
+        .await?
+    };
+
+    if rows.is_empty() {
+        return fulltext_search(pool, workspace_id, query, top_k, document_ids).await;
+    }
+
+    Ok(rows)
+}
+
+/// Convert a natural-language query into a PostgreSQL tsquery string.
+/// Splits on whitespace, filters noise, joins with `|` (OR) for recall.
+fn build_tsquery(query: &str) -> String {
+    let terms: Vec<String> = query
+        .split(|c: char| c.is_whitespace() || "\"*(){}[]|:!?.,;'".contains(c))
+        .filter(|w| !w.is_empty() && w.len() > 1)
+        .map(|w| w.to_lowercase())
+        .collect();
+    if terms.is_empty() {
+        return String::new();
+    }
+    terms.join(" | ")
 }
 
 // ============================================================
@@ -386,43 +466,52 @@ pub async fn hybrid_search(
     let start = std::time::Instant::now();
     let retrieval_k = config.top_k * 2;
 
+    let rows_to_results = |rows: Vec<SearchRow>| -> Vec<SearchResult> {
+        rows.into_iter()
+            .map(|r| SearchResult {
+                chunk_id: r.0,
+                document_id: r.1,
+                content: r.2,
+                heading_path: r.3,
+                page_start: r.4,
+                page_end: r.5,
+                relevance_score: r.6,
+            })
+            .collect()
+    };
+
     let results = match config.mode {
         SearchMode::Vector => {
             let embeddings = embedding_provider.embed_texts(&[query.to_string()]).await?;
             let query_emb = embeddings.into_iter().next().ok_or_else(|| anyhow::anyhow!("No embedding returned"))?;
             let vector_rows = vector_search(pool, workspace_id, &query_emb, config.top_k, document_ids).await?;
-            vector_rows
-                .into_iter()
-                .map(|r| SearchResult {
-                    chunk_id: r.0,
-                    document_id: r.1,
-                    content: r.2,
-                    heading_path: r.3,
-                    page_start: r.4,
-                    page_end: r.5,
-                    relevance_score: r.6,
-                })
-                .collect()
+            rows_to_results(vector_rows)
         }
         SearchMode::Fulltext => {
             let ft_rows = fulltext_search(pool, workspace_id, query, config.top_k, document_ids).await?;
-            ft_rows
-                .into_iter()
-                .map(|r| SearchResult {
-                    chunk_id: r.0,
-                    document_id: r.1,
-                    content: r.2,
-                    heading_path: r.3,
-                    page_start: r.4,
-                    page_end: r.5,
-                    relevance_score: r.6,
-                })
-                .collect()
+            rows_to_results(ft_rows)
+        }
+        #[cfg(feature = "postgres")]
+        SearchMode::Sparse => {
+            let sp_rows = sparse_search(pool, workspace_id, query, config.top_k, document_ids).await?;
+            rows_to_results(sp_rows)
+        }
+        #[cfg(not(feature = "postgres"))]
+        SearchMode::Sparse => {
+            let ft_rows = fulltext_search(pool, workspace_id, query, config.top_k, document_ids).await?;
+            rows_to_results(ft_rows)
         }
         SearchMode::Hybrid => {
             let embeddings = embedding_provider.embed_texts(&[query.to_string()]).await?;
             let query_emb = embeddings.into_iter().next().ok_or_else(|| anyhow::anyhow!("No embedding returned"))?;
 
+            #[cfg(feature = "postgres")]
+            let (vector_rows, ft_rows) = tokio::try_join!(
+                vector_search(pool, workspace_id, &query_emb, retrieval_k, document_ids),
+                sparse_search(pool, workspace_id, query, retrieval_k, document_ids),
+            )?;
+
+            #[cfg(not(feature = "postgres"))]
             let (vector_rows, ft_rows) = tokio::try_join!(
                 vector_search(pool, workspace_id, &query_emb, retrieval_k, document_ids),
                 fulltext_search(pool, workspace_id, query, retrieval_k, document_ids),
@@ -556,6 +645,64 @@ mod tests {
         for i in 0..results.len() - 1 {
             assert!(results[i].relevance_score >= results[i + 1].relevance_score,
                 "Results should be sorted by descending score");
+        }
+    }
+
+    #[test]
+    fn test_build_tsquery_basic() {
+        let q = build_tsquery("向量数据库 性能优化");
+        assert!(q.contains("向量数据库"));
+        assert!(q.contains("性能优化"));
+        assert!(q.contains(" | "));
+    }
+
+    #[test]
+    fn test_build_tsquery_filters_short_tokens() {
+        let q = build_tsquery("a b cd ef");
+        assert!(!q.contains(" a "));
+        assert!(!q.contains(" b "));
+        assert!(q.contains("cd"));
+        assert!(q.contains("ef"));
+    }
+
+    #[test]
+    fn test_build_tsquery_empty() {
+        assert!(build_tsquery("").is_empty());
+        assert!(build_tsquery("  ").is_empty());
+        assert!(build_tsquery("a b").is_empty());
+    }
+
+    #[test]
+    fn test_build_tsquery_strips_special_chars() {
+        let q = build_tsquery("hello:world! (test)");
+        assert!(q.contains("hello"));
+        assert!(q.contains("world"));
+        assert!(q.contains("test"));
+        assert!(!q.contains(":"));
+        assert!(!q.contains("!"));
+    }
+
+    #[test]
+    fn test_search_mode_sparse_variant() {
+        let config = SearchConfig {
+            mode: SearchMode::Sparse,
+            ..SearchConfig::default()
+        };
+        assert_eq!(config.mode, SearchMode::Sparse);
+    }
+
+    #[test]
+    fn test_search_mode_serde_roundtrip() {
+        let modes = vec![
+            SearchMode::Vector,
+            SearchMode::Fulltext,
+            SearchMode::Sparse,
+            SearchMode::Hybrid,
+        ];
+        for mode in modes {
+            let json = serde_json::to_string(&mode).unwrap();
+            let deserialized: SearchMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, deserialized);
         }
     }
 }
