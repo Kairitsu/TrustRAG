@@ -166,21 +166,24 @@
 - [x] 4 个新单元测试（profile 应用、参数覆盖、propagation）
 - [x] 171 测试全部通过
 
-### Gap-3: RetrievalTrace 持久化 ⬜ 待开始
+### Gap-3: RetrievalTrace 持久化 ✅ 已完成
 
-- [ ] 创建 `retrieval_traces` 表 migration
-- [ ] 实现写入函数
-- [ ] 在 retrieval_pipeline run 完成后自动持久化
+- [x] Migration 0012: `retrieval_traces` 表（JSONB 存储 search_results, reranked_results, timings）
+- [x] `retrieval_trace_store.rs` 实现 save/get/list/get_by_message
+- [x] 6 个单元测试（177 测试通过）
 
-### Gap-4: answer_versions 表 ⬜ 待开始
+### Gap-4: answer_versions 表 ✅ 已完成
 
-- [ ] 创建 `answer_versions` 表 migration
-- [ ] 实现版本记录 CRUD
+- [x] Migration 0013: `answer_versions` 表（version_number 自增, status, reviewer, trace 关联）
+- [x] `answer_versions.rs` 实现 create/get/list/latest/update_status CRUD
+- [x] 6 个单元测试（183 测试通过）
 
-### Gap-5: claim_reviews/answer_reviews 审核表 ⬜ 待开始
+### Gap-5: claim_reviews/answer_reviews 审核表 ✅ 已完成
 
-- [ ] 创建专用审核表 migration
-- [ ] 实现审核 CRUD 和 API
+- [x] Migration 0014: `claim_reviews` 表（verdict, confidence, evidence_references JSONB）
+- [x] Migration 0014: `answer_reviews` 表（accuracy/completeness/clarity 三维评分 + revision_instructions）
+- [x] `specialized_reviews.rs` 实现 ClaimVerdict/AnswerVerdict 枚举 + CRUD
+- [x] 14 个单元测试（197 测试通过）
 
 ---
 
@@ -200,5 +203,8 @@
 | review (input, report, markdown) | 6 |
 | domain_profile (parse, registry, serde) | 13 |
 | answer_status (state machine, transitions, lifecycle) | 11 |
+| answer_versions (input, serde, status) | 6 |
+| retrieval_trace_store (construction, serde, timings) | 6 |
+| specialized_reviews (verdicts, serde, validation, input) | 14 |
 | embedding/llm/storage/other | 36 |
-| **合计** | **171** |
+| **合计** | **197** |
