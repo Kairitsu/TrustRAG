@@ -641,25 +641,20 @@ fn build_sse_stream(
                 return;
             };
 
-            let search_config = crate::services::search::SearchConfig {
-                mode: rag_config.search_mode.clone(),
-                top_k: rag_config.search_top_k,
-                min_score: rag_config.search_min_score,
-                use_mmr: false,
-                mmr_lambda: 0.7,
-                rrf_k: 60.0,
-            };
+            let pipeline_config = rag_config.to_pipeline_config();
 
-            match crate::services::search::hybrid_search(
+            match crate::services::retrieval_pipeline::run(
                 &pool,
                 emb_provider.as_ref(),
+                &*llm_provider,
                 workspace_id,
                 &analysis.rewritten_query,
-                &search_config,
-                if doc_scope.is_empty() { None } else { Some(&doc_scope) },
+                if doc_scope.is_empty() { None } else { Some(&doc_scope[..]) },
+                &pipeline_config,
             ).await {
-                Ok(resp) => {
-                    let (context, sources) = rag::assemble_context(&resp.results, rag_config.max_context_chars);
+                Ok(pipeline_output) => {
+                    let context = pipeline_output.context;
+                    let sources = pipeline_output.sources;
 
                     // Emit citations
                     for s in &sources {

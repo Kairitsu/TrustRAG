@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::db::DbPool;
-use crate::services::search::{self, SearchConfig, SearchMode, SearchResult};
+use crate::services::search::SearchMode;
+pub use crate::services::retrieval_pipeline::AssembledSource;
+use crate::services::retrieval_pipeline::{self, RetrievalPipelineConfig};
 use crate::traits::embedding_provider::EmbeddingProvider;
 use crate::traits::llm_provider::{LlmMessage, LlmProvider, LlmRequest, LlmResponse, StreamEvent};
 use tokio::sync::mpsc;
@@ -80,174 +82,6 @@ pub fn analyze_query(query: &str, history: &[LlmMessage]) -> QueryAnalysis {
         needs_retrieval: true,
         rewritten_query: rewritten,
     }
-}
-
-// ── Query Expansion ──
-
-pub async fn expand_query(
-    query: &str,
-    llm_provider: &dyn LlmProvider,
-) -> Vec<String> {
-    let prompt = format!(
-        "Given the user query below, generate 2 alternative search queries that capture \
-         different aspects or phrasings of the same information need. Return ONLY a JSON \
-         array of strings, no explanation.\n\nUser query: {}\n\nAlternative queries:",
-        query
-    );
-
-    let req = LlmRequest {
-        messages: vec![
-            LlmMessage {
-                role: "system".to_string(),
-                content: "You are a search query expansion assistant. Output only a JSON array of strings.".to_string(),
-            },
-            LlmMessage {
-                role: "user".to_string(),
-                content: prompt,
-            },
-        ],
-        temperature: 0.3,
-        max_tokens: 200,
-        stream: false,
-    };
-
-    match llm_provider.generate(&req).await {
-        Ok(resp) => {
-            let content = resp.content.trim().to_string();
-            let json_str = if let Some(start) = content.find('[') {
-                if let Some(end) = content.rfind(']') {
-                    &content[start..=end]
-                } else {
-                    &content
-                }
-            } else {
-                &content
-            };
-
-            match serde_json::from_str::<Vec<String>>(json_str) {
-                Ok(queries) => {
-                    tracing::info!(original = query, expanded = ?queries, "Query expansion succeeded");
-                    queries.into_iter().take(3).collect()
-                }
-                Err(_) => {
-                    tracing::warn!("Failed to parse query expansion response: {}", content);
-                    vec![]
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Query expansion LLM call failed: {}", e);
-            vec![]
-        }
-    }
-}
-
-async fn search_with_expansion(
-    pool: &DbPool,
-    embedding_provider: &dyn EmbeddingProvider,
-    llm_provider: &dyn LlmProvider,
-    workspace_id: Uuid,
-    query: &str,
-    search_config: &SearchConfig,
-    document_scope: Option<&[Uuid]>,
-    expand: bool,
-) -> anyhow::Result<Vec<SearchResult>> {
-    let primary = search::hybrid_search(
-        pool, embedding_provider, workspace_id, query, search_config, document_scope,
-    ).await?;
-
-    if !expand {
-        return Ok(primary.results);
-    }
-
-    let expanded_queries = expand_query(query, llm_provider).await;
-    if expanded_queries.is_empty() {
-        return Ok(primary.results);
-    }
-
-    let mut all_results = primary.results;
-    let mut seen_ids: std::collections::HashSet<Uuid> = all_results.iter().map(|r| r.chunk_id).collect();
-
-    for eq in &expanded_queries {
-        match search::hybrid_search(
-            pool, embedding_provider, workspace_id, eq, search_config, document_scope,
-        ).await {
-            Ok(resp) => {
-                for r in resp.results {
-                    if seen_ids.insert(r.chunk_id) {
-                        all_results.push(r);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Expanded query search failed for '{}': {}", eq, e);
-            }
-        }
-    }
-
-    all_results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap_or(std::cmp::Ordering::Equal));
-
-    Ok(all_results)
-}
-
-// ── Context Assembly ──
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AssembledSource {
-    pub index: usize,
-    pub chunk_id: Uuid,
-    pub document_id: Uuid,
-    pub heading_path: Option<String>,
-    pub page_start: Option<i32>,
-    pub page_end: Option<i32>,
-    pub content: String,
-    pub score: f64,
-}
-
-pub fn assemble_context(
-    results: &[SearchResult],
-    max_context_chars: usize,
-) -> (String, Vec<AssembledSource>) {
-    let mut sources = Vec::new();
-    let mut context_parts = Vec::new();
-    let mut total_chars = 0;
-
-    for (i, result) in results.iter().enumerate() {
-        let source_header = format!(
-            "[Source {}{}{}]",
-            i + 1,
-            result
-                .heading_path
-                .as_ref()
-                .map(|h| format!(" | {}", h))
-                .unwrap_or_default(),
-            result
-                .page_start
-                .map(|p| format!(" | p.{}", p))
-                .unwrap_or_default(),
-        );
-
-        let entry = format!("{}\n{}", source_header, result.content);
-        if total_chars + entry.len() > max_context_chars {
-            break;
-        }
-        total_chars += entry.len();
-
-        sources.push(AssembledSource {
-            index: i + 1,
-            chunk_id: result.chunk_id,
-            document_id: result.document_id,
-            heading_path: result.heading_path.clone(),
-            page_start: result.page_start,
-            page_end: result.page_end,
-            content: result.content.clone(),
-            score: result.relevance_score,
-        });
-
-        context_parts.push(entry);
-    }
-
-    (context_parts.join("\n\n"), sources)
 }
 
 // ── Prompt Engineering ──
@@ -359,6 +193,25 @@ impl Default for RagConfig {
     }
 }
 
+impl RagConfig {
+    pub fn to_pipeline_config(&self) -> RetrievalPipelineConfig {
+        RetrievalPipelineConfig {
+            dense_top_k: self.search_top_k * 2,
+            sparse_top_k: self.search_top_k * 2,
+            fusion_top_k: self.search_top_k * 2,
+            final_top_k: self.search_top_k,
+            max_context_chars: self.max_context_chars,
+            min_score: self.search_min_score,
+            search_mode: self.search_mode.clone(),
+            enable_query_expansion: self.query_expansion,
+            enable_rerank: self.rerank.enabled,
+            enable_trace: false,
+            rerank: self.rerank.clone(),
+            rrf_k: 60.0,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct RagResponse {
     pub answer: String,
@@ -369,7 +222,7 @@ pub struct RagResponse {
     pub intent: QueryIntent,
 }
 
-/// Non-streaming RAG pipeline
+/// Non-streaming RAG pipeline (uses unified retrieval_pipeline)
 pub async fn run_rag_pipeline(
     pool: &DbPool,
     embedding_provider: &dyn EmbeddingProvider,
@@ -401,38 +254,18 @@ pub async fn run_rag_pipeline(
         });
     }
 
-    let search_config = SearchConfig {
-        mode: config.search_mode.clone(),
-        top_k: config.search_top_k,
-        min_score: config.search_min_score,
-        use_mmr: false,
-        mmr_lambda: 0.7,
-        rrf_k: 60.0,
-    };
-
-    let raw_results = search_with_expansion(
+    let pipeline_config = config.to_pipeline_config();
+    let pipeline_output = retrieval_pipeline::run(
         pool,
         embedding_provider,
         llm_provider,
         workspace_id,
         &analysis.rewritten_query,
-        &search_config,
         if document_scope.is_empty() { None } else { Some(document_scope) },
-        config.query_expansion,
-    )
-    .await?;
+        &pipeline_config,
+    ).await?;
 
-    let results = crate::services::reranker::rerank(
-        raw_results,
-        &analysis.rewritten_query,
-        &config.rerank,
-        llm_provider,
-    )
-    .await?;
-
-    let (context, sources) = assemble_context(&results, config.max_context_chars);
-
-    if sources.is_empty() {
+    if pipeline_output.sources.is_empty() {
         return Ok(RagResponse {
             answer: "根据提供的资料，我无法找到与您问题相关的信息。请尝试上传更多文档或调整问题。".to_string(),
             sources: vec![],
@@ -443,7 +276,7 @@ pub async fn run_rag_pipeline(
         });
     }
 
-    let messages = build_prompt(query, &context, history, &config.language);
+    let messages = build_prompt(query, &pipeline_output.context, history, &config.language);
 
     let llm_req = LlmRequest {
         messages,
@@ -456,7 +289,7 @@ pub async fn run_rag_pipeline(
 
     Ok(RagResponse {
         answer: resp.content,
-        sources,
+        sources: pipeline_output.sources,
         prompt_tokens: resp.prompt_tokens,
         completion_tokens: resp.completion_tokens,
         model: resp.model,
@@ -464,7 +297,7 @@ pub async fn run_rag_pipeline(
     })
 }
 
-/// Streaming RAG pipeline - returns sources after retrieval, then streams LLM output
+/// Streaming RAG pipeline - uses unified retrieval_pipeline, then streams LLM output
 pub async fn run_rag_pipeline_stream(
     pool: &DbPool,
     embedding_provider: &dyn EmbeddingProvider,
@@ -490,38 +323,18 @@ pub async fn run_rag_pipeline_stream(
         return Ok(vec![]);
     }
 
-    let search_config = SearchConfig {
-        mode: config.search_mode.clone(),
-        top_k: config.search_top_k,
-        min_score: config.search_min_score,
-        use_mmr: false,
-        mmr_lambda: 0.7,
-        rrf_k: 60.0,
-    };
-
-    let raw_results = search_with_expansion(
+    let pipeline_config = config.to_pipeline_config();
+    let pipeline_output = retrieval_pipeline::run(
         pool,
         embedding_provider,
         llm_provider,
         workspace_id,
         &analysis.rewritten_query,
-        &search_config,
         if document_scope.is_empty() { None } else { Some(document_scope) },
-        config.query_expansion,
-    )
-    .await?;
+        &pipeline_config,
+    ).await?;
 
-    let results = crate::services::reranker::rerank(
-        raw_results,
-        &analysis.rewritten_query,
-        &config.rerank,
-        llm_provider,
-    )
-    .await?;
-
-    let (context, sources) = assemble_context(&results, config.max_context_chars);
-
-    if sources.is_empty() {
+    if pipeline_output.sources.is_empty() {
         let _ = tx.send(StreamEvent::Delta(
             "根据提供的资料，我无法找到与您问题相关的信息。请尝试上传更多文档或调整问题。".to_string(),
         )).await;
@@ -534,7 +347,7 @@ pub async fn run_rag_pipeline_stream(
         return Ok(vec![]);
     }
 
-    let messages = build_prompt(query, &context, history, &config.language);
+    let messages = build_prompt(query, &pipeline_output.context, history, &config.language);
 
     let llm_req = LlmRequest {
         messages,
@@ -543,15 +356,17 @@ pub async fn run_rag_pipeline_stream(
         stream: true,
     };
 
-    let sources_clone = sources.clone();
+    let sources = pipeline_output.sources;
     llm_provider.stream(&llm_req, tx).await?;
 
-    Ok(sources_clone)
+    Ok(sources)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::retrieval_pipeline::assemble_context;
+    use crate::services::search::SearchResult;
 
     #[test]
     fn test_analyze_chitchat() {
