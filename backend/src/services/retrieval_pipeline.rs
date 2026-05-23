@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::db::DbPool;
 use crate::services::search::{self, SearchConfig, SearchMode, SearchResult};
-use crate::services::reranker::{self, ReRankConfig};
+use crate::services::reranker::{self, ReRankConfig, RerankerProvider};
 use crate::traits::embedding_provider::EmbeddingProvider;
 use crate::traits::llm_provider::LlmProvider;
 
@@ -284,6 +284,19 @@ pub async fn run(
     document_scope: Option<&[Uuid]>,
     config: &RetrievalPipelineConfig,
 ) -> anyhow::Result<RetrievalPipelineOutput> {
+    run_with_reranker(pool, embedding_provider, llm_provider, workspace_id, query, document_scope, config, None).await
+}
+
+pub async fn run_with_reranker(
+    pool: &DbPool,
+    embedding_provider: &dyn EmbeddingProvider,
+    llm_provider: &dyn LlmProvider,
+    workspace_id: Uuid,
+    query: &str,
+    document_scope: Option<&[Uuid]>,
+    config: &RetrievalPipelineConfig,
+    reranker_provider: Option<&dyn RerankerProvider>,
+) -> anyhow::Result<RetrievalPipelineOutput> {
     let pipeline_start = std::time::Instant::now();
 
     let search_config = config.to_search_config();
@@ -307,11 +320,12 @@ pub async fn run(
     // Step 2: Rerank
     let rerank_start = std::time::Instant::now();
     let reranked = if config.enable_rerank {
-        reranker::rerank(
+        reranker::rerank_with_provider(
             raw_results,
             query,
             &config.rerank,
             llm_provider,
+            reranker_provider,
         ).await?
     } else {
         let mut r = raw_results;

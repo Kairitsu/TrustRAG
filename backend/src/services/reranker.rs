@@ -4,6 +4,18 @@ use serde::{Deserialize, Serialize};
 use crate::services::search::SearchResult;
 use crate::traits::llm_provider::{LlmMessage, LlmProvider, LlmRequest};
 
+// ── Provider trait ──
+
+/// Abstraction for external reranking services (Jina, Cohere, local cross-encoder, etc.)
+#[async_trait::async_trait]
+pub trait RerankerProvider: Send + Sync {
+    /// Score each (query, document) pair. Returns scores in the same order as `documents`.
+    async fn score(&self, query: &str, documents: &[&str]) -> Result<Vec<f64>>;
+    fn name(&self) -> &str;
+}
+
+// ── Config ──
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReRankConfig {
     pub enabled: bool,
@@ -11,9 +23,11 @@ pub struct ReRankConfig {
     pub method: ReRankMethod,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum ReRankMethod {
     LlmScoring,
+    CrossEncoder,
 }
 
 impl Default for ReRankConfig {
@@ -26,11 +40,25 @@ impl Default for ReRankConfig {
     }
 }
 
+// ── Public entry point ──
+
+/// Rerank search results. If `reranker_provider` is Some and method is CrossEncoder,
+/// uses the external provider; otherwise falls back to LLM scoring.
 pub async fn rerank(
     results: Vec<SearchResult>,
     query: &str,
     config: &ReRankConfig,
     llm_provider: &dyn LlmProvider,
+) -> Result<Vec<SearchResult>> {
+    rerank_with_provider(results, query, config, llm_provider, None).await
+}
+
+pub async fn rerank_with_provider(
+    results: Vec<SearchResult>,
+    query: &str,
+    config: &ReRankConfig,
+    llm_provider: &dyn LlmProvider,
+    reranker_provider: Option<&dyn RerankerProvider>,
 ) -> Result<Vec<SearchResult>> {
     if !config.enabled || results.is_empty() {
         return Ok(results);
@@ -38,6 +66,14 @@ pub async fn rerank(
 
     match config.method {
         ReRankMethod::LlmScoring => llm_rerank(results, query, config.top_n, llm_provider).await,
+        ReRankMethod::CrossEncoder => {
+            if let Some(provider) = reranker_provider {
+                cross_encoder_rerank(results, query, config.top_n, provider).await
+            } else {
+                tracing::warn!("CrossEncoder reranker requested but no provider configured, falling back to LLM scoring");
+                llm_rerank(results, query, config.top_n, llm_provider).await
+            }
+        }
     }
 }
 
@@ -127,6 +163,139 @@ async fn llm_rerank(
     }
 }
 
+async fn cross_encoder_rerank(
+    results: Vec<SearchResult>,
+    query: &str,
+    top_n: usize,
+    provider: &dyn RerankerProvider,
+) -> Result<Vec<SearchResult>> {
+    let candidates: Vec<_> = results.iter().take(20).collect();
+    if candidates.is_empty() {
+        return Ok(results);
+    }
+
+    let docs: Vec<&str> = candidates.iter().map(|r| r.content.as_str()).collect();
+
+    match provider.score(query, &docs).await {
+        Ok(scores) => {
+            let mut scored: Vec<(usize, f64)> = scores.into_iter().enumerate().collect();
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            let reranked: Vec<SearchResult> = scored
+                .into_iter()
+                .take(top_n)
+                .map(|(idx, score)| {
+                    let mut result = candidates[idx].clone();
+                    result.relevance_score = score;
+                    result
+                })
+                .collect();
+
+            tracing::info!(
+                provider = provider.name(),
+                query_len = query.len(),
+                candidates = candidates.len(),
+                reranked = reranked.len(),
+                "Cross-encoder re-ranking completed"
+            );
+
+            Ok(reranked)
+        }
+        Err(e) => {
+            tracing::warn!(
+                provider = provider.name(),
+                error = %e,
+                "Cross-encoder re-ranking failed, returning original order"
+            );
+            let mut fallback = results;
+            fallback.truncate(top_n);
+            Ok(fallback)
+        }
+    }
+}
+
+// ── HTTP-based reranker (Jina / Cohere compatible) ──
+
+/// Generic HTTP reranker that works with Jina Reranker API and Cohere Rerank API.
+pub struct HttpRerankerProvider {
+    client: reqwest::Client,
+    api_url: String,
+    api_key: String,
+    model: String,
+    provider_name: String,
+}
+
+impl HttpRerankerProvider {
+    pub fn new(api_url: String, api_key: String, model: String, provider_name: String) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            api_url,
+            api_key,
+            model,
+            provider_name,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct RerankRequest {
+    model: String,
+    query: String,
+    documents: Vec<String>,
+    top_n: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct RerankResponse {
+    results: Vec<RerankResult>,
+}
+
+#[derive(Deserialize)]
+struct RerankResult {
+    index: usize,
+    relevance_score: f64,
+}
+
+#[async_trait::async_trait]
+impl RerankerProvider for HttpRerankerProvider {
+    async fn score(&self, query: &str, documents: &[&str]) -> Result<Vec<f64>> {
+        let body = RerankRequest {
+            model: self.model.clone(),
+            query: query.to_string(),
+            documents: documents.iter().map(|d| d.to_string()).collect(),
+            top_n: None,
+        };
+
+        let resp = self.client
+            .post(&self.api_url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Reranker API error {}: {}", status, text);
+        }
+
+        let rerank_resp: RerankResponse = resp.json().await?;
+
+        let mut scores = vec![0.0f64; documents.len()];
+        for r in rerank_resp.results {
+            if r.index < scores.len() {
+                scores[r.index] = r.relevance_score;
+            }
+        }
+
+        Ok(scores)
+    }
+
+    fn name(&self) -> &str {
+        &self.provider_name
+    }
+}
+
 fn parse_ranking_response(content: &str, max_idx: usize) -> Vec<usize> {
     let trimmed = content.trim();
 
@@ -188,5 +357,130 @@ mod tests {
         let config = ReRankConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.top_n, 5);
+    }
+
+    #[test]
+    fn test_rerank_method_serde_roundtrip() {
+        let methods = vec![ReRankMethod::LlmScoring, ReRankMethod::CrossEncoder];
+        for method in methods {
+            let json = serde_json::to_string(&method).unwrap();
+            let deserialized: ReRankMethod = serde_json::from_str(&json).unwrap();
+            assert_eq!(method, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_cross_encoder_config() {
+        let config = ReRankConfig {
+            enabled: true,
+            top_n: 3,
+            method: ReRankMethod::CrossEncoder,
+        };
+        assert!(config.enabled);
+        assert_eq!(config.method, ReRankMethod::CrossEncoder);
+    }
+
+    struct MockRerankerProvider {
+        scores: Vec<f64>,
+    }
+
+    #[async_trait::async_trait]
+    impl RerankerProvider for MockRerankerProvider {
+        async fn score(&self, _query: &str, _documents: &[&str]) -> Result<Vec<f64>> {
+            Ok(self.scores.clone())
+        }
+        fn name(&self) -> &str {
+            "mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_encoder_rerank_basic() {
+        let results = vec![
+            SearchResult {
+                chunk_id: uuid::Uuid::new_v4(),
+                document_id: uuid::Uuid::new_v4(),
+                content: "Low relevance doc".to_string(),
+                heading_path: None,
+                page_start: None,
+                page_end: None,
+                relevance_score: 0.5,
+            },
+            SearchResult {
+                chunk_id: uuid::Uuid::new_v4(),
+                document_id: uuid::Uuid::new_v4(),
+                content: "High relevance doc".to_string(),
+                heading_path: None,
+                page_start: None,
+                page_end: None,
+                relevance_score: 0.3,
+            },
+        ];
+
+        let provider = MockRerankerProvider {
+            scores: vec![0.2, 0.9],
+        };
+
+        let reranked = cross_encoder_rerank(results, "test query", 2, &provider).await.unwrap();
+        assert_eq!(reranked.len(), 2);
+        assert_eq!(reranked[0].content, "High relevance doc");
+        assert!((reranked[0].relevance_score - 0.9).abs() < 1e-10);
+    }
+
+    #[tokio::test]
+    async fn test_cross_encoder_rerank_respects_top_n() {
+        let results: Vec<SearchResult> = (0..5)
+            .map(|i| SearchResult {
+                chunk_id: uuid::Uuid::new_v4(),
+                document_id: uuid::Uuid::new_v4(),
+                content: format!("doc {}", i),
+                heading_path: None,
+                page_start: None,
+                page_end: None,
+                relevance_score: 0.5,
+            })
+            .collect();
+
+        let provider = MockRerankerProvider {
+            scores: vec![0.1, 0.9, 0.5, 0.3, 0.7],
+        };
+
+        let reranked = cross_encoder_rerank(results, "query", 3, &provider).await.unwrap();
+        assert_eq!(reranked.len(), 3);
+        assert_eq!(reranked[0].content, "doc 1");
+        assert_eq!(reranked[1].content, "doc 4");
+        assert_eq!(reranked[2].content, "doc 2");
+    }
+
+    struct FailingRerankerProvider;
+
+    #[async_trait::async_trait]
+    impl RerankerProvider for FailingRerankerProvider {
+        async fn score(&self, _query: &str, _documents: &[&str]) -> Result<Vec<f64>> {
+            anyhow::bail!("API connection failed")
+        }
+        fn name(&self) -> &str {
+            "failing"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_encoder_fallback_on_error() {
+        let results = vec![
+            SearchResult {
+                chunk_id: uuid::Uuid::new_v4(),
+                document_id: uuid::Uuid::new_v4(),
+                content: "only doc".to_string(),
+                heading_path: None,
+                page_start: None,
+                page_end: None,
+                relevance_score: 0.8,
+            },
+        ];
+
+        let provider = FailingRerankerProvider;
+        let reranked = cross_encoder_rerank(results, "query", 5, &provider).await.unwrap();
+        assert_eq!(reranked.len(), 1);
+        assert_eq!(reranked[0].content, "only doc");
     }
 }
