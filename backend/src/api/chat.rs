@@ -134,9 +134,11 @@ pub struct MessageResponse {
     pub created_at: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub citations: Vec<MessageCitationResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer_status: Option<String>,
 }
 
-type MsgRow = (String, String, String, String, Option<String>, Option<i32>, Option<i32>, Option<i32>, String);
+type MsgRow = (String, String, String, String, Option<String>, Option<i32>, Option<i32>, Option<i32>, String, Option<String>);
 
 fn parse_msg_row(r: MsgRow) -> Result<MessageResponse, AppError> {
     use crate::db::compat;
@@ -150,11 +152,12 @@ fn parse_msg_row(r: MsgRow) -> Result<MessageResponse, AppError> {
         completion_tokens: r.6,
         latency_ms: r.7,
         created_at: r.8,
+        answer_status: r.9,
         citations: Vec::new(),
     })
 }
 
-const MSG_SELECT: &str = "id, conversation_id, role, content, model_name, prompt_tokens, completion_tokens, latency_ms, CAST(created_at AS TEXT)";
+const MSG_SELECT: &str = "id, conversation_id, role, content, model_name, prompt_tokens, completion_tokens, latency_ms, CAST(created_at AS TEXT), answer_status";
 
 #[derive(Deserialize)]
 pub struct SendMessageRequest {
@@ -194,6 +197,10 @@ struct MessageEndEvent {
     prompt_tokens: u32,
     completion_tokens: u32,
     latency_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retrieval_trace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    answer_status: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -216,6 +223,12 @@ struct CitationsStoredEvent {
 struct NonStreamingResponse {
     message: MessageResponse,
     citations: Vec<CitationEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retrieval_trace_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    verification_warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    answer_status: Option<String>,
 }
 
 // ── Conversation CRUD ──
@@ -592,6 +605,9 @@ async fn send_message(
         Ok(Json(NonStreamingResponse {
             message: msg,
             citations,
+            retrieval_trace_id: Some(Uuid::new_v4().to_string()),
+            verification_warnings: Vec::new(),
+            answer_status: Some("draft".to_string()),
         })
         .into_response())
     }
@@ -773,6 +789,8 @@ fn build_sse_stream(
                         prompt_tokens: final_prompt_tokens,
                         completion_tokens: final_completion_tokens,
                         latency_ms: start.elapsed().as_millis() as u64,
+                        retrieval_trace_id: Some(Uuid::new_v4().to_string()),
+                        answer_status: Some("draft".to_string()),
                     }).unwrap_or_default();
                     yield Ok(Event::default().event("message_end").data(end_data));
 
@@ -862,6 +880,8 @@ fn build_sse_stream(
                 prompt_tokens: final_prompt_tokens,
                 completion_tokens: final_completion_tokens,
                 latency_ms: start.elapsed().as_millis() as u64,
+                retrieval_trace_id: None,
+                answer_status: Some("draft".to_string()),
             }).unwrap_or_default();
             yield Ok(Event::default().event("message_end").data(end_data));
 
