@@ -424,15 +424,14 @@ mod tests {
                 page_start: Some(1),
                 page_end: Some(1),
                 relevance_score: 0.95,
+                ..Default::default()
             },
             SearchResult {
                 chunk_id: Uuid::new_v4(),
                 document_id: Uuid::new_v4(),
                 content: "Second chunk content".to_string(),
-                heading_path: None,
-                page_start: None,
-                page_end: None,
                 relevance_score: 0.85,
+                ..Default::default()
             },
         ];
 
@@ -452,10 +451,10 @@ mod tests {
                 chunk_id: Uuid::new_v4(),
                 document_id: Uuid::new_v4(),
                 content: format!("Chunk {} with some content repeated many times to fill space", i),
-                heading_path: None,
                 page_start: Some(i),
                 page_end: Some(i),
                 relevance_score: 1.0 - (i as f64 * 0.01),
+                ..Default::default()
             })
             .collect();
 

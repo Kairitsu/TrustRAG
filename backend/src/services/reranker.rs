@@ -186,6 +186,7 @@ async fn cross_encoder_rerank(
                 .take(top_n)
                 .map(|(idx, score)| {
                     let mut result = candidates[idx].clone();
+                    result.rerank_score = Some(score);
                     result.relevance_score = score;
                     result
                 })
@@ -401,19 +402,15 @@ mod tests {
                 chunk_id: uuid::Uuid::new_v4(),
                 document_id: uuid::Uuid::new_v4(),
                 content: "Low relevance doc".to_string(),
-                heading_path: None,
-                page_start: None,
-                page_end: None,
                 relevance_score: 0.5,
+                ..Default::default()
             },
             SearchResult {
                 chunk_id: uuid::Uuid::new_v4(),
                 document_id: uuid::Uuid::new_v4(),
                 content: "High relevance doc".to_string(),
-                heading_path: None,
-                page_start: None,
-                page_end: None,
                 relevance_score: 0.3,
+                ..Default::default()
             },
         ];
 
@@ -434,10 +431,8 @@ mod tests {
                 chunk_id: uuid::Uuid::new_v4(),
                 document_id: uuid::Uuid::new_v4(),
                 content: format!("doc {}", i),
-                heading_path: None,
-                page_start: None,
-                page_end: None,
                 relevance_score: 0.5,
+                ..Default::default()
             })
             .collect();
 
@@ -471,10 +466,8 @@ mod tests {
                 chunk_id: uuid::Uuid::new_v4(),
                 document_id: uuid::Uuid::new_v4(),
                 content: "only doc".to_string(),
-                heading_path: None,
-                page_start: None,
-                page_end: None,
                 relevance_score: 0.8,
+                ..Default::default()
             },
         ];
 

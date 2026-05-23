@@ -36,7 +36,7 @@ impl Default for SearchConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct SearchResult {
     pub chunk_id: Uuid,
     pub document_id: Uuid,
@@ -45,6 +45,14 @@ pub struct SearchResult {
     pub page_start: Option<i32>,
     pub page_end: Option<i32>,
     pub relevance_score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dense_score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sparse_score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fusion_score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rerank_score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -423,30 +431,65 @@ pub fn rrf_fusion(
 ) -> Vec<SearchResult> {
     use std::collections::HashMap;
 
-    let mut scores: HashMap<Uuid, (f64, Uuid, String, Option<String>, Option<i32>, Option<i32>)> = HashMap::new();
+    struct FusionEntry {
+        fusion_score: f64,
+        dense_score: Option<f64>,
+        sparse_score: Option<f64>,
+        doc_id: Uuid,
+        content: String,
+        heading: Option<String>,
+        page_start: Option<i32>,
+        page_end: Option<i32>,
+    }
+
+    let mut entries: HashMap<Uuid, FusionEntry> = HashMap::new();
 
     for (rank, row) in vector_results.iter().enumerate() {
         let rrf_score = 1.0 / (k + rank as f64 + 1.0);
-        let entry = scores.entry(row.0).or_insert((0.0, row.1, row.2.clone(), row.3.clone(), row.4, row.5));
-        entry.0 += rrf_score;
+        let entry = entries.entry(row.0).or_insert(FusionEntry {
+            fusion_score: 0.0,
+            dense_score: None,
+            sparse_score: None,
+            doc_id: row.1,
+            content: row.2.clone(),
+            heading: row.3.clone(),
+            page_start: row.4,
+            page_end: row.5,
+        });
+        entry.fusion_score += rrf_score;
+        entry.dense_score = Some(row.6);
     }
 
     for (rank, row) in fulltext_results.iter().enumerate() {
         let rrf_score = 1.0 / (k + rank as f64 + 1.0);
-        let entry = scores.entry(row.0).or_insert((0.0, row.1, row.2.clone(), row.3.clone(), row.4, row.5));
-        entry.0 += rrf_score;
+        let entry = entries.entry(row.0).or_insert(FusionEntry {
+            fusion_score: 0.0,
+            dense_score: None,
+            sparse_score: None,
+            doc_id: row.1,
+            content: row.2.clone(),
+            heading: row.3.clone(),
+            page_start: row.4,
+            page_end: row.5,
+        });
+        entry.fusion_score += rrf_score;
+        entry.sparse_score = Some(row.6);
     }
 
-    let mut results: Vec<SearchResult> = scores
+    let mut results: Vec<SearchResult> = entries
         .into_iter()
-        .map(|(chunk_id, (score, doc_id, content, heading, page_start, page_end))| SearchResult {
+        .map(|(chunk_id, e)| SearchResult {
             chunk_id,
-            document_id: doc_id,
-            content,
-            heading_path: heading,
-            page_start,
-            page_end,
-            relevance_score: score,
+            document_id: e.doc_id,
+            content: e.content,
+            heading_path: e.heading,
+            page_start: e.page_start,
+            page_end: e.page_end,
+            relevance_score: e.fusion_score,
+            dense_score: e.dense_score,
+            sparse_score: e.sparse_score,
+            fusion_score: Some(e.fusion_score),
+            rerank_score: None,
         })
         .collect();
 
@@ -466,16 +509,28 @@ pub async fn hybrid_search(
     let start = std::time::Instant::now();
     let retrieval_k = config.top_k * 2;
 
-    let rows_to_results = |rows: Vec<SearchRow>| -> Vec<SearchResult> {
+    let rows_to_results = |rows: Vec<SearchRow>, score_type: &str| -> Vec<SearchResult> {
         rows.into_iter()
-            .map(|r| SearchResult {
-                chunk_id: r.0,
-                document_id: r.1,
-                content: r.2,
-                heading_path: r.3,
-                page_start: r.4,
-                page_end: r.5,
-                relevance_score: r.6,
+            .map(|r| {
+                let score = r.6;
+                let (dense, sparse) = match score_type {
+                    "dense" => (Some(score), None),
+                    "sparse" => (None, Some(score)),
+                    _ => (None, None),
+                };
+                SearchResult {
+                    chunk_id: r.0,
+                    document_id: r.1,
+                    content: r.2,
+                    heading_path: r.3,
+                    page_start: r.4,
+                    page_end: r.5,
+                    relevance_score: score,
+                    dense_score: dense,
+                    sparse_score: sparse,
+                    fusion_score: None,
+                    rerank_score: None,
+                }
             })
             .collect()
     };
@@ -485,21 +540,21 @@ pub async fn hybrid_search(
             let embeddings = embedding_provider.embed_texts(&[query.to_string()]).await?;
             let query_emb = embeddings.into_iter().next().ok_or_else(|| anyhow::anyhow!("No embedding returned"))?;
             let vector_rows = vector_search(pool, workspace_id, &query_emb, config.top_k, document_ids).await?;
-            rows_to_results(vector_rows)
+            rows_to_results(vector_rows, "dense")
         }
         SearchMode::Fulltext => {
             let ft_rows = fulltext_search(pool, workspace_id, query, config.top_k, document_ids).await?;
-            rows_to_results(ft_rows)
+            rows_to_results(ft_rows, "sparse")
         }
         #[cfg(feature = "postgres")]
         SearchMode::Sparse => {
             let sp_rows = sparse_search(pool, workspace_id, query, config.top_k, document_ids).await?;
-            rows_to_results(sp_rows)
+            rows_to_results(sp_rows, "sparse")
         }
         #[cfg(not(feature = "postgres"))]
         SearchMode::Sparse => {
             let ft_rows = fulltext_search(pool, workspace_id, query, config.top_k, document_ids).await?;
-            rows_to_results(ft_rows)
+            rows_to_results(ft_rows, "sparse")
         }
         SearchMode::Hybrid => {
             let embeddings = embedding_provider.embed_texts(&[query.to_string()]).await?;
@@ -704,5 +759,67 @@ mod tests {
             let deserialized: SearchMode = serde_json::from_str(&json).unwrap();
             assert_eq!(mode, deserialized);
         }
+    }
+
+    #[test]
+    fn test_rrf_fusion_captures_stage_scores() {
+        let id = Uuid::new_v4();
+        let doc_id = Uuid::new_v4();
+        let vector_results = vec![
+            (id, doc_id, "shared".into(), None, None, None, 0.95),
+        ];
+        let fulltext_results = vec![
+            (id, doc_id, "shared".into(), None, None, None, 0.72),
+        ];
+
+        let results = rrf_fusion(&vector_results, &fulltext_results, 60.0, 10);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r.dense_score, Some(0.95));
+        assert_eq!(r.sparse_score, Some(0.72));
+        assert!(r.fusion_score.is_some());
+        assert!(r.fusion_score.unwrap() > 0.0);
+        assert!(r.rerank_score.is_none());
+    }
+
+    #[test]
+    fn test_rrf_fusion_vector_only_scores() {
+        let results = rrf_fusion(
+            &[(Uuid::new_v4(), Uuid::new_v4(), "v".into(), None, None, None, 0.9)],
+            &[],
+            60.0,
+            10,
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].dense_score, Some(0.9));
+        assert!(results[0].sparse_score.is_none());
+        assert!(results[0].fusion_score.is_some());
+    }
+
+    #[test]
+    fn test_search_result_serialization_omits_none_scores() {
+        let result = SearchResult {
+            chunk_id: Uuid::new_v4(),
+            document_id: Uuid::new_v4(),
+            content: "test".to_string(),
+            relevance_score: 0.8,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("dense_score"));
+        assert!(!json.contains("sparse_score"));
+        assert!(!json.contains("fusion_score"));
+        assert!(!json.contains("rerank_score"));
+
+        let result_with_scores = SearchResult {
+            dense_score: Some(0.9),
+            fusion_score: Some(0.85),
+            ..result
+        };
+        let json2 = serde_json::to_string(&result_with_scores).unwrap();
+        assert!(json2.contains("dense_score"));
+        assert!(json2.contains("fusion_score"));
+        assert!(!json2.contains("sparse_score"));
+        assert!(!json2.contains("rerank_score"));
     }
 }
