@@ -828,4 +828,37 @@ class SZh extends S {
 
   @override
   String get citationSource => '引用来源';
+
+  @override
+  String get networkUnavailable => '网络不可用';
+
+  @override
+  String get networkUnavailableHint => '无法连接到服务器，请检查网络连接后重试';
+
+  @override
+  String get serverUnavailable => '服务暂时不可用';
+
+  @override
+  String get serverUnavailableHint => '服务器正在维护或出现了问题，请稍后重试';
+
+  @override
+  String get sessionExpired => '登录已过期';
+
+  @override
+  String get sessionExpiredHint => '您的登录已失效，请重新登录';
+
+  @override
+  String get unknownErrorHint => '发生了意外错误，请稍后重试';
+
+  @override
+  String get reLogin => '重新登录';
+
+  @override
+  String get offlineMode => '离线模式';
+
+  @override
+  String get offlineModeHint => '无法连接到服务器，部分功能暂时不可用。连接恢复后将自动同步。';
+
+  @override
+  String get offlineBannerText => '当前处于离线状态，团队功能暂不可用';
 }

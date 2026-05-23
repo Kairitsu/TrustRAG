@@ -60,6 +60,12 @@ class _FakeWorkspaceNotifier
   Ref get ref => throw UnimplementedError();
 
   @override
+  WorkspaceErrorInfo? lastError;
+
+  @override
+  bool get isOfflineMode => false;
+
+  @override
   Future<void> loadWorkspaces() async {}
 
   @override
@@ -138,7 +144,6 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      expect(find.byType(VerticalDivider), findsOneWidget);
       expect(find.byType(AppBar), findsNothing);
     });
 

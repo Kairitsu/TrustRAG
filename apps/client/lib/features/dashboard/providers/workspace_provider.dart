@@ -1,15 +1,72 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../features/auth/providers/auth_provider.dart';
 
 const _kLastWorkspaceId = 'last_workspace_id';
 
+enum WorkspaceLoadError {
+  networkUnavailable,
+  serverError,
+  unauthorized,
+  unknown,
+}
+
+class WorkspaceErrorInfo {
+  final WorkspaceLoadError type;
+  final String message;
+  final bool canRetry;
+
+  const WorkspaceErrorInfo({
+    required this.type,
+    required this.message,
+    this.canRetry = true,
+  });
+
+  factory WorkspaceErrorInfo.fromException(Object error) {
+    if (error is DioException) {
+      switch (error.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.connectionError:
+          return const WorkspaceErrorInfo(
+            type: WorkspaceLoadError.networkUnavailable,
+            message: 'networkUnavailable',
+          );
+        case DioExceptionType.badResponse:
+          final statusCode = error.response?.statusCode ?? 0;
+          if (statusCode == 401 || statusCode == 403) {
+            return const WorkspaceErrorInfo(
+              type: WorkspaceLoadError.unauthorized,
+              message: 'unauthorized',
+              canRetry: false,
+            );
+          }
+          return const WorkspaceErrorInfo(
+            type: WorkspaceLoadError.serverError,
+            message: 'serverError',
+          );
+        default:
+          return const WorkspaceErrorInfo(
+            type: WorkspaceLoadError.unknown,
+            message: 'unknownError',
+          );
+      }
+    }
+    return const WorkspaceErrorInfo(
+      type: WorkspaceLoadError.unknown,
+      message: 'unknownError',
+    );
+  }
+}
+
 class Workspace {
   final String id;
   final String name;
   final String? description;
   final int documentCount;
-  final String type; // 'personal' or 'team'
+  final String type;
   final String? inviteCode;
   final DateTime createdAt;
 
@@ -41,6 +98,10 @@ class Workspace {
 
 class WorkspaceNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
   final Ref ref;
+  WorkspaceErrorInfo? lastError;
+  bool _isOfflineMode = false;
+
+  bool get isOfflineMode => _isOfflineMode;
 
   WorkspaceNotifier(this.ref) : super(const AsyncValue.loading()) {
     loadWorkspaces();
@@ -48,6 +109,9 @@ class WorkspaceNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
 
   Future<void> loadWorkspaces() async {
     state = const AsyncValue.loading();
+    lastError = null;
+    _isOfflineMode = false;
+
     try {
       final api = ref.read(apiClientProvider);
       final resp = await api.dio.get('/workspaces');
@@ -57,7 +121,15 @@ class WorkspaceNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
       state = AsyncValue.data(list);
       await _restoreLastWorkspace(list);
     } catch (e, st) {
-      state = AsyncValue.error(e, st);
+      lastError = WorkspaceErrorInfo.fromException(e);
+
+      if (lastError!.type == WorkspaceLoadError.networkUnavailable ||
+          lastError!.type == WorkspaceLoadError.serverError) {
+        _isOfflineMode = true;
+        state = const AsyncValue.data([]);
+      } else {
+        state = AsyncValue.error(lastError!, st);
+      }
     }
   }
 

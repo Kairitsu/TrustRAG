@@ -1618,6 +1618,72 @@ abstract class S {
   /// In zh, this message translates to:
   /// **'引用来源'**
   String get citationSource;
+
+  /// No description provided for @networkUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'网络不可用'**
+  String get networkUnavailable;
+
+  /// No description provided for @networkUnavailableHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法连接到服务器，请检查网络连接后重试'**
+  String get networkUnavailableHint;
+
+  /// No description provided for @serverUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务暂时不可用'**
+  String get serverUnavailable;
+
+  /// No description provided for @serverUnavailableHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器正在维护或出现了问题，请稍后重试'**
+  String get serverUnavailableHint;
+
+  /// No description provided for @sessionExpired.
+  ///
+  /// In zh, this message translates to:
+  /// **'登录已过期'**
+  String get sessionExpired;
+
+  /// No description provided for @sessionExpiredHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'您的登录已失效，请重新登录'**
+  String get sessionExpiredHint;
+
+  /// No description provided for @unknownErrorHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'发生了意外错误，请稍后重试'**
+  String get unknownErrorHint;
+
+  /// No description provided for @reLogin.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新登录'**
+  String get reLogin;
+
+  /// No description provided for @offlineMode.
+  ///
+  /// In zh, this message translates to:
+  /// **'离线模式'**
+  String get offlineMode;
+
+  /// No description provided for @offlineModeHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法连接到服务器，部分功能暂时不可用。连接恢复后将自动同步。'**
+  String get offlineModeHint;
+
+  /// No description provided for @offlineBannerText.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前处于离线状态，团队功能暂不可用'**
+  String get offlineBannerText;
 }
 
 class _SDelegate extends LocalizationsDelegate<S> {

@@ -842,4 +842,43 @@ class SEn extends S {
 
   @override
   String get citationSource => 'Citation Source';
+
+  @override
+  String get networkUnavailable => 'Network Unavailable';
+
+  @override
+  String get networkUnavailableHint =>
+      'Cannot connect to server. Please check your network connection and try again.';
+
+  @override
+  String get serverUnavailable => 'Service Temporarily Unavailable';
+
+  @override
+  String get serverUnavailableHint =>
+      'The server is under maintenance or experiencing issues. Please try again later.';
+
+  @override
+  String get sessionExpired => 'Session Expired';
+
+  @override
+  String get sessionExpiredHint =>
+      'Your session has expired. Please log in again.';
+
+  @override
+  String get unknownErrorHint =>
+      'An unexpected error occurred. Please try again later.';
+
+  @override
+  String get reLogin => 'Log In Again';
+
+  @override
+  String get offlineMode => 'Offline Mode';
+
+  @override
+  String get offlineModeHint =>
+      'Cannot connect to server. Some features are temporarily unavailable. Data will sync when connection is restored.';
+
+  @override
+  String get offlineBannerText =>
+      'Currently offline. Team features are temporarily unavailable.';
 }

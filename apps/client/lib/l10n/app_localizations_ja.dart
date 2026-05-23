@@ -831,4 +831,39 @@ class SJa extends S {
 
   @override
   String get citationSource => '引用元';
+
+  @override
+  String get networkUnavailable => 'ネットワーク接続なし';
+
+  @override
+  String get networkUnavailableHint => 'サーバーに接続できません。ネットワーク接続を確認してから再試行してください。';
+
+  @override
+  String get serverUnavailable => 'サービス一時停止中';
+
+  @override
+  String get serverUnavailableHint =>
+      'サーバーがメンテナンス中または問題が発生しています。しばらくしてから再試行してください。';
+
+  @override
+  String get sessionExpired => 'セッション期限切れ';
+
+  @override
+  String get sessionExpiredHint => 'セッションが期限切れです。再度ログインしてください。';
+
+  @override
+  String get unknownErrorHint => '予期しないエラーが発生しました。しばらくしてから再試行してください。';
+
+  @override
+  String get reLogin => '再ログイン';
+
+  @override
+  String get offlineMode => 'オフラインモード';
+
+  @override
+  String get offlineModeHint =>
+      'サーバーに接続できません。一部の機能は一時的に利用できません。接続が回復すると自動的に同期されます。';
+
+  @override
+  String get offlineBannerText => '現在オフラインです。チーム機能は一時的に利用できません。';
 }

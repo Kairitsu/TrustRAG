@@ -278,5 +278,17 @@
   "team": "チーム",
   "collapseSidebar": "サイドバーを折りたたむ",
   "expandSidebar": "サイドバーを展開",
-  "citationSource": "引用元"
+  "citationSource": "引用元",
+
+  "networkUnavailable": "ネットワーク接続なし",
+  "networkUnavailableHint": "サーバーに接続できません。ネットワーク接続を確認してから再試行してください。",
+  "serverUnavailable": "サービス一時停止中",
+  "serverUnavailableHint": "サーバーがメンテナンス中または問題が発生しています。しばらくしてから再試行してください。",
+  "sessionExpired": "セッション期限切れ",
+  "sessionExpiredHint": "セッションが期限切れです。再度ログインしてください。",
+  "unknownErrorHint": "予期しないエラーが発生しました。しばらくしてから再試行してください。",
+  "reLogin": "再ログイン",
+  "offlineMode": "オフラインモード",
+  "offlineModeHint": "サーバーに接続できません。一部の機能は一時的に利用できません。接続が回復すると自動的に同期されます。",
+  "offlineBannerText": "現在オフラインです。チーム機能は一時的に利用できません。"
 }

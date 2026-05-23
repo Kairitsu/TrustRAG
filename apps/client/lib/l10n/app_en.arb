@@ -278,5 +278,17 @@
   "team": "Team",
   "collapseSidebar": "Collapse sidebar",
   "expandSidebar": "Expand sidebar",
-  "citationSource": "Citation Source"
+  "citationSource": "Citation Source",
+
+  "networkUnavailable": "Network Unavailable",
+  "networkUnavailableHint": "Cannot connect to server. Please check your network connection and try again.",
+  "serverUnavailable": "Service Temporarily Unavailable",
+  "serverUnavailableHint": "The server is under maintenance or experiencing issues. Please try again later.",
+  "sessionExpired": "Session Expired",
+  "sessionExpiredHint": "Your session has expired. Please log in again.",
+  "unknownErrorHint": "An unexpected error occurred. Please try again later.",
+  "reLogin": "Log In Again",
+  "offlineMode": "Offline Mode",
+  "offlineModeHint": "Cannot connect to server. Some features are temporarily unavailable. Data will sync when connection is restored.",
+  "offlineBannerText": "Currently offline. Team features are temporarily unavailable."
 }

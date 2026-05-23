@@ -833,4 +833,40 @@ class SKo extends S {
 
   @override
   String get citationSource => '인용 출처';
+
+  @override
+  String get networkUnavailable => '네트워크 연결 없음';
+
+  @override
+  String get networkUnavailableHint =>
+      '서버에 연결할 수 없습니다. 네트워크 연결을 확인하고 다시 시도하세요.';
+
+  @override
+  String get serverUnavailable => '서비스 일시 중단';
+
+  @override
+  String get serverUnavailableHint =>
+      '서버가 유지보수 중이거나 문제가 발생했습니다. 잠시 후 다시 시도하세요.';
+
+  @override
+  String get sessionExpired => '세션 만료';
+
+  @override
+  String get sessionExpiredHint => '세션이 만료되었습니다. 다시 로그인하세요.';
+
+  @override
+  String get unknownErrorHint => '예기치 않은 오류가 발생했습니다. 잠시 후 다시 시도하세요.';
+
+  @override
+  String get reLogin => '다시 로그인';
+
+  @override
+  String get offlineMode => '오프라인 모드';
+
+  @override
+  String get offlineModeHint =>
+      '서버에 연결할 수 없습니다. 일부 기능이 일시적으로 사용할 수 없습니다. 연결이 복원되면 자동으로 동기화됩니다.';
+
+  @override
+  String get offlineBannerText => '현재 오프라인 상태입니다. 팀 기능이 일시적으로 사용할 수 없습니다.';
 }

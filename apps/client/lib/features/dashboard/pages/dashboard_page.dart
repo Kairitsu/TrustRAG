@@ -313,8 +313,15 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         Expanded(
           child: workspaces.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text(S.of(context).loadFailed(e.toString()))),
+            error: (e, _) => _buildWorkspaceErrorView(e),
             data: (list) {
+              final wsNotifier = ref.read(workspaceProvider.notifier);
+              final isOffline = wsNotifier.isOfflineMode;
+
+              if (list.isEmpty && isOffline) {
+                return _buildOfflineEmptyView();
+              }
+
               if (list.isEmpty) {
                 return Center(
                   child: Column(
@@ -347,6 +354,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               return ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  if (isOffline) _buildOfflineBanner(),
                   if (personal.isNotEmpty) ...[
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -885,10 +893,12 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
 
     return workspaces.when(
       loading: () => const SizedBox(width: 40, height: 40, child: CircularProgressIndicator(strokeWidth: 2)),
-      error: (_, __) => IconButton(
-        icon: const Icon(Icons.error_outline, color: Colors.red),
-        onPressed: () => ref.read(workspaceProvider.notifier).loadWorkspaces(),
-        tooltip: S.of(context).loadFailed(''),
+      error: (_, __) => Tooltip(
+        message: S.of(context).serverUnavailable,
+        child: IconButton(
+          icon: Icon(Icons.cloud_off, color: Colors.orange.shade400),
+          onPressed: () => ref.read(workspaceProvider.notifier).loadWorkspaces(),
+        ),
       ),
       data: (list) {
         if (!extended) {
@@ -988,6 +998,132 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildWorkspaceErrorView(Object error) {
+    final s = S.of(context);
+    final theme = Theme.of(context);
+
+    IconData icon;
+    String title;
+    String subtitle;
+    bool canRetry = true;
+
+    if (error is WorkspaceErrorInfo) {
+      canRetry = error.canRetry;
+      switch (error.type) {
+        case WorkspaceLoadError.networkUnavailable:
+          icon = Icons.wifi_off_rounded;
+          title = s.networkUnavailable;
+          subtitle = s.networkUnavailableHint;
+        case WorkspaceLoadError.serverError:
+          icon = Icons.cloud_off_rounded;
+          title = s.serverUnavailable;
+          subtitle = s.serverUnavailableHint;
+        case WorkspaceLoadError.unauthorized:
+          icon = Icons.lock_outline_rounded;
+          title = s.sessionExpired;
+          subtitle = s.sessionExpiredHint;
+        case WorkspaceLoadError.unknown:
+          icon = Icons.error_outline_rounded;
+          title = s.loadFailed('');
+          subtitle = s.unknownErrorHint;
+      }
+    } else {
+      icon = Icons.error_outline_rounded;
+      title = s.loadFailed('');
+      subtitle = s.unknownErrorHint;
+    }
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 72, color: theme.colorScheme.error.withValues(alpha: 0.6)),
+            const SizedBox(height: 16),
+            Text(title, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(subtitle, style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey), textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            if (canRetry)
+              FilledButton.icon(
+                onPressed: () => ref.read(workspaceProvider.notifier).loadWorkspaces(),
+                icon: const Icon(Icons.refresh),
+                label: Text(s.retry),
+              ),
+            if (!canRetry)
+              FilledButton.icon(
+                onPressed: () {
+                  ref.read(authProvider.notifier).logout();
+                  context.go('/login');
+                },
+                icon: const Icon(Icons.login),
+                label: Text(s.reLogin),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOfflineEmptyView() {
+    final s = S.of(context);
+    final theme = Theme.of(context);
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.cloud_off_rounded, size: 72, color: Colors.orange.withValues(alpha: 0.6)),
+            const SizedBox(height: 16),
+            Text(s.offlineMode, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(s.offlineModeHint, style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey), textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => ref.read(workspaceProvider.notifier).loadWorkspaces(),
+              icon: const Icon(Icons.refresh),
+              label: Text(s.retry),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOfflineBanner() {
+    final s = S.of(context);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.wifi_off, size: 18, color: Colors.orange),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              s.offlineBannerText,
+              style: const TextStyle(fontSize: 13, color: Colors.orange),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => ref.read(workspaceProvider.notifier).loadWorkspaces(),
+            icon: const Icon(Icons.refresh, size: 16),
+            label: Text(s.retry),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+          ),
+        ],
+      ),
     );
   }
 
