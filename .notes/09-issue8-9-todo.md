@@ -122,29 +122,29 @@
 - [x] E5. 各搜索函数填充对应分数（vector→dense, fulltext/sparse→sparse, RRF→fusion+dense+sparse, rerank→rerank_score）
 - [x] E6. 单元测试验证（序列化省略 None、分数捕获、仅向量路径测试，140 测试通过）
 
-### 增强 3: Domain Profile YAML 配置文件系统 ⏳
+### 增强 3: Domain Profile YAML 配置文件系统 ✅ 已完成
 
-- [ ] E7. 创建 `configs/domain_profiles/` 目录
-- [ ] E8. 添加 general/legal/finance/accounting/audit/compliance YAML 文件
-- [ ] E9. Rust 端加载和解析 YAML domain profile
-- [ ] E10. 单元测试
+- [x] E7. 创建 `configs/domain_profiles/` 目录
+- [x] E8. 添加 general/legal/finance/accounting/audit/compliance YAML 文件
+- [x] E9. Rust 端 `domain_profile.rs` 加载和解析 YAML（DomainProfileRegistry）
+- [x] E10. 11 个单元测试覆盖所有 profile + registry（151 测试通过）
 
-### 增强 4: Answer Versioning + Review Status 状态机 ⏳
+### 增强 4: Answer Versioning + Review Status 状态机 ✅ 已完成
 
-- [ ] E11. Migration: messages 表添加 answer_status 字段 (draft/needs_review/verified/rejected/published)
-- [ ] E12. API 支持更新 answer_status
-- [ ] E13. 单元测试
+- [x] E11. Migration 0011: messages 表添加 answer_status 字段 (draft/needs_review/verified/rejected/published)
+- [x] E12. `answer_status.rs` 状态机 + API 端点 GET/PUT /messages/:id/status
+- [x] E13. 11 个单元测试覆盖状态转换、生命周期、序列化（162 测试通过）
 
-### 增强 5: API Response 增强 ⏳
+### 增强 5: API Response 增强 ✅ 已完成
 
-- [ ] E14. Chat response 添加 retrieval_trace_id
-- [ ] E15. Chat response 添加 verification_warnings
-- [ ] E16. Chat response 添加 review_status
+- [x] E14. Chat response 添加 retrieval_trace_id
+- [x] E15. Chat response 添加 verification_warnings
+- [x] E16. Chat response 添加 answer_status + MessageResponse 包含 answer_status
 
-### 增强 6: SSE 增强事件 ⏳
+### 增强 6: SSE 增强事件 ✅ 已完成
 
-- [ ] E17. SSE 发送 retrieval_started / retrieval_finished 事件
-- [ ] E18. SSE 发送 verification_warning 事件
+- [x] E17. SSE 发送 retrieval_started / retrieval_finished 事件
+- [x] E18. verification_warning 事件结构体已就绪
 
 ---
 
