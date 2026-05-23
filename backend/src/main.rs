@@ -87,6 +87,17 @@ async fn main() -> anyhow::Result<()> {
         .time_to_live(std::time::Duration::from_secs(600))
         .build();
 
+    let domain_profiles = {
+        let profiles_dir = services::domain_profile::default_profiles_dir();
+        match services::domain_profile::DomainProfileRegistry::load_from_dir(&profiles_dir) {
+            Ok(registry) => std::sync::Arc::new(registry),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load domain profiles, using empty registry");
+                std::sync::Arc::new(services::domain_profile::DomainProfileRegistry::new())
+            }
+        }
+    };
+
     let state = AppState {
         pool: pool.clone(),
         jwt_secret: config.jwt_secret.clone(),
@@ -95,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
         embedding_provider: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
         doc_processor_url: config.doc_processor_url.clone(),
         embedding_cache,
+        domain_profiles,
     };
 
     api::embedding_configs::init_embedding_provider(&state).await;
@@ -168,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(api::audit::router())
         .merge(api::evidence::router())
         .merge(api::answer_status::router())
+        .merge(api::domain_profiles::router())
         .with_state(state)
         .layer(axum::Extension(JwtSecret(config.jwt_secret.clone())))
         .layer(DefaultBodyLimit::max(upload_limit as usize))

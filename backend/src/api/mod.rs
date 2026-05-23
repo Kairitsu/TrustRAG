@@ -4,11 +4,13 @@ use moka::future::Cache;
 use tokio::sync::RwLock;
 
 use crate::db::DbPool;
+use crate::services::domain_profile::DomainProfileRegistry;
 use crate::services::storage::StorageService;
 use crate::traits::embedding_provider::EmbeddingProvider;
 
 pub mod answer_status;
 pub mod audit;
+pub mod domain_profiles;
 pub mod users;
 pub mod workspaces;
 pub mod documents;
@@ -31,4 +33,5 @@ pub struct AppState {
     pub embedding_provider: Arc<RwLock<Option<Arc<dyn EmbeddingProvider>>>>,
     pub doc_processor_url: String,
     pub embedding_cache: Cache<String, Vec<f32>>,
+    pub domain_profiles: Arc<DomainProfileRegistry>,
 }

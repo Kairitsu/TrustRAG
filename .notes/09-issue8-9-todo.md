@@ -148,13 +148,49 @@
 
 ---
 
+## Issue #9 补充 Gap 修复
+
+### Gap-1: MetadataFilter 结构化检索过滤 ✅ 已完成
+
+- [x] `MetadataFilter` 结构体（domains, languages, topics, keywords）
+- [x] `to_sql_conditions()` 生成 PostgreSQL JSONB 过滤 SQL
+- [x] 集成到 `SearchConfig`
+- [x] 5 个单元测试覆盖（167 测试通过）
+
+### Gap-2: Domain Profile 集成到运行时 ✅ 已完成
+
+- [x] `DomainProfileRegistry` 添加到 `AppState`
+- [x] `main.rs` 启动时加载 profiles 目录
+- [x] `RetrievalPipelineConfig::apply_domain_profile()` 方法
+- [x] API 端点 `GET /domain-profiles` + `GET /domain-profiles/{name}`
+- [x] 4 个新单元测试（profile 应用、参数覆盖、propagation）
+- [x] 171 测试全部通过
+
+### Gap-3: RetrievalTrace 持久化 ⬜ 待开始
+
+- [ ] 创建 `retrieval_traces` 表 migration
+- [ ] 实现写入函数
+- [ ] 在 retrieval_pipeline run 完成后自动持久化
+
+### Gap-4: answer_versions 表 ⬜ 待开始
+
+- [ ] 创建 `answer_versions` 表 migration
+- [ ] 实现版本记录 CRUD
+
+### Gap-5: claim_reviews/answer_reviews 审核表 ⬜ 待开始
+
+- [ ] 创建专用审核表 migration
+- [ ] 实现审核 CRUD 和 API
+
+---
+
 ## 测试统计
 
 | 模块 | 测试数 |
 |------|--------|
 | rag (query analysis, prompts, follow-up) | 14 |
-| search (RRF, tsvector, config) | 13 |
-| retrieval_pipeline (config, assembly) | 6 |
+| search (RRF, tsvector, config, metadata filter, stage scores) | 18 |
+| retrieval_pipeline (config, assembly, domain profile apply) | 10 |
 | reranker (parsing, cross-encoder, mock) | 10 |
 | metadata (parsing, frequency, serde) | 8 |
 | query_planner (intent strategies, scaling) | 11 |
@@ -162,6 +198,7 @@
 | audit (actions, entity types, serde) | 5 |
 | citation (extract, verify) | 8 |
 | review (input, report, markdown) | 6 |
-| search (RRF, tsvector, config, stage scores) | 16 |
-| embedding/llm/storage/other | 35 |
-| **合计** | **140** |
+| domain_profile (parse, registry, serde) | 13 |
+| answer_status (state machine, transitions, lifecycle) | 11 |
+| embedding/llm/storage/other | 36 |
+| **合计** | **171** |

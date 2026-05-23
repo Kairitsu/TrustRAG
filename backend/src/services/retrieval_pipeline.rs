@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::db::DbPool;
+use crate::services::domain_profile::YamlDomainProfile;
 use crate::services::search::{self, SearchConfig, SearchMode, SearchResult};
 use crate::services::reranker::{self, ReRankConfig, RerankerProvider};
 use crate::traits::embedding_provider::EmbeddingProvider;
@@ -43,6 +44,30 @@ impl Default for RetrievalPipelineConfig {
 }
 
 impl RetrievalPipelineConfig {
+    /// Override retrieval settings from a domain profile.
+    pub fn apply_domain_profile(&mut self, profile: &YamlDomainProfile) {
+        self.search_mode = profile.search.mode.clone();
+        self.min_score = profile.search.min_score;
+        self.rrf_k = profile.search.rrf_k;
+        self.final_top_k = profile.search.top_k;
+        self.max_context_chars = profile.retrieval.context_budget_chars;
+        self.enable_rerank = profile.retrieval.enable_rerank;
+        self.enable_query_expansion = profile.query_expansion.enabled;
+
+        if profile.retrieval.enable_rerank {
+            self.rerank.top_n = profile.retrieval.rerank_top_n;
+        }
+
+        tracing::debug!(
+            profile = %profile.name,
+            mode = ?self.search_mode,
+            min_score = self.min_score,
+            final_top_k = self.final_top_k,
+            enable_rerank = self.enable_rerank,
+            "Applied domain profile to retrieval config"
+        );
+    }
+
     pub fn to_search_config(&self) -> SearchConfig {
         let retrieval_k = match self.search_mode {
             SearchMode::Hybrid => self.fusion_top_k * 2,
@@ -475,5 +500,67 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].rank, 1);
         assert!((refs[0].score - 0.9).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_apply_domain_profile_legal() {
+        use crate::services::domain_profile::parse_profile_yaml;
+
+        let yaml = include_str!("../../configs/domain_profiles/legal.yaml");
+        let profile = parse_profile_yaml(yaml).unwrap();
+
+        let mut config = RetrievalPipelineConfig::default();
+        config.apply_domain_profile(&profile);
+
+        assert_eq!(config.final_top_k, 15);
+        assert!(config.enable_rerank);
+        assert!(config.enable_query_expansion);
+        assert_eq!(config.search_mode, SearchMode::Hybrid);
+    }
+
+    #[test]
+    fn test_apply_domain_profile_general() {
+        use crate::services::domain_profile::parse_profile_yaml;
+
+        let yaml = include_str!("../../configs/domain_profiles/general.yaml");
+        let profile = parse_profile_yaml(yaml).unwrap();
+
+        let mut config = RetrievalPipelineConfig::default();
+        config.apply_domain_profile(&profile);
+
+        assert_eq!(config.final_top_k, 10);
+        assert!(!config.enable_rerank);
+        assert!(!config.enable_query_expansion);
+    }
+
+    #[test]
+    fn test_apply_domain_profile_overrides_defaults() {
+        use crate::services::domain_profile::parse_profile_yaml;
+
+        let yaml = include_str!("../../configs/domain_profiles/finance.yaml");
+        let profile = parse_profile_yaml(yaml).unwrap();
+
+        let mut config = RetrievalPipelineConfig::default();
+        let original_min_score = config.min_score;
+        config.apply_domain_profile(&profile);
+
+        assert_ne!(config.final_top_k, 20, "finance profile should override default top_k");
+        assert!(config.min_score != original_min_score || config.min_score == profile.search.min_score);
+        assert_eq!(config.max_context_chars, profile.retrieval.context_budget_chars);
+    }
+
+    #[test]
+    fn test_apply_domain_profile_search_config_propagation() {
+        use crate::services::domain_profile::parse_profile_yaml;
+
+        let yaml = include_str!("../../configs/domain_profiles/legal.yaml");
+        let profile = parse_profile_yaml(yaml).unwrap();
+
+        let mut config = RetrievalPipelineConfig::default();
+        config.apply_domain_profile(&profile);
+
+        let sc = config.to_search_config();
+        assert_eq!(sc.min_score, profile.search.min_score);
+        assert_eq!(sc.rrf_k, profile.search.rrf_k);
     }
 }
