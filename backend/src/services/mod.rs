@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod chunking;
 pub mod citation;
 pub mod document;
