@@ -1,0 +1,38 @@
+name: accounting
+display_name: Accounting & Bookkeeping
+description: Profile for accounting standards, financial statements, and bookkeeping.
+
+search:
+  mode: hybrid
+  top_k: 12
+  min_score: 0.35
+  rrf_k: 60.0
+
+retrieval:
+  context_budget_chars: 7000
+  enable_rerank: true
+  rerank_top_n: 6
+
+verification:
+  mode: strict
+  min_trust_score: 0.75
+
+terminology:
+  - accrual
+  - depreciation
+  - amortization
+  - ledger
+  - journal entry
+  - trial balance
+  - accounts receivable
+  - accounts payable
+  - revenue recognition
+
+query_expansion:
+  enabled: true
+  synonyms:
+    GAAP: [Generally Accepted Accounting Principles]
+    IFRS: [International Financial Reporting Standards]
+    asset: [resource, property, holding]
+    liability: [obligation, debt, payable]
+    equity: [net assets, owner's equity, stockholders' equity]

@@ -1,0 +1,38 @@
+name: compliance
+display_name: Compliance & Risk Management
+description: Profile for regulatory compliance, risk assessment, and policy management.
+
+search:
+  mode: hybrid
+  top_k: 15
+  min_score: 0.35
+  rrf_k: 60.0
+
+retrieval:
+  context_budget_chars: 8000
+  enable_rerank: true
+  rerank_top_n: 8
+
+verification:
+  mode: strict
+  min_trust_score: 0.8
+
+terminology:
+  - AML
+  - KYC
+  - due diligence
+  - sanctions
+  - whistleblower
+  - conflict of interest
+  - data protection
+  - GDPR
+  - SOX
+  - regulatory framework
+
+query_expansion:
+  enabled: true
+  synonyms:
+    compliance: [adherence, conformity, observance]
+    violation: [breach, infringement, non-compliance]
+    policy: [procedure, guideline, regulation]
+    risk assessment: [risk evaluation, risk analysis, threat assessment]

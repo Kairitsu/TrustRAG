@@ -110,17 +110,17 @@
 
 ## Issue #9 增强型需求 (Round 2)
 
-### 增强 1: Evidence 三种模式 off/warn/strict ⏳
+### 增强 1: Evidence 三种模式 off/warn/strict ✅ 已完成
 
-- [ ] E1. 添加 `VerificationMode` 枚举 (Off/Warn/Strict)
-- [ ] E2. 在 evidence.rs 中集成模式控制
-- [ ] E3. 单元测试覆盖三种模式
+- [x] E1. 添加 `VerificationMode` 枚举 (Off/Warn/Strict)
+- [x] E2. 在 evidence.rs 中集成模式控制（build_report 支持 warnings + should_block）
+- [x] E3. 单元测试覆盖三种模式（137 测试通过）
 
-### 增强 2: SearchResult 多阶段分数结构 ⏳
+### 增强 2: SearchResult 多阶段分数结构 ✅ 已完成
 
-- [ ] E4. SearchResult 添加 dense_score/sparse_score/fusion_score/rerank_score 字段
-- [ ] E5. 各搜索函数填充对应分数
-- [ ] E6. 单元测试验证
+- [x] E4. SearchResult 添加 dense_score/sparse_score/fusion_score/rerank_score 字段
+- [x] E5. 各搜索函数填充对应分数（vector→dense, fulltext/sparse→sparse, RRF→fusion+dense+sparse, rerank→rerank_score）
+- [x] E6. 单元测试验证（序列化省略 None、分数捕获、仅向量路径测试，140 测试通过）
 
 ### 增强 3: Domain Profile YAML 配置文件系统 ⏳
 
@@ -158,9 +158,10 @@
 | reranker (parsing, cross-encoder, mock) | 10 |
 | metadata (parsing, frequency, serde) | 8 |
 | query_planner (intent strategies, scaling) | 11 |
-| evidence (claims, tokenize, jaccard, report) | 16 |
+| evidence (claims, tokenize, jaccard, report, modes) | 21 |
 | audit (actions, entity types, serde) | 5 |
 | citation (extract, verify) | 8 |
 | review (input, report, markdown) | 6 |
+| search (RRF, tsvector, config, stage scores) | 16 |
 | embedding/llm/storage/other | 35 |
-| **合计** | **132** |
+| **合计** | **140** |

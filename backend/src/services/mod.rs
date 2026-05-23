@@ -2,6 +2,7 @@ pub mod audit;
 pub mod chunking;
 pub mod citation;
 pub mod document;
+pub mod domain_profile;
 pub mod evidence;
 pub mod rag;
 pub mod llm;

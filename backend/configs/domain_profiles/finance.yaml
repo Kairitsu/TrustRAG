@@ -1,0 +1,36 @@
+name: finance
+display_name: Finance & Investment
+description: Profile for financial analysis, investment research, and market reports.
+
+search:
+  mode: hybrid
+  top_k: 12
+  min_score: 0.35
+  rrf_k: 60.0
+
+retrieval:
+  context_budget_chars: 7000
+  enable_rerank: true
+  rerank_top_n: 6
+
+verification:
+  mode: strict
+  min_trust_score: 0.7
+
+terminology:
+  - portfolio
+  - derivative
+  - hedge
+  - yield curve
+  - arbitrage
+  - volatility
+  - market capitalization
+  - liquidity
+
+query_expansion:
+  enabled: true
+  synonyms:
+    stock: [equity, share, security]
+    bond: [fixed income, debt instrument, debenture]
+    profit: [earnings, income, return]
+    risk: [exposure, volatility, downside]

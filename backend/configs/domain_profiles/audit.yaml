@@ -1,0 +1,38 @@
+name: audit
+display_name: Audit & Assurance
+description: Profile for audit procedures, internal controls, and assurance engagements.
+
+search:
+  mode: hybrid
+  top_k: 15
+  min_score: 0.35
+  rrf_k: 60.0
+
+retrieval:
+  context_budget_chars: 8000
+  enable_rerank: true
+  rerank_top_n: 8
+
+verification:
+  mode: strict
+  min_trust_score: 0.8
+
+terminology:
+  - materiality
+  - sampling
+  - assertion
+  - substantive procedure
+  - control testing
+  - engagement letter
+  - management representation
+  - going concern
+  - audit evidence
+  - misstatement
+
+query_expansion:
+  enabled: true
+  synonyms:
+    audit: [examination, review, inspection]
+    finding: [observation, deficiency, exception]
+    control: [safeguard, procedure, policy]
+    risk: [exposure, threat, vulnerability]

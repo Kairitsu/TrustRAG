@@ -1,0 +1,24 @@
+name: general
+display_name: General Knowledge
+description: Default profile for general-purpose knowledge workspaces.
+
+search:
+  mode: hybrid
+  top_k: 10
+  min_score: 0.3
+  rrf_k: 60.0
+
+retrieval:
+  context_budget_chars: 6000
+  enable_rerank: false
+  rerank_top_n: 5
+
+verification:
+  mode: warn
+  min_trust_score: 0.5
+
+terminology: []
+
+query_expansion:
+  enabled: false
+  synonyms: {}
