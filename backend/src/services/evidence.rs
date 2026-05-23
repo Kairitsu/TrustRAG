@@ -5,6 +5,24 @@ use uuid::Uuid;
 use crate::services::retrieval_pipeline::AssembledSource;
 use crate::traits::llm_provider::{LlmMessage, LlmProvider, LlmRequest};
 
+/// Controls how strictly evidence verification is applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerificationMode {
+    /// No claim verification — answer returned as-is.
+    Off,
+    /// Verify claims and attach warnings, but always return the answer.
+    Warn,
+    /// Verify claims strictly — block answer if unsupported factual claims exist.
+    Strict,
+}
+
+impl Default for VerificationMode {
+    fn default() -> Self {
+        Self::Warn
+    }
+}
+
 /// A single claim extracted from an LLM response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claim {
@@ -43,6 +61,9 @@ pub struct VerificationReport {
     pub unsupported_count: usize,
     pub contradicted_count: usize,
     pub partial_count: usize,
+    pub mode: VerificationMode,
+    pub warnings: Vec<String>,
+    pub should_block: bool,
 }
 
 /// Split an LLM response into individual factual claims.
@@ -240,7 +261,7 @@ fn parse_verification_response(
 }
 
 /// Build a full verification report for an answer.
-pub fn build_report(verifications: &[ClaimVerification]) -> VerificationReport {
+pub fn build_report(verifications: &[ClaimVerification], mode: VerificationMode) -> VerificationReport {
     let supported = verifications.iter().filter(|v| v.status == EvidenceStatus::Supported).count();
     let contradicted = verifications.iter().filter(|v| v.status == EvidenceStatus::Contradicted).count();
     let unsupported = verifications.iter().filter(|v| v.status == EvidenceStatus::Unsupported).count();
@@ -257,6 +278,22 @@ pub fn build_report(verifications: &[ClaimVerification]) -> VerificationReport {
         0.0
     };
 
+    let mut warnings = Vec::new();
+    for v in verifications {
+        match v.status {
+            EvidenceStatus::Unsupported => {
+                warnings.push(format!("Unsupported claim: \"{}\"", truncate_str(&v.claim.text, 80)));
+            }
+            EvidenceStatus::Contradicted => {
+                warnings.push(format!("Contradicted claim: \"{}\"", truncate_str(&v.claim.text, 80)));
+            }
+            _ => {}
+        }
+    }
+
+    let should_block = mode == VerificationMode::Strict
+        && (unsupported > 0 || contradicted > 0);
+
     VerificationReport {
         claims: verifications.to_vec(),
         overall_trust_score: trust_score,
@@ -264,6 +301,18 @@ pub fn build_report(verifications: &[ClaimVerification]) -> VerificationReport {
         unsupported_count: unsupported,
         contradicted_count: contradicted,
         partial_count: partial,
+        mode,
+        warnings,
+        should_block,
+    }
+}
+
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
     }
 }
 
@@ -471,10 +520,12 @@ mod tests {
                 explanation: "ok".into(),
             },
         ];
-        let report = build_report(&verifications);
+        let report = build_report(&verifications, VerificationMode::Warn);
         assert_eq!(report.supported_count, 2);
         assert_eq!(report.unsupported_count, 0);
         assert!((report.overall_trust_score - 1.0).abs() < 1e-10);
+        assert!(!report.should_block);
+        assert!(report.warnings.is_empty());
     }
 
     #[test]
@@ -495,11 +546,68 @@ mod tests {
                 explanation: "no evidence".into(),
             },
         ];
-        let report = build_report(&verifications);
+        let report = build_report(&verifications, VerificationMode::Warn);
         assert_eq!(report.supported_count, 1);
         assert_eq!(report.unsupported_count, 1);
         assert!(report.overall_trust_score > 0.0);
         assert!(report.overall_trust_score < 1.0);
+        assert!(!report.should_block);
+        assert_eq!(report.warnings.len(), 1);
+    }
+
+    #[test]
+    fn test_verification_mode_off() {
+        let report = build_report(&[], VerificationMode::Off);
+        assert!(!report.should_block);
+        assert_eq!(report.mode, VerificationMode::Off);
+    }
+
+    #[test]
+    fn test_verification_mode_strict_blocks() {
+        let verifications = vec![
+            ClaimVerification {
+                claim: Claim { text: "unverified fact".into(), start_offset: 0, end_offset: 15, cited_source_indices: vec![] },
+                status: EvidenceStatus::Unsupported,
+                confidence: 0.2,
+                supporting_source_indices: vec![],
+                explanation: "no evidence".into(),
+            },
+        ];
+        let report = build_report(&verifications, VerificationMode::Strict);
+        assert!(report.should_block);
+        assert_eq!(report.mode, VerificationMode::Strict);
+        assert!(!report.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_verification_mode_strict_no_block_when_supported() {
+        let verifications = vec![
+            ClaimVerification {
+                claim: Claim { text: "verified fact".into(), start_offset: 0, end_offset: 13, cited_source_indices: vec![1] },
+                status: EvidenceStatus::Supported,
+                confidence: 0.9,
+                supporting_source_indices: vec![1],
+                explanation: "ok".into(),
+            },
+        ];
+        let report = build_report(&verifications, VerificationMode::Strict);
+        assert!(!report.should_block);
+    }
+
+    #[test]
+    fn test_verification_mode_serde() {
+        let modes = vec![VerificationMode::Off, VerificationMode::Warn, VerificationMode::Strict];
+        for mode in modes {
+            let json = serde_json::to_string(&mode).unwrap();
+            let deserialized: VerificationMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_verification_mode_default() {
+        let mode = VerificationMode::default();
+        assert_eq!(mode, VerificationMode::Warn);
     }
 
     #[test]

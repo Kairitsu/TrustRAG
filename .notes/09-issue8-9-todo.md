@@ -108,6 +108,46 @@
 
 ---
 
+## Issue #9 增强型需求 (Round 2)
+
+### 增强 1: Evidence 三种模式 off/warn/strict ⏳
+
+- [ ] E1. 添加 `VerificationMode` 枚举 (Off/Warn/Strict)
+- [ ] E2. 在 evidence.rs 中集成模式控制
+- [ ] E3. 单元测试覆盖三种模式
+
+### 增强 2: SearchResult 多阶段分数结构 ⏳
+
+- [ ] E4. SearchResult 添加 dense_score/sparse_score/fusion_score/rerank_score 字段
+- [ ] E5. 各搜索函数填充对应分数
+- [ ] E6. 单元测试验证
+
+### 增强 3: Domain Profile YAML 配置文件系统 ⏳
+
+- [ ] E7. 创建 `configs/domain_profiles/` 目录
+- [ ] E8. 添加 general/legal/finance/accounting/audit/compliance YAML 文件
+- [ ] E9. Rust 端加载和解析 YAML domain profile
+- [ ] E10. 单元测试
+
+### 增强 4: Answer Versioning + Review Status 状态机 ⏳
+
+- [ ] E11. Migration: messages 表添加 answer_status 字段 (draft/needs_review/verified/rejected/published)
+- [ ] E12. API 支持更新 answer_status
+- [ ] E13. 单元测试
+
+### 增强 5: API Response 增强 ⏳
+
+- [ ] E14. Chat response 添加 retrieval_trace_id
+- [ ] E15. Chat response 添加 verification_warnings
+- [ ] E16. Chat response 添加 review_status
+
+### 增强 6: SSE 增强事件 ⏳
+
+- [ ] E17. SSE 发送 retrieval_started / retrieval_finished 事件
+- [ ] E18. SSE 发送 verification_warning 事件
+
+---
+
 ## 测试统计
 
 | 模块 | 测试数 |
