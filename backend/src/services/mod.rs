@@ -4,6 +4,7 @@ pub mod audit;
 pub mod chunking;
 pub mod citation;
 pub mod document;
+pub mod document_metadata_store;
 pub mod domain_profile;
 pub mod evidence;
 pub mod rag;
