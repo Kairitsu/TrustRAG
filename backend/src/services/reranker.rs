@@ -28,6 +28,9 @@ pub struct ReRankConfig {
 pub enum ReRankMethod {
     LlmScoring,
     CrossEncoder,
+    CrossEncoderHttp,
+    LocalFastEmbed,
+    ExternalApi,
 }
 
 impl Default for ReRankConfig {
@@ -66,11 +69,14 @@ pub async fn rerank_with_provider(
 
     match config.method {
         ReRankMethod::LlmScoring => llm_rerank(results, query, config.top_n, llm_provider).await,
-        ReRankMethod::CrossEncoder => {
+        ReRankMethod::CrossEncoder | ReRankMethod::CrossEncoderHttp | ReRankMethod::LocalFastEmbed | ReRankMethod::ExternalApi => {
             if let Some(provider) = reranker_provider {
                 cross_encoder_rerank(results, query, config.top_n, provider).await
             } else {
-                tracing::warn!("CrossEncoder reranker requested but no provider configured, falling back to LLM scoring");
+                tracing::warn!(
+                    method = ?config.method,
+                    "Reranker provider requested but not configured, falling back to LLM scoring"
+                );
                 llm_rerank(results, query, config.top_n, llm_provider).await
             }
         }
@@ -362,12 +368,52 @@ mod tests {
 
     #[test]
     fn test_rerank_method_serde_roundtrip() {
-        let methods = vec![ReRankMethod::LlmScoring, ReRankMethod::CrossEncoder];
+        let methods = vec![
+            ReRankMethod::LlmScoring,
+            ReRankMethod::CrossEncoder,
+            ReRankMethod::CrossEncoderHttp,
+            ReRankMethod::LocalFastEmbed,
+            ReRankMethod::ExternalApi,
+        ];
         for method in methods {
             let json = serde_json::to_string(&method).unwrap();
             let deserialized: ReRankMethod = serde_json::from_str(&json).unwrap();
             assert_eq!(method, deserialized);
         }
+    }
+
+    #[test]
+    fn test_rerank_method_cross_encoder_http_json() {
+        let method = ReRankMethod::CrossEncoderHttp;
+        let json = serde_json::to_string(&method).unwrap();
+        assert_eq!(json, "\"cross_encoder_http\"");
+    }
+
+    #[test]
+    fn test_rerank_method_local_fast_embed_json() {
+        let method = ReRankMethod::LocalFastEmbed;
+        let json = serde_json::to_string(&method).unwrap();
+        assert_eq!(json, "\"local_fast_embed\"");
+    }
+
+    #[test]
+    fn test_rerank_method_external_api_json() {
+        let method = ReRankMethod::ExternalApi;
+        let json = serde_json::to_string(&method).unwrap();
+        assert_eq!(json, "\"external_api\"");
+    }
+
+    #[test]
+    fn test_rerank_config_with_new_methods() {
+        let config = ReRankConfig {
+            enabled: true,
+            top_n: 10,
+            method: ReRankMethod::CrossEncoderHttp,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ReRankConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.method, ReRankMethod::CrossEncoderHttp);
+        assert_eq!(back.top_n, 10);
     }
 
     #[test]
