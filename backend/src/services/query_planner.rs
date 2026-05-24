@@ -2,7 +2,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::services::metadata::DomainProfile;
 use crate::services::rag::{QueryAnalysis, QueryIntent};
-use crate::services::search::SearchMode;
+use crate::services::search::{MetadataFilter, SearchMode};
+
+/// High-level retrieval strategy that governs how search modes are combined.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalStrategy {
+    SingleMode,
+    HybridFusion,
+    CascadeFallback,
+    MultiQueryMerge,
+}
+
+impl Default for RetrievalStrategy {
+    fn default() -> Self {
+        Self::HybridFusion
+    }
+}
 
 /// The output of the query planner: a strategy for how to retrieve information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +32,15 @@ pub struct QueryPlan {
     pub max_context_chars: usize,
     pub confidence: f64,
     pub reasoning: String,
+
+    #[serde(default)]
+    pub retrieval_strategy: RetrievalStrategy,
+    #[serde(default)]
+    pub metadata_filters: MetadataFilter,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub query_variants: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preferred_document_types: Vec<String>,
 }
 
 impl Default for QueryPlan {
@@ -30,6 +55,10 @@ impl Default for QueryPlan {
             max_context_chars: 6000,
             confidence: 0.5,
             reasoning: "default plan".to_string(),
+            retrieval_strategy: RetrievalStrategy::default(),
+            metadata_filters: MetadataFilter::default(),
+            query_variants: Vec::new(),
+            preferred_document_types: Vec::new(),
         }
     }
 }
@@ -43,6 +72,10 @@ pub fn plan(
     let corpus_size = total_chunks.unwrap_or(0);
     let has_domain_profile = domain_profile.is_some();
 
+    let defaults = || -> (RetrievalStrategy, MetadataFilter, Vec<String>, Vec<String>) {
+        (RetrievalStrategy::HybridFusion, MetadataFilter::default(), Vec::new(), Vec::new())
+    };
+
     match analysis.intent {
         QueryIntent::Chitchat => QueryPlan {
             search_mode: SearchMode::Vector,
@@ -54,10 +87,13 @@ pub fn plan(
             max_context_chars: 0,
             confidence: 1.0,
             reasoning: "Chitchat query, no retrieval needed".to_string(),
+            retrieval_strategy: RetrievalStrategy::SingleMode,
+            ..Default::default()
         },
 
         QueryIntent::Factual => {
             let (top_k, rerank) = scale_for_corpus(corpus_size, 10, 5);
+            let (strategy, filters, variants, doc_types) = defaults();
             QueryPlan {
                 search_mode: SearchMode::Hybrid,
                 search_top_k: top_k,
@@ -68,6 +104,10 @@ pub fn plan(
                 max_context_chars: 4000,
                 confidence: 0.8,
                 reasoning: "Factual query: hybrid search, focused context".to_string(),
+                retrieval_strategy: strategy,
+                metadata_filters: filters,
+                query_variants: variants,
+                preferred_document_types: doc_types,
             }
         }
 
@@ -83,6 +123,8 @@ pub fn plan(
                 max_context_chars: 8000,
                 confidence: 0.7,
                 reasoning: "Exploratory query: broader retrieval with query expansion".to_string(),
+                retrieval_strategy: RetrievalStrategy::MultiQueryMerge,
+                ..Default::default()
             }
         }
 
@@ -98,6 +140,8 @@ pub fn plan(
                 max_context_chars: 10000,
                 confidence: 0.7,
                 reasoning: "Comparison query: wide retrieval to cover multiple aspects".to_string(),
+                retrieval_strategy: RetrievalStrategy::CascadeFallback,
+                ..Default::default()
             }
         }
 
@@ -113,6 +157,8 @@ pub fn plan(
                 max_context_chars: 12000,
                 confidence: 0.6,
                 reasoning: "Summary query: collect many sources, rerank for coverage".to_string(),
+                retrieval_strategy: RetrievalStrategy::HybridFusion,
+                ..Default::default()
             }
         }
     }
@@ -244,5 +290,83 @@ mod tests {
         let deserialized: QueryPlan = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.search_mode, plan.search_mode);
         assert_eq!(deserialized.confidence, plan.confidence);
+    }
+
+    #[test]
+    fn test_retrieval_strategy_serde() {
+        let strategies = vec![
+            (RetrievalStrategy::SingleMode, "\"single_mode\""),
+            (RetrievalStrategy::HybridFusion, "\"hybrid_fusion\""),
+            (RetrievalStrategy::CascadeFallback, "\"cascade_fallback\""),
+            (RetrievalStrategy::MultiQueryMerge, "\"multi_query_merge\""),
+        ];
+        for (s, expected) in strategies {
+            let json = serde_json::to_string(&s).unwrap();
+            assert_eq!(json, expected);
+            let back: RetrievalStrategy = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, s);
+        }
+    }
+
+    #[test]
+    fn test_default_plan_has_extended_fields() {
+        let plan = QueryPlan::default();
+        assert_eq!(plan.retrieval_strategy, RetrievalStrategy::HybridFusion);
+        assert!(plan.metadata_filters.is_empty());
+        assert!(plan.query_variants.is_empty());
+        assert!(plan.preferred_document_types.is_empty());
+    }
+
+    #[test]
+    fn test_chitchat_uses_single_mode_strategy() {
+        let analysis = QueryAnalysis {
+            intent: QueryIntent::Chitchat,
+            needs_retrieval: false,
+            rewritten_query: "hi".to_string(),
+        };
+        let plan = plan(&analysis, None, None);
+        assert_eq!(plan.retrieval_strategy, RetrievalStrategy::SingleMode);
+    }
+
+    #[test]
+    fn test_exploratory_uses_multi_query_merge() {
+        let analysis = make_analysis(QueryIntent::Exploratory);
+        let plan = plan(&analysis, None, None);
+        assert_eq!(plan.retrieval_strategy, RetrievalStrategy::MultiQueryMerge);
+    }
+
+    #[test]
+    fn test_comparison_uses_cascade_fallback() {
+        let analysis = make_analysis(QueryIntent::Comparison);
+        let plan = plan(&analysis, None, None);
+        assert_eq!(plan.retrieval_strategy, RetrievalStrategy::CascadeFallback);
+    }
+
+    #[test]
+    fn test_plan_with_query_variants() {
+        let mut plan = QueryPlan::default();
+        plan.query_variants = vec!["variant 1".to_string(), "variant 2".to_string()];
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("query_variants"));
+        let back: QueryPlan = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.query_variants.len(), 2);
+    }
+
+    #[test]
+    fn test_plan_with_preferred_document_types() {
+        let mut plan = QueryPlan::default();
+        plan.preferred_document_types = vec!["pdf".to_string(), "markdown".to_string()];
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("preferred_document_types"));
+        let back: QueryPlan = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.preferred_document_types, vec!["pdf", "markdown"]);
+    }
+
+    #[test]
+    fn test_plan_empty_variants_omitted_in_json() {
+        let plan = QueryPlan::default();
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(!json.contains("query_variants"));
+        assert!(!json.contains("preferred_document_types"));
     }
 }
