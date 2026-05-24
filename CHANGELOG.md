@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.5-beta.2] - 2026-05-24
+
+### Fixed / 修复
+- 🐛 **SQLite 桌面模式启动失败** — `migrations_sqlite/init.sql` 只覆盖了 0001-0006 的表定义，缺少 0007-0017 的所有新增表（audit_trail, retrieval_traces, answer_versions, claim_reviews, answer_reviews, document_metadata, review_tasks, review_comments, source_reviews 等），导致嵌入式后端无法初始化数据库。
+- 🧪 **测试** — desktop feature 编译通过，251 个测试全部 OK。
+
+---
+
 ## [0.2.5-beta.1] - 2026-05-24
 
 ### Added / 新增
