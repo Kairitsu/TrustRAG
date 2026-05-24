@@ -19,6 +19,7 @@ pub mod retrieval_pipeline;
 pub mod retrieval_trace_store;
 pub mod search;
 pub mod review;
+pub mod review_workflow;
 pub mod specialized_reviews;
 pub mod storage;
 pub mod provider_registry;
