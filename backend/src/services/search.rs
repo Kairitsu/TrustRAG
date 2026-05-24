@@ -75,6 +75,7 @@ pub enum SearchMode {
     Vector,
     Fulltext,
     Sparse,
+    Fuzzy,
     Hybrid,
 }
 
@@ -296,6 +297,61 @@ pub async fn sparse_search(
     if rows.is_empty() {
         return fulltext_search(pool, workspace_id, query, top_k, document_ids).await;
     }
+
+    Ok(rows)
+}
+
+/// pg_trgm fuzzy search using word_similarity for token-level trigram matching.
+/// More lenient than sparse/fulltext — useful as a fallback when exact terms miss.
+#[cfg(feature = "postgres")]
+pub async fn fuzzy_search(
+    pool: &DbPool,
+    workspace_id: Uuid,
+    query: &str,
+    top_k: usize,
+    document_ids: Option<&[Uuid]>,
+) -> anyhow::Result<Vec<SearchRow>> {
+    let rows = if let Some(doc_ids) = document_ids {
+        sqlx::query_as::<_, SearchRow>(
+            r#"
+            SELECT dc.id, dc.document_id, dc.content, dc.heading_path,
+                   dc.page_start, dc.page_end,
+                   word_similarity($1, dc.content)::float8 as score
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE d.workspace_id = $2
+              AND dc.document_id = ANY($3)
+              AND $1 <% dc.content
+            ORDER BY word_similarity($1, dc.content) DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(query)
+        .bind(workspace_id)
+        .bind(doc_ids)
+        .bind(top_k as i64)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, SearchRow>(
+            r#"
+            SELECT dc.id, dc.document_id, dc.content, dc.heading_path,
+                   dc.page_start, dc.page_end,
+                   word_similarity($1, dc.content)::float8 as score
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE d.workspace_id = $2
+              AND $1 <% dc.content
+            ORDER BY word_similarity($1, dc.content) DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(query)
+        .bind(workspace_id)
+        .bind(top_k as i64)
+        .fetch_all(pool)
+        .await?
+    };
 
     Ok(rows)
 }
@@ -609,6 +665,16 @@ pub async fn hybrid_search(
         }
         #[cfg(not(feature = "postgres"))]
         SearchMode::Sparse => {
+            let ft_rows = fulltext_search(pool, workspace_id, query, config.top_k, document_ids).await?;
+            rows_to_results(ft_rows, "sparse")
+        }
+        #[cfg(feature = "postgres")]
+        SearchMode::Fuzzy => {
+            let fuzzy_rows = fuzzy_search(pool, workspace_id, query, config.top_k, document_ids).await?;
+            rows_to_results(fuzzy_rows, "sparse")
+        }
+        #[cfg(not(feature = "postgres"))]
+        SearchMode::Fuzzy => {
             let ft_rows = fulltext_search(pool, workspace_id, query, config.top_k, document_ids).await?;
             rows_to_results(ft_rows, "sparse")
         }
@@ -945,5 +1011,39 @@ mod tests {
         let config: SearchConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.metadata_filter.domains, vec!["legal"]);
         assert_eq!(config.metadata_filter.keywords, vec!["contract"]);
+    }
+
+    #[test]
+    fn test_search_mode_fuzzy_serde() {
+        let mode = SearchMode::Fuzzy;
+        let json = serde_json::to_string(&mode).unwrap();
+        assert_eq!(json, r#""fuzzy""#);
+        let deserialized: SearchMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, SearchMode::Fuzzy);
+    }
+
+    #[test]
+    fn test_search_config_fuzzy_mode() {
+        let json = r#"{"mode":"fuzzy","top_k":5,"min_score":0.2,"use_mmr":false,"mmr_lambda":0.7,"rrf_k":60.0}"#;
+        let config: SearchConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.mode, SearchMode::Fuzzy);
+        assert_eq!(config.top_k, 5);
+        assert!((config.min_score - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_all_search_modes_serde_roundtrip() {
+        let modes = vec![
+            SearchMode::Vector,
+            SearchMode::Fulltext,
+            SearchMode::Sparse,
+            SearchMode::Fuzzy,
+            SearchMode::Hybrid,
+        ];
+        for mode in modes {
+            let json = serde_json::to_string(&mode).unwrap();
+            let back: SearchMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, mode, "Roundtrip failed for {:?}", mode);
+        }
     }
 }
