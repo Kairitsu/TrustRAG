@@ -115,10 +115,24 @@ pub struct ScoredChunkRef {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievalTimings {
     pub query_expansion_ms: u64,
+    pub dense_search_ms: u64,
+    pub sparse_search_ms: u64,
+    pub fuzzy_search_ms: u64,
+    pub fusion_ms: u64,
     pub search_ms: u64,
     pub rerank_ms: u64,
     pub context_assembly_ms: u64,
     pub total_ms: u64,
+}
+
+/// Outcome of a claim-level verification check within a retrieval trace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimCheck {
+    pub claim: String,
+    pub supported: bool,
+    pub confidence: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supporting_chunk_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +146,21 @@ pub struct RetrievalTrace {
     pub search_results: Vec<ScoredChunkRef>,
     pub reranked_results: Vec<ScoredChunkRef>,
     pub timings: RetrievalTimings,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dense_results: Vec<ScoredChunkRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sparse_results: Vec<ScoredChunkRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fuzzy_results: Vec<ScoredChunkRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fused_results: Vec<ScoredChunkRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_plan: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claim_checks: Vec<ClaimCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_context: Option<String>,
 }
 
 /// Query expansion: generate alternative search queries via LLM
@@ -390,11 +419,22 @@ pub async fn run_with_reranker(
             reranked_results: reranked_refs,
             timings: RetrievalTimings {
                 query_expansion_ms: expansion_ms,
+                dense_search_ms: 0,
+                sparse_search_ms: 0,
+                fuzzy_search_ms: 0,
+                fusion_ms: 0,
                 search_ms: expansion_ms,
                 rerank_ms,
                 context_assembly_ms: assembly_ms,
                 total_ms,
             },
+            dense_results: Vec::new(),
+            sparse_results: Vec::new(),
+            fuzzy_results: Vec::new(),
+            fused_results: Vec::new(),
+            query_plan: None,
+            claim_checks: Vec::new(),
+            final_context: Some(context.clone()),
         })
     } else {
         None
@@ -562,5 +602,143 @@ mod tests {
         let sc = config.to_search_config();
         assert_eq!(sc.min_score, profile.search.min_score);
         assert_eq!(sc.rrf_k, profile.search.rrf_k);
+    }
+
+    #[test]
+    fn test_retrieval_timings_extended_fields() {
+        let timings = RetrievalTimings {
+            query_expansion_ms: 50,
+            dense_search_ms: 80,
+            sparse_search_ms: 60,
+            fuzzy_search_ms: 40,
+            fusion_ms: 10,
+            search_ms: 190,
+            rerank_ms: 100,
+            context_assembly_ms: 30,
+            total_ms: 370,
+        };
+        let json = serde_json::to_value(&timings).unwrap();
+        assert_eq!(json["dense_search_ms"], 80);
+        assert_eq!(json["sparse_search_ms"], 60);
+        assert_eq!(json["fuzzy_search_ms"], 40);
+        assert_eq!(json["fusion_ms"], 10);
+    }
+
+    #[test]
+    fn test_claim_check_serde() {
+        let check = ClaimCheck {
+            claim: "The earth is round".to_string(),
+            supported: true,
+            confidence: 0.99,
+            supporting_chunk_ids: vec![Uuid::new_v4()],
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        assert!(json.contains("supporting_chunk_ids"));
+        let back: ClaimCheck = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.claim, "The earth is round");
+        assert!(back.supported);
+    }
+
+    #[test]
+    fn test_claim_check_empty_chunks_omitted() {
+        let check = ClaimCheck {
+            claim: "test".to_string(),
+            supported: false,
+            confidence: 0.3,
+            supporting_chunk_ids: Vec::new(),
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        assert!(!json.contains("supporting_chunk_ids"));
+    }
+
+    #[test]
+    fn test_retrieval_trace_extended_fields_serde() {
+        let trace = RetrievalTrace {
+            original_query: "test".to_string(),
+            rewritten_query: "test rewritten".to_string(),
+            expanded_queries: Vec::new(),
+            search_results_count: 0,
+            reranked_results_count: 0,
+            final_sources_count: 0,
+            search_results: Vec::new(),
+            reranked_results: Vec::new(),
+            timings: RetrievalTimings {
+                query_expansion_ms: 0,
+                dense_search_ms: 0,
+                sparse_search_ms: 0,
+                fuzzy_search_ms: 0,
+                fusion_ms: 0,
+                search_ms: 0,
+                rerank_ms: 0,
+                context_assembly_ms: 0,
+                total_ms: 0,
+            },
+            dense_results: vec![ScoredChunkRef {
+                chunk_id: Uuid::new_v4(),
+                document_id: Uuid::new_v4(),
+                score: 0.9,
+                rank: 1,
+            }],
+            sparse_results: Vec::new(),
+            fuzzy_results: Vec::new(),
+            fused_results: Vec::new(),
+            query_plan: Some(serde_json::json!({"strategy": "hybrid"})),
+            claim_checks: vec![ClaimCheck {
+                claim: "test claim".to_string(),
+                supported: true,
+                confidence: 0.95,
+                supporting_chunk_ids: Vec::new(),
+            }],
+            final_context: Some("assembled context here".to_string()),
+        };
+        let json = serde_json::to_string(&trace).unwrap();
+        assert!(json.contains("dense_results"));
+        assert!(json.contains("query_plan"));
+        assert!(json.contains("claim_checks"));
+        assert!(json.contains("final_context"));
+        let back: RetrievalTrace = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.dense_results.len(), 1);
+        assert!(back.query_plan.is_some());
+        assert_eq!(back.claim_checks.len(), 1);
+    }
+
+    #[test]
+    fn test_retrieval_trace_empty_extended_fields_omitted() {
+        let trace = RetrievalTrace {
+            original_query: "test".to_string(),
+            rewritten_query: "test".to_string(),
+            expanded_queries: Vec::new(),
+            search_results_count: 0,
+            reranked_results_count: 0,
+            final_sources_count: 0,
+            search_results: Vec::new(),
+            reranked_results: Vec::new(),
+            timings: RetrievalTimings {
+                query_expansion_ms: 0,
+                dense_search_ms: 0,
+                sparse_search_ms: 0,
+                fuzzy_search_ms: 0,
+                fusion_ms: 0,
+                search_ms: 0,
+                rerank_ms: 0,
+                context_assembly_ms: 0,
+                total_ms: 0,
+            },
+            dense_results: Vec::new(),
+            sparse_results: Vec::new(),
+            fuzzy_results: Vec::new(),
+            fused_results: Vec::new(),
+            query_plan: None,
+            claim_checks: Vec::new(),
+            final_context: None,
+        };
+        let json = serde_json::to_string(&trace).unwrap();
+        assert!(!json.contains("dense_results"));
+        assert!(!json.contains("sparse_results"));
+        assert!(!json.contains("fuzzy_results"));
+        assert!(!json.contains("fused_results"));
+        assert!(!json.contains("query_plan"));
+        assert!(!json.contains("claim_checks"));
+        assert!(!json.contains("final_context"));
     }
 }

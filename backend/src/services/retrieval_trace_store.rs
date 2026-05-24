@@ -181,11 +181,22 @@ mod tests {
             }],
             timings: RetrievalTimings {
                 query_expansion_ms: 100,
+                dense_search_ms: 80,
+                sparse_search_ms: 60,
+                fuzzy_search_ms: 0,
+                fusion_ms: 20,
                 search_ms: 200,
                 rerank_ms: 150,
                 context_assembly_ms: 50,
                 total_ms: 500,
             },
+            dense_results: Vec::new(),
+            sparse_results: Vec::new(),
+            fuzzy_results: Vec::new(),
+            fused_results: Vec::new(),
+            query_plan: None,
+            claim_checks: Vec::new(),
+            final_context: None,
         }
     }
 
@@ -232,6 +243,10 @@ mod tests {
     fn test_timings_json_roundtrip() {
         let timings = RetrievalTimings {
             query_expansion_ms: 100,
+            dense_search_ms: 80,
+            sparse_search_ms: 60,
+            fuzzy_search_ms: 0,
+            fusion_ms: 20,
             search_ms: 200,
             rerank_ms: 150,
             context_assembly_ms: 50,
@@ -240,6 +255,9 @@ mod tests {
         let json = serde_json::to_value(&timings).unwrap();
         assert_eq!(json["total_ms"].as_u64().unwrap(), 500);
         assert_eq!(json["rerank_ms"].as_u64().unwrap(), 150);
+        assert_eq!(json["dense_search_ms"].as_u64().unwrap(), 80);
+        assert_eq!(json["sparse_search_ms"].as_u64().unwrap(), 60);
+        assert_eq!(json["fusion_ms"].as_u64().unwrap(), 20);
     }
 
     #[test]
