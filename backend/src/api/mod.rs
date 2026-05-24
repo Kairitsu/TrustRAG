@@ -19,6 +19,7 @@ pub mod search;
 pub mod models;
 pub mod chat;
 pub mod citations;
+pub mod retrieval_traces;
 pub mod reviews;
 pub mod embedding_configs;
 pub mod knowledge_graph;
