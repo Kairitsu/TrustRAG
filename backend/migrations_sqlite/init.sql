@@ -22,11 +22,15 @@ CREATE TABLE IF NOT EXISTS workspaces (
     description     TEXT,
     owner_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     visibility      TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'shared', 'public')),
+    type            TEXT NOT NULL DEFAULT 'personal',
+    invite_code     TEXT UNIQUE,
+    domain_profile  TEXT DEFAULT '{}',
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces (owner_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_type ON workspaces(type);
 
 CREATE TABLE IF NOT EXISTS workspace_members (
     id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
@@ -56,6 +60,7 @@ CREATE TABLE IF NOT EXISTS documents (
     processing_status   TEXT NOT NULL DEFAULT 'pending' CHECK (processing_status IN ('pending', 'processing', 'chunking', 'embedding', 'ready', 'failed')),
     processing_error    TEXT,
     uploaded_by         TEXT NOT NULL REFERENCES users(id),
+    metadata            TEXT DEFAULT '{}',
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -166,6 +171,8 @@ CREATE TABLE IF NOT EXISTS messages (
     prompt_tokens       INTEGER,
     completion_tokens   INTEGER,
     latency_ms          INTEGER,
+    evidence_report     TEXT,
+    answer_status       TEXT DEFAULT 'draft',
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -237,38 +244,11 @@ CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(targe
 CREATE INDEX IF NOT EXISTS idx_entity_relations_workspace ON entity_relations(workspace_id);
 
 -- ============================================================
--- Equivalent of migration 0007: workspace team support
+-- Equivalent of migrations 0007-0009: already inlined into
+-- CREATE TABLE statements above (type, invite_code, domain_profile
+-- on workspaces; metadata on documents).
+-- Equivalent of migration 0008 (FTS5): already set up above.
 -- ============================================================
-
--- SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we use a
--- separate table approach or just add columns inline.  Since this
--- is a fresh-create schema, we handle it by including the columns
--- in the original CREATE TABLE above.  For an existing DB this
--- would need special handling, but init.sql is only run on new DBs.
--- We add the columns here via ALTER TABLE to keep it clear.
-
--- NOTE: SQLite >=3.35 supports these; guard with CREATE TABLE trick
--- if the columns already exist (harmless on fresh DB).
-
-ALTER TABLE workspaces ADD COLUMN type TEXT NOT NULL DEFAULT 'personal';
-ALTER TABLE workspaces ADD COLUMN invite_code TEXT UNIQUE;
-
-CREATE INDEX IF NOT EXISTS idx_workspaces_type ON workspaces(type);
-
--- ============================================================
--- Equivalent of migration 0008: fulltext search (SQLite FTS5 already set up above)
--- ============================================================
-
--- pg_trgm / tsvector not applicable to SQLite.
--- FTS5 virtual table + triggers already defined above.
--- No additional action needed.
-
--- ============================================================
--- Equivalent of migration 0009: document metadata & domain profile
--- ============================================================
-
-ALTER TABLE documents ADD COLUMN metadata TEXT DEFAULT '{}';
-ALTER TABLE workspaces ADD COLUMN domain_profile TEXT DEFAULT '{}';
 
 -- ============================================================
 -- Equivalent of migration 0010: audit trail
@@ -291,13 +271,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_trail (user_id, created_
 CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_trail (action, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_trail (entity_type, entity_id);
 
-ALTER TABLE messages ADD COLUMN evidence_report TEXT;
-
--- ============================================================
--- Equivalent of migration 0011: answer status
--- ============================================================
-
-ALTER TABLE messages ADD COLUMN answer_status TEXT DEFAULT 'draft';
+-- evidence_report and answer_status columns on messages are inlined above.
 
 CREATE INDEX IF NOT EXISTS idx_messages_answer_status ON messages (answer_status);
 
