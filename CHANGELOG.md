@@ -14,6 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.5-beta.1] - 2026-05-24
+
+### Added / 新增
+- 🔍 **Fuzzy Search 模式** — 新增 `SearchMode::Fuzzy`，使用 pg_trgm `word_similarity()` 实现容错搜索，非 PG 环境自动回退。
+- 📋 **QueryPlan 扩展** — 新增 `RetrievalStrategy` 枚举（SingleMode/HybridFusion/CascadeFallback/MultiQueryMerge），`metadata_filters`、`query_variants`、`preferred_document_types` 字段。
+- 📊 **RetrievalTrace 扩展** — 分离 dense/sparse/fuzzy/fused 结果，新增 `query_plan`、`claim_checks`、`final_context` 字段，`RetrievalTimings` 增加细分计时。
+- 📄 **document_metadata 独立表** — 30+ typed columns 覆盖法律（jurisdiction, regulation_id）、金融（ticker_symbol, fiscal_year）、医学（doi, pmid, clinical_trial_id）等多领域。
+- ⚡ **ReRankMethod 扩展** — 新增 `CrossEncoderHttp`、`LocalFastEmbed`、`ExternalApi` 重排方法。
+- 🐛 **Debug API** — 新增 `GET /retrieval-traces/:id`、`GET /workspaces/:id/retrieval-traces`、`GET /messages/:id/retrieval-trace` 调试接口。
+- ✅ **Review Workflow 表** — 新增 `review_tasks`（可分配、状态/优先级/标签）、`review_comments`（线程式评论）、`source_reviews`（来源多维评分）三张表。
+- 🧪 **测试** — 新增 43 个单元测试，总计 240 个通过。
+
+### Infrastructure / 基础设施
+- 新增 3 个数据库迁移（0015~0017）
+
+---
+
 ## [0.2.4] - 2026-05-22
 
 ### Added / 新增
