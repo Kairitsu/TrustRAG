@@ -235,3 +235,293 @@ CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(workspace_id, name);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_source ON entity_relations(source_entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_workspace ON entity_relations(workspace_id);
+
+-- ============================================================
+-- Equivalent of migration 0007: workspace team support
+-- ============================================================
+
+-- SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we use a
+-- separate table approach or just add columns inline.  Since this
+-- is a fresh-create schema, we handle it by including the columns
+-- in the original CREATE TABLE above.  For an existing DB this
+-- would need special handling, but init.sql is only run on new DBs.
+-- We add the columns here via ALTER TABLE to keep it clear.
+
+-- NOTE: SQLite >=3.35 supports these; guard with CREATE TABLE trick
+-- if the columns already exist (harmless on fresh DB).
+
+ALTER TABLE workspaces ADD COLUMN type TEXT NOT NULL DEFAULT 'personal';
+ALTER TABLE workspaces ADD COLUMN invite_code TEXT UNIQUE;
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_type ON workspaces(type);
+
+-- ============================================================
+-- Equivalent of migration 0008: fulltext search (SQLite FTS5 already set up above)
+-- ============================================================
+
+-- pg_trgm / tsvector not applicable to SQLite.
+-- FTS5 virtual table + triggers already defined above.
+-- No additional action needed.
+
+-- ============================================================
+-- Equivalent of migration 0009: document metadata & domain profile
+-- ============================================================
+
+ALTER TABLE documents ADD COLUMN metadata TEXT DEFAULT '{}';
+ALTER TABLE workspaces ADD COLUMN domain_profile TEXT DEFAULT '{}';
+
+-- ============================================================
+-- Equivalent of migration 0010: audit trail
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS audit_trail (
+    id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    workspace_id    TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id         TEXT REFERENCES users(id) ON DELETE SET NULL,
+    action          TEXT NOT NULL,
+    entity_type     TEXT NOT NULL,
+    entity_id       TEXT,
+    details         TEXT DEFAULT '{}',
+    ip_address      TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_workspace_time ON audit_trail (workspace_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_trail (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_trail (action, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_trail (entity_type, entity_id);
+
+ALTER TABLE messages ADD COLUMN evidence_report TEXT;
+
+-- ============================================================
+-- Equivalent of migration 0011: answer status
+-- ============================================================
+
+ALTER TABLE messages ADD COLUMN answer_status TEXT DEFAULT 'draft';
+
+CREATE INDEX IF NOT EXISTS idx_messages_answer_status ON messages (answer_status);
+
+-- ============================================================
+-- Equivalent of migration 0012: retrieval traces
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS retrieval_traces (
+    id                      TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    workspace_id            TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    message_id              TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    original_query          TEXT NOT NULL,
+    rewritten_query         TEXT NOT NULL DEFAULT '',
+    expanded_queries        TEXT NOT NULL DEFAULT '[]',
+    search_results_count    INTEGER NOT NULL DEFAULT 0,
+    reranked_results_count  INTEGER NOT NULL DEFAULT 0,
+    final_sources_count     INTEGER NOT NULL DEFAULT 0,
+    search_results          TEXT NOT NULL DEFAULT '[]',
+    reranked_results        TEXT NOT NULL DEFAULT '[]',
+    timings                 TEXT NOT NULL DEFAULT '{}',
+    domain_profile          TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_retrieval_traces_workspace ON retrieval_traces (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_retrieval_traces_message ON retrieval_traces (message_id);
+CREATE INDEX IF NOT EXISTS idx_retrieval_traces_created ON retrieval_traces (created_at);
+
+-- ============================================================
+-- Equivalent of migration 0013: answer versions
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS answer_versions (
+    id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    message_id          TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    version_number      INTEGER NOT NULL DEFAULT 1,
+    content             TEXT NOT NULL,
+    answer_status       TEXT NOT NULL DEFAULT 'draft',
+    retrieval_trace_id  TEXT REFERENCES retrieval_traces(id) ON DELETE SET NULL,
+    reviewer_id         TEXT REFERENCES users(id) ON DELETE SET NULL,
+    review_comment      TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (message_id, version_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_answer_versions_message ON answer_versions (message_id, version_number);
+CREATE INDEX IF NOT EXISTS idx_answer_versions_status ON answer_versions (answer_status);
+
+-- ============================================================
+-- Equivalent of migration 0014: claim & answer reviews
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS claim_reviews (
+    id                      TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    claim_id                TEXT NOT NULL,
+    message_id              TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    reviewer_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    verdict                 TEXT NOT NULL CHECK (verdict IN ('supported', 'unsupported', 'partially_supported', 'unverifiable')),
+    confidence              REAL CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    comment                 TEXT,
+    evidence_references     TEXT NOT NULL DEFAULT '[]',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_claim_reviews_claim ON claim_reviews (claim_id);
+CREATE INDEX IF NOT EXISTS idx_claim_reviews_message ON claim_reviews (message_id);
+CREATE INDEX IF NOT EXISTS idx_claim_reviews_reviewer ON claim_reviews (reviewer_id);
+
+CREATE TABLE IF NOT EXISTS answer_reviews (
+    id                      TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    message_id              TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    answer_version_id       TEXT REFERENCES answer_versions(id) ON DELETE SET NULL,
+    reviewer_id             TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    overall_verdict         TEXT NOT NULL CHECK (overall_verdict IN ('approved', 'rejected', 'needs_revision', 'escalated')),
+    accuracy_score          REAL CHECK (accuracy_score >= 0.0 AND accuracy_score <= 1.0),
+    completeness_score      REAL CHECK (completeness_score >= 0.0 AND completeness_score <= 1.0),
+    clarity_score           REAL CHECK (clarity_score >= 0.0 AND clarity_score <= 1.0),
+    comment                 TEXT,
+    revision_instructions   TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_answer_reviews_message ON answer_reviews (message_id);
+CREATE INDEX IF NOT EXISTS idx_answer_reviews_version ON answer_reviews (answer_version_id);
+CREATE INDEX IF NOT EXISTS idx_answer_reviews_reviewer ON answer_reviews (reviewer_id);
+CREATE INDEX IF NOT EXISTS idx_answer_reviews_verdict ON answer_reviews (overall_verdict);
+
+-- ============================================================
+-- Equivalent of migration 0015: fuzzy search (pg_trgm)
+-- ============================================================
+
+-- pg_trgm extension is PostgreSQL-specific.
+-- SQLite fuzzy search falls back to FTS5 MATCH in the application layer.
+-- No additional schema changes needed.
+
+-- ============================================================
+-- Equivalent of migration 0016: document_metadata table
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS document_metadata (
+    id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    document_id     TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    workspace_id    TEXT NOT NULL,
+
+    domain          TEXT,
+    sub_domain      TEXT,
+    document_type   TEXT,
+    language        TEXT,
+
+    authority       TEXT,
+    author          TEXT,
+    publisher       TEXT,
+    source_url      TEXT,
+
+    publish_date    TEXT,
+    effective_date  TEXT,
+    expiry_date     TEXT,
+    fiscal_year     INTEGER,
+
+    jurisdiction    TEXT,
+    regulation_id   TEXT,
+    case_number     TEXT,
+
+    ticker_symbol   TEXT,
+    report_type     TEXT,
+    currency        TEXT,
+
+    doi             TEXT,
+    pmid            TEXT,
+    clinical_trial_id TEXT,
+
+    confidence_score REAL DEFAULT 0.0,
+    is_verified     INTEGER DEFAULT 0,
+    verified_by     TEXT,
+    verified_at     TEXT,
+
+    tags            TEXT DEFAULT '[]',
+    extra           TEXT DEFAULT '{}',
+
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+
+    UNIQUE (document_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_meta_workspace ON document_metadata(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_doc_meta_domain ON document_metadata(domain);
+CREATE INDEX IF NOT EXISTS idx_doc_meta_language ON document_metadata(language);
+CREATE INDEX IF NOT EXISTS idx_doc_meta_authority ON document_metadata(authority);
+CREATE INDEX IF NOT EXISTS idx_doc_meta_jurisdiction ON document_metadata(jurisdiction);
+CREATE INDEX IF NOT EXISTS idx_doc_meta_fiscal_year ON document_metadata(fiscal_year);
+CREATE INDEX IF NOT EXISTS idx_doc_meta_document_type ON document_metadata(document_type);
+
+-- ============================================================
+-- Equivalent of migration 0017: review workflow tables
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS review_tasks (
+    id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    workspace_id    TEXT NOT NULL,
+    message_id      TEXT,
+    answer_version_id TEXT,
+    title           TEXT NOT NULL,
+    description     TEXT,
+    task_type       TEXT NOT NULL DEFAULT 'general',
+    priority        INTEGER NOT NULL DEFAULT 3,
+    status          TEXT NOT NULL DEFAULT 'open',
+    assigned_to     TEXT,
+    created_by      TEXT,
+    due_date        TEXT,
+    completed_at    TEXT,
+    tags            TEXT DEFAULT '[]',
+    metadata        TEXT DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_tasks_workspace ON review_tasks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_review_tasks_status ON review_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_review_tasks_assigned ON review_tasks(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_review_tasks_message ON review_tasks(message_id);
+CREATE INDEX IF NOT EXISTS idx_review_tasks_priority ON review_tasks(priority);
+
+CREATE TABLE IF NOT EXISTS review_comments (
+    id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    review_task_id      TEXT NOT NULL REFERENCES review_tasks(id) ON DELETE CASCADE,
+    parent_comment_id   TEXT REFERENCES review_comments(id) ON DELETE SET NULL,
+    author_id           TEXT,
+    content             TEXT NOT NULL,
+    comment_type        TEXT NOT NULL DEFAULT 'comment',
+    resolved            INTEGER NOT NULL DEFAULT 0,
+    resolved_at         TEXT,
+    resolved_by         TEXT,
+    metadata            TEXT DEFAULT '{}',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_comments_task ON review_comments(review_task_id);
+CREATE INDEX IF NOT EXISTS idx_review_comments_parent ON review_comments(parent_comment_id);
+CREATE INDEX IF NOT EXISTS idx_review_comments_author ON review_comments(author_id);
+
+CREATE TABLE IF NOT EXISTS source_reviews (
+    id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    workspace_id    TEXT NOT NULL,
+    document_id     TEXT NOT NULL,
+    chunk_id        TEXT,
+    review_task_id  TEXT REFERENCES review_tasks(id) ON DELETE SET NULL,
+    reviewer_id     TEXT,
+    verdict         TEXT NOT NULL DEFAULT 'pending',
+    relevance_score REAL,
+    accuracy_score  REAL,
+    freshness_score REAL,
+    authority_score REAL,
+    overall_score   REAL,
+    notes           TEXT,
+    is_trusted      INTEGER DEFAULT NULL,
+    flagged_issues  TEXT DEFAULT '[]',
+    metadata        TEXT DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_reviews_workspace ON source_reviews(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_source_reviews_document ON source_reviews(document_id);
+CREATE INDEX IF NOT EXISTS idx_source_reviews_task ON source_reviews(review_task_id);
+CREATE INDEX IF NOT EXISTS idx_source_reviews_verdict ON source_reviews(verdict);
