@@ -187,16 +187,70 @@
 
 ---
 
+## Issue #9 第二轮补充 (v2) ✅ 全部完成
+
+### v2-1: Fuzzy Search 模式 ✅
+
+- [x] `SearchMode::Fuzzy` 枚举值
+- [x] `fuzzy_search()` 使用 pg_trgm `word_similarity()` + `<%` operator
+- [x] non-PG fallback 到 fulltext_search
+- [x] Migration 0015
+- [x] 3 个新测试（200 测试通过）
+
+### v2-2: QueryPlan 扩展 ✅
+
+- [x] `RetrievalStrategy` 枚举（SingleMode, HybridFusion, CascadeFallback, MultiQueryMerge）
+- [x] `metadata_filters`, `query_variants`, `preferred_document_types` 字段
+- [x] 各 intent 映射到对应策略
+- [x] 8 个新测试（208 测试通过）
+
+### v2-3: RetrievalTrace 扩展 ✅
+
+- [x] 分离 `dense_results`, `sparse_results`, `fuzzy_results`, `fused_results`
+- [x] 添加 `query_plan` (JSON), `claim_checks`, `final_context`
+- [x] `RetrievalTimings` 扩展: dense_search_ms, sparse_search_ms, fuzzy_search_ms, fusion_ms
+- [x] `ClaimCheck` 结构体
+- [x] 5 个新测试（213 测试通过）
+
+### v2-4: document_metadata 独立表 ✅
+
+- [x] Migration 0016: 30+ typed columns（法律/金融/医学/通用分类）
+- [x] `document_metadata_store.rs` upsert/get/list/delete
+- [x] JSONB extra 扩展字段 + GIN 索引
+- [x] 7 个新测试（220 测试通过）
+
+### v2-5: ReRankMethod 扩展 ✅
+
+- [x] `CrossEncoderHttp`, `LocalFastEmbed`, `ExternalApi` 枚举值
+- [x] 统一 RerankerProvider trait dispatch
+- [x] 4 个新测试（224 测试通过）
+
+### v2-6: Debug API endpoint ✅
+
+- [x] `GET /retrieval-traces/:trace_id` 查看完整 trace
+- [x] `GET /workspaces/:workspace_id/retrieval-traces` 分页列表
+- [x] `GET /messages/:message_id/retrieval-trace` 按消息查 trace
+- [x] 3 个新测试（227 测试通过）
+
+### v2-7: review_tasks / review_comments / source_reviews ✅
+
+- [x] Migration 0017: 三张表（review_tasks, review_comments, source_reviews）
+- [x] `review_workflow.rs` 完整枚举 + 数据结构 + CRUD
+- [x] ReviewTaskStatus/Type, CommentType, SourceVerdict 枚举
+- [x] 13 个新测试（240 测试通过）
+
+---
+
 ## 测试统计
 
 | 模块 | 测试数 |
 |------|--------|
 | rag (query analysis, prompts, follow-up) | 14 |
-| search (RRF, tsvector, config, metadata filter, stage scores) | 18 |
-| retrieval_pipeline (config, assembly, domain profile apply) | 10 |
-| reranker (parsing, cross-encoder, mock) | 10 |
+| search (RRF, tsvector, config, metadata filter, stage scores, fuzzy) | 21 |
+| retrieval_pipeline (config, assembly, domain profile, trace ext) | 15 |
+| reranker (parsing, cross-encoder, mock, extended methods) | 14 |
 | metadata (parsing, frequency, serde) | 8 |
-| query_planner (intent strategies, scaling) | 11 |
+| query_planner (intent strategies, scaling, retrieval strategy) | 19 |
 | evidence (claims, tokenize, jaccard, report, modes) | 21 |
 | audit (actions, entity types, serde) | 5 |
 | citation (extract, verify) | 8 |
@@ -206,5 +260,8 @@
 | answer_versions (input, serde, status) | 6 |
 | retrieval_trace_store (construction, serde, timings) | 6 |
 | specialized_reviews (verdicts, serde, validation, input) | 14 |
+| document_metadata_store (upsert, serde, domains) | 7 |
+| review_workflow (tasks, comments, sources, verdicts) | 13 |
+| retrieval_traces API (params, router) | 3 |
 | embedding/llm/storage/other | 36 |
-| **合计** | **197** |
+| **合计** | **240** |
