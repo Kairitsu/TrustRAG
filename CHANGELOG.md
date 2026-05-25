@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.5-beta.3] - 2026-05-25
+
+### Fixed / 修复
+- 🐛 **Windows 版启动 panic 修复** — `evidence.rs` 和 `answer_status.rs` 路由使用了 Axum 0.7 的旧格式 `:message_id`，导致 Axum 0.8 启动时 panic，后端无法监听端口，前端无法连接。已全部修正为 `{message_id}` 格式。（Issue #10）
+
+---
+
 ## [0.2.5-beta.2] - 2026-05-24
 
 ### Fixed / 修复
