@@ -35,5 +35,5 @@ async fn get_evidence_report(
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/messages/:message_id/evidence", get(get_evidence_report))
+        .route("/messages/{message_id}/evidence", get(get_evidence_report))
 }

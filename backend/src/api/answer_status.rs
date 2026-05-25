@@ -71,5 +71,5 @@ async fn update_status(
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/messages/:message_id/status", get(get_status).put(update_status))
+        .route("/messages/{message_id}/status", get(get_status).put(update_status))
 }
