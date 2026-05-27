@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.5-beta.6] - 2026-05-27
+
+### Fixed / 修复
+- 🔐 **"保持登录状态"真正修复** — 根本原因：`initialLocation: '/login'` 导致 app 每次启动都显示登录页，即使 token 有效。LoginPage 现在在 `build()` 时检查 auth 状态：已认证→自动跳转到 dashboard，检查中→显示 loading，未认证→显示登录表单。
+
+---
+
 ## [0.2.5-beta.5] - 2026-05-27
 
 ### Fixed / 修复
