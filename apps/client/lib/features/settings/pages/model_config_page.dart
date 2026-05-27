@@ -185,7 +185,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
           ],
         ]),
         subtitle: Text(
-            '${cfg.provider} · ${cfg.apiBaseUrl ?? ''} · dim: ${cfg.dimensions}'),
+            '${cfg.provider} · ${cfg.apiBaseUrl ?? ''} · dim: ${cfg.dimensions} · batch: ${cfg.batchSize}'),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -467,6 +467,8 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
     final apiKeyCtl = TextEditingController();
     final dimensionsCtl = TextEditingController(
         text: config?.dimensions.toString() ?? '1536');
+    final batchSizeCtl = TextEditingController(
+        text: config?.batchSize.toString() ?? '10');
     bool isDefault = config?.isDefault ?? true;
 
     showDialog(
@@ -538,6 +540,17 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   keyboardType: TextInputType.number,
                 ),
                 const SizedBox(height: 12),
+                TextField(
+                  controller: batchSizeCtl,
+                  decoration: const InputDecoration(
+                    labelText: '批处理大小',
+                    helperText: '每次请求的最大文本数量，默认 10（兼容大多数 API）',
+                    helperMaxLines: 2,
+                  ),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                ),
+                const SizedBox(height: 12),
                 SwitchListTile(
                   title: const Text('设为默认'),
                   contentPadding: EdgeInsets.zero,
@@ -561,6 +574,8 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   'api_base_url': endpointCtl.text,
                   'dimensions':
                       int.tryParse(dimensionsCtl.text) ?? 1536,
+                  'batch_size':
+                      (int.tryParse(batchSizeCtl.text) ?? 10).clamp(1, 2048),
                   'is_default': isDefault,
                 };
                 if (apiKeyCtl.text.isNotEmpty) {

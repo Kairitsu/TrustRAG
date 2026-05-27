@@ -72,8 +72,14 @@ pub async fn process_document(
     )
     .await
     {
-        tracing::error!("Document processing failed for {}: {}", doc_id, e);
-        let _ = update_status(&pool, doc_id, "failed", Some(&e.to_string())).await;
+        let err_msg = e.to_string();
+        let status = if err_msg.contains("[embedding]") {
+            "embedding_failed"
+        } else {
+            "failed"
+        };
+        tracing::error!("Document processing failed for {} (status={}): {}", doc_id, status, err_msg);
+        let _ = update_status(&pool, doc_id, status, Some(&err_msg)).await;
     }
 }
 

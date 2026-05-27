@@ -20,14 +20,27 @@ pub fn normalize_api_base(url: &str) -> String {
     }
 }
 
+pub const DEFAULT_EMBEDDING_BATCH_SIZE: usize = 10;
+
 pub struct OpenAIEmbeddingProvider {
     client: Client<OpenAIConfig>,
     model: String,
     dimensions: usize,
+    batch_size: usize,
 }
 
 impl OpenAIEmbeddingProvider {
     pub fn new(api_base_url: &str, api_key: Option<&str>, model: &str, dimensions: usize) -> Self {
+        Self::with_batch_size(api_base_url, api_key, model, dimensions, DEFAULT_EMBEDDING_BATCH_SIZE)
+    }
+
+    pub fn with_batch_size(
+        api_base_url: &str,
+        api_key: Option<&str>,
+        model: &str,
+        dimensions: usize,
+        batch_size: usize,
+    ) -> Self {
         let base = normalize_api_base(api_base_url);
         let mut config = OpenAIConfig::new().with_api_base(&base);
         if let Some(key) = api_key {
@@ -38,6 +51,7 @@ impl OpenAIEmbeddingProvider {
             client: Client::with_config(config),
             model: model.to_string(),
             dimensions,
+            batch_size: batch_size.clamp(1, 2048),
         }
     }
 }
@@ -49,7 +63,7 @@ impl EmbeddingProvider for OpenAIEmbeddingProvider {
             return Ok(vec![]);
         }
 
-        let batch_size = 100;
+        let batch_size = self.batch_size;
         let mut all_embeddings = Vec::with_capacity(texts.len());
 
         for batch in texts.chunks(batch_size) {
@@ -257,6 +271,37 @@ mod tests {
         );
         assert_eq!(provider.dimensions(), 768);
         assert_eq!(provider.model_name(), "nomic-embed-text");
+        assert_eq!(provider.batch_size, DEFAULT_EMBEDDING_BATCH_SIZE);
+    }
+
+    #[test]
+    fn test_provider_with_custom_batch_size() {
+        let provider = OpenAIEmbeddingProvider::with_batch_size(
+            "http://localhost:11434/v1",
+            None,
+            "nomic-embed-text",
+            768,
+            5,
+        );
+        assert_eq!(provider.batch_size, 5);
+
+        let clamped = OpenAIEmbeddingProvider::with_batch_size(
+            "http://localhost:11434/v1",
+            None,
+            "nomic-embed-text",
+            768,
+            0,
+        );
+        assert_eq!(clamped.batch_size, 1);
+
+        let clamped_high = OpenAIEmbeddingProvider::with_batch_size(
+            "http://localhost:11434/v1",
+            None,
+            "nomic-embed-text",
+            768,
+            9999,
+        );
+        assert_eq!(clamped_high.batch_size, 2048);
     }
 
     #[test]

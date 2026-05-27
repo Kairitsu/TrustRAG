@@ -10,6 +10,7 @@ class EmbeddingConfig {
   final bool hasApiKey;
   final String modelName;
   final int dimensions;
+  final int batchSize;
   final bool isDefault;
 
   EmbeddingConfig({
@@ -20,6 +21,7 @@ class EmbeddingConfig {
     required this.hasApiKey,
     required this.modelName,
     required this.dimensions,
+    required this.batchSize,
     required this.isDefault,
   });
 
@@ -32,6 +34,7 @@ class EmbeddingConfig {
       hasApiKey: json['has_api_key'] ?? false,
       modelName: json['model_name'] ?? '',
       dimensions: json['dimensions'] ?? 1536,
+      batchSize: json['batch_size'] ?? 10,
       isDefault: json['is_default'] ?? false,
     );
   }
