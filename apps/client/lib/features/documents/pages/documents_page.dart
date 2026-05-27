@@ -380,7 +380,17 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                                     .toList(),
                               ),
                             ),
-                          if (doc.processingStatus == 'failed' && doc.processingError != null)
+                          if (doc.processingStatus == 'embedding_failed')
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '文档文本已解析，但向量化失败，暂不可用于问答检索。${doc.processingError != null ? "\n${doc.processingError}" : ""}',
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 11, color: Colors.orange.shade700),
+                              ),
+                            )
+                          else if (doc.processingStatus == 'failed' && doc.processingError != null)
                             Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
@@ -697,6 +707,10 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
       case 'failed':
         color = Colors.red;
         label = '失败';
+        break;
+      case 'embedding_failed':
+        color = Colors.orange;
+        label = '向量化失败';
         break;
       default:
         color = Colors.grey;

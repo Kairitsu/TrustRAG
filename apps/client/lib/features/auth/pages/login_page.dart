@@ -17,6 +17,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
+  bool _rememberLogin = true;
 
   @override
   void dispose() {
@@ -33,6 +34,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     final success = await ref.read(authProvider.notifier).login(
           _emailController.text.trim(),
           _passwordController.text,
+          rememberLogin: _rememberLogin,
         );
 
     if (mounted) {
@@ -123,6 +125,30 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       ),
                     ],
                   ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    SizedBox(
+                      height: 24,
+                      width: 24,
+                      child: Checkbox(
+                        value: _rememberLogin,
+                        onChanged: (v) =>
+                            setState(() => _rememberLogin = v ?? true),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () =>
+                          setState(() => _rememberLogin = !_rememberLogin),
+                      child: Text(
+                        '保持登录状态',
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: Colors.grey.shade700),
+                      ),
+                    ),
+                  ],
                 ),
                 if (authState.error != null) ...[
                   const SizedBox(height: 12),

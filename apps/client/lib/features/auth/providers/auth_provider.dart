@@ -70,7 +70,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<bool> login(String email, String password) async {
+  Future<bool> login(String email, String password, {bool rememberLogin = true}) async {
     final backend = BackendManager();
     if (BackendManager.shouldRunEmbedded && backend.hasFailed) {
       state = state.copyWith(
@@ -87,7 +87,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
         'password': password,
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
-      await ApiClient.saveToken(token);
+      if (rememberLogin) {
+        await ApiClient.saveToken(token);
+      } else {
+        await ApiClient.clearToken();
+      }
       state = AuthState(
         status: AuthStatus.authenticated,
         token: token,
