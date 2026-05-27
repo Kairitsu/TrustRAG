@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.5-beta.4] - 2026-05-27
+
+### Fixed / 修复
+- 🔧 **Embedding 批处理大小可配置** — 原硬编码 batch_size=100 导致部分 API（如限制 max 10）处理失败。现支持在 UI 中配置 batch_size（默认 10），超过时自动分批。（Issue #11）
+- 🎯 **Embedding 失败状态细分** — 新增 `embedding_failed` 文档状态，区分"文本解析成功但向量化失败"与一般失败，前端显示针对性提示文案"文档文本已解析，但向量化失败"。（Issue #11）
+- 🔐 **JWT 有效期延长** — 从 24 小时延长至 7 天（168 小时），减少频繁重新登录。（Issue #11）
+
+### Added / 新增
+- ✅ **记住登录状态** — 登录页新增"保持登录状态"复选框（默认勾选），取消勾选后 token 不持久化，关闭应用即需重新登录。（Issue #11）
+
+### Infrastructure / 基础设施
+- 新增数据库迁移 `0018_embedding_batch_size.sql`（PostgreSQL + SQLite schema 同步更新）
+- 🧪 241 个测试全部通过
+
+---
+
 ## [0.2.5-beta.3] - 2026-05-25
 
 ### Fixed / 修复
