@@ -26,8 +26,13 @@ class DesktopAutoSetup {
       try {
         await api.dio.get('/auth/me');
         return;
-      } catch (_) {
-        await ApiClient.clearToken();
+      } on DioException catch (e) {
+        if (e.response?.statusCode == 401) {
+          await ApiClient.clearToken();
+        } else {
+          // Network error — keep token and skip re-login
+          return;
+        }
       }
     }
 
