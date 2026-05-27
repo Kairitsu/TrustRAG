@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS documents (
     tags                TEXT DEFAULT '[]',
     original_file_path  TEXT NOT NULL,
     markdown_file_path  TEXT,
-    processing_status   TEXT NOT NULL DEFAULT 'pending' CHECK (processing_status IN ('pending', 'processing', 'chunking', 'embedding', 'ready', 'failed')),
+    processing_status   TEXT NOT NULL DEFAULT 'pending' CHECK (processing_status IN ('pending', 'processing', 'chunking', 'embedding', 'ready', 'failed', 'embedding_failed')),
     processing_error    TEXT,
     uploaded_by         TEXT NOT NULL REFERENCES users(id),
     metadata            TEXT DEFAULT '{}',
@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS embedding_configs (
     api_key_enc     TEXT,
     model_name      TEXT NOT NULL,
     dimensions      INTEGER NOT NULL DEFAULT 1536,
+    batch_size      INTEGER NOT NULL DEFAULT 10,
     is_default      INTEGER DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

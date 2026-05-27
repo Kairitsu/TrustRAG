@@ -37,6 +37,8 @@ pub struct CreateEmbeddingConfigRequest {
     pub model_name: String,
     #[serde(default = "default_dimensions")]
     pub dimensions: i32,
+    #[serde(default = "default_batch_size")]
+    pub batch_size: i32,
     #[serde(default)]
     pub is_default: bool,
     #[serde(default)]
@@ -47,6 +49,10 @@ fn default_dimensions() -> i32 {
     1536
 }
 
+fn default_batch_size() -> i32 {
+    10
+}
+
 #[derive(Deserialize)]
 pub struct UpdateEmbeddingConfigRequest {
     pub name: Option<String>,
@@ -55,6 +61,7 @@ pub struct UpdateEmbeddingConfigRequest {
     pub api_key: Option<String>,
     pub model_name: Option<String>,
     pub dimensions: Option<i32>,
+    pub batch_size: Option<i32>,
     pub is_default: Option<bool>,
 }
 
@@ -69,6 +76,7 @@ pub struct EmbeddingConfigResponse {
     pub has_api_key: bool,
     pub model_name: String,
     pub dimensions: i32,
+    pub batch_size: i32,
     pub is_default: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
@@ -81,9 +89,9 @@ pub struct TestEmbeddingResponse {
     pub latency_ms: Option<u64>,
 }
 
-type EmbRow = (String, Option<String>, String, String, String, Option<String>, Option<String>, String, i32, Option<bool>, String, String);
+type EmbRow = (String, Option<String>, String, String, String, Option<String>, Option<String>, String, i32, i32, Option<bool>, String, String);
 
-const EMB_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, dimensions, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
+const EMB_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, dimensions, batch_size, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
 
 fn parse_emb_row(r: EmbRow) -> Result<EmbeddingConfigResponse, AppError> {
     Ok(EmbeddingConfigResponse {
@@ -96,9 +104,10 @@ fn parse_emb_row(r: EmbRow) -> Result<EmbeddingConfigResponse, AppError> {
         has_api_key: r.6.is_some(),
         model_name: r.7,
         dimensions: r.8,
-        is_default: r.9,
-        created_at: r.10,
-        updated_at: r.11,
+        batch_size: r.9,
+        is_default: r.10,
+        created_at: r.11,
+        updated_at: r.12,
     })
 }
 
@@ -157,8 +166,10 @@ async fn create_config(
             .await?;
     }
 
+    let batch_size = req.batch_size.clamp(1, 2048);
+
     let q = format!(
-        "INSERT INTO embedding_configs (workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, dimensions, is_default) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING {}",
+        "INSERT INTO embedding_configs (workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, dimensions, batch_size, is_default) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING {}",
         EMB_SELECT
     );
     let row = sqlx::query_as::<_, EmbRow>(&q)
@@ -170,6 +181,7 @@ async fn create_config(
         .bind(&api_key_enc)
         .bind(&model_name)
         .bind(req.dimensions)
+        .bind(batch_size)
         .bind(req.is_default)
         .fetch_one(&state.pool)
         .await?;
@@ -240,8 +252,10 @@ async fn update_config(
         .await?;
     }
 
+    let batch_size = req.batch_size.map(|b| b.clamp(1, 2048));
+
     let q = format!(
-        "UPDATE embedding_configs SET name = COALESCE($1, name), provider = COALESCE($2, provider), api_base_url = COALESCE($3, api_base_url), api_key_enc = COALESCE($4, api_key_enc), model_name = COALESCE($5, model_name), dimensions = COALESCE($6, dimensions), is_default = COALESCE($7, is_default) WHERE id = $8 AND user_id = $9 RETURNING {}",
+        "UPDATE embedding_configs SET name = COALESCE($1, name), provider = COALESCE($2, provider), api_base_url = COALESCE($3, api_base_url), api_key_enc = COALESCE($4, api_key_enc), model_name = COALESCE($5, model_name), dimensions = COALESCE($6, dimensions), batch_size = COALESCE($7, batch_size), is_default = COALESCE($8, is_default) WHERE id = $9 AND user_id = $10 RETURNING {}",
         EMB_SELECT
     );
     let row = sqlx::query_as::<_, EmbRow>(&q)
@@ -251,6 +265,7 @@ async fn update_config(
         .bind(api_key_enc)
         .bind(model_name)
         .bind(req.dimensions)
+        .bind(batch_size)
         .bind(req.is_default)
         .bind(config_id.to_string())
         .bind(auth.id.to_string())
@@ -297,8 +312,8 @@ async fn test_connection(
     auth: AuthUser,
     Path(config_id): Path<Uuid>,
 ) -> Result<Json<TestEmbeddingResponse>, AppError> {
-    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, i32)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name, dimensions
+    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, i32, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, dimensions, batch_size
          FROM embedding_configs
          WHERE id = $1 AND user_id = $2",
     )
@@ -307,7 +322,7 @@ async fn test_connection(
     .fetch_optional(&state.pool)
     .await?;
 
-    let (provider, api_base_url, api_key_enc, model_name, dimensions) = match row {
+    let (provider, api_base_url, api_key_enc, model_name, dimensions, batch_size) = match row {
         Some(r) => r,
         None => return Err(AppError::NotFound("Embedding config not found".into())),
     };
@@ -324,11 +339,12 @@ async fn test_connection(
             dimensions as usize,
         ))
     } else {
-        Box::new(OpenAIEmbeddingProvider::new(
+        Box::new(OpenAIEmbeddingProvider::with_batch_size(
             &base_url,
             api_key.as_deref(),
             &model_name,
             dimensions as usize,
+            batch_size as usize,
         ))
     };
 
@@ -364,8 +380,8 @@ async fn test_connection(
 }
 
 async fn reload_embedding_provider(state: &AppState) {
-    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, i32)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name, dimensions
+    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, i32, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, dimensions, batch_size
          FROM embedding_configs
          WHERE is_default = 1
          ORDER BY updated_at DESC
@@ -375,7 +391,7 @@ async fn reload_embedding_provider(state: &AppState) {
     .await;
 
     match row {
-        Ok(Some((provider_type, api_base_url, api_key_enc, model_name, dimensions))) => {
+        Ok(Some((provider_type, api_base_url, api_key_enc, model_name, dimensions, batch_size))) => {
             let api_key = api_key_enc.and_then(|enc| decrypt_api_key(&enc, &state.jwt_secret));
             let base_url = api_base_url.unwrap_or_default();
             let provider: Arc<dyn EmbeddingProvider> = if provider_type == "ollama" {
@@ -385,17 +401,18 @@ async fn reload_embedding_provider(state: &AppState) {
                     dimensions as usize,
                 ))
             } else {
-                Arc::new(OpenAIEmbeddingProvider::new(
+                Arc::new(OpenAIEmbeddingProvider::with_batch_size(
                     &base_url,
                     api_key.as_deref(),
                     &model_name,
                     dimensions as usize,
+                    batch_size as usize,
                 ))
             };
 
             let mut guard = state.embedding_provider.write().await;
             *guard = Some(provider);
-            tracing::info!(provider = %provider_type, model = %model_name, dimensions, "Embedding provider reloaded");
+            tracing::info!(provider = %provider_type, model = %model_name, dimensions, batch_size, "Embedding provider reloaded");
         }
         Ok(None) => {
             let mut guard = state.embedding_provider.write().await;

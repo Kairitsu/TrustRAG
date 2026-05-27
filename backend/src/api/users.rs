@@ -102,7 +102,7 @@ async fn register(
     let user_id: Uuid = row.0.parse()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("UUID parse error: {e}")))?;
 
-    let expiry_hours: i64 = 24;
+    let expiry_hours: i64 = 168; // 7 days
     let token = create_token(user_id, &row.1, &row.3, &state.jwt_secret, expiry_hours)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Token error: {e}")))?;
 
@@ -150,7 +150,7 @@ async fn login(
         .execute(&state.pool)
         .await?;
 
-    let expiry_hours: i64 = 24;
+    let expiry_hours: i64 = 168; // 7 days
     let token = create_token(user_id, &email, &role, &state.jwt_secret, expiry_hours)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Token error: {e}")))?;
 
