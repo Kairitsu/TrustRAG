@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.5-beta.5] - 2026-05-27
+
+### Fixed / 修复
+- 🔐 **"保持登录状态"重启后失效** — `_checkAuth()` 和 `DesktopAutoSetup` 在验证已保存的 token 时，如果 `/auth/me` 因网络超时或后端未就绪而失败，会错误地清除 token，导致重启应用后回到登录页。现在仅在 HTTP 401（token 无效/过期）时才清除 token，网络错误时保留 token 并假定已认证。
+
+---
+
 ## [0.2.5-beta.4] - 2026-05-27
 
 ### Fixed / 修复
