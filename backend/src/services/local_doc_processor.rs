@@ -209,29 +209,133 @@ fn strip_extension(filename: &str) -> &str {
 }
 
 fn parse_docx_fallback(data: &[u8], filename: &str) -> anyhow::Result<LocalParseResult> {
-    #[cfg(sqlite_mode)]
+    use std::io::{Cursor, Read};
+
+    let reader = Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(reader)
+        .map_err(|e| anyhow::anyhow!("Failed to open DOCX as ZIP: {}", e))?;
+
+    let mut xml_content = String::new();
     {
-        let _ = data;
-        Ok(LocalParseResult {
+        let mut doc_file = archive
+            .by_name("word/document.xml")
+            .map_err(|e| anyhow::anyhow!("DOCX missing word/document.xml: {}", e))?;
+        doc_file.read_to_string(&mut xml_content)
+            .map_err(|e| anyhow::anyhow!("Failed to read document.xml: {}", e))?;
+    }
+
+    let text = extract_docx_text(&xml_content);
+
+    if text.trim().is_empty() {
+        return Ok(LocalParseResult {
             markdown: format!(
-                "# {}\n\n*DOCX parsing requires the doc-processor service. \
-                 Please install it or convert this DOCX to text/markdown format first.*\n\n\
-                 File size: {} bytes",
-                filename,
-                data.len()
+                "# {}\n\n*This DOCX file contains no extractable text.*\n",
+                strip_extension(filename),
             ),
             metadata: LocalDocMetadata {
-                title: Some(filename.to_string()),
+                title: Some(strip_extension(filename).to_string()),
                 page_count: None,
                 language: None,
             },
-        })
+        });
     }
-    #[cfg(not(sqlite_mode))]
-    {
-        let _ = (data, filename);
-        anyhow::bail!("DOCX processing not available in this build")
+
+    let title = detect_title(&text)
+        .unwrap_or_else(|| strip_extension(filename).to_string());
+    let markdown = docx_text_to_markdown(&text, &title);
+
+    Ok(LocalParseResult {
+        markdown,
+        metadata: LocalDocMetadata {
+            title: Some(title),
+            page_count: None,
+            language: None,
+        },
+    })
+}
+
+fn extract_docx_text(xml: &str) -> String {
+    let mut result = String::new();
+    let mut in_paragraph = false;
+    let mut in_text = false;
+    let mut paragraph_text = String::new();
+
+    let mut chars = xml.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            let mut tag = String::new();
+            for c in chars.by_ref() {
+                if c == '>' {
+                    break;
+                }
+                tag.push(c);
+            }
+
+            let tag_name = tag.split_whitespace().next().unwrap_or("");
+            match tag_name {
+                "w:p" => {
+                    in_paragraph = true;
+                    paragraph_text.clear();
+                }
+                "/w:p" => {
+                    if in_paragraph && !paragraph_text.is_empty() {
+                        result.push_str(&paragraph_text);
+                        result.push('\n');
+                    } else if in_paragraph {
+                        result.push('\n');
+                    }
+                    in_paragraph = false;
+                }
+                "/w:t" => {
+                    in_text = false;
+                }
+                "w:tab" | "w:tab/" => {
+                    if in_paragraph {
+                        paragraph_text.push('\t');
+                    }
+                }
+                "w:br" | "w:br/" => {
+                    if in_paragraph {
+                        paragraph_text.push('\n');
+                    }
+                }
+                t if t == "w:t" || t.starts_with("w:t ") => {
+                    in_text = true;
+                }
+                _ => {}
+            }
+        } else if in_text && in_paragraph {
+            paragraph_text.push(ch);
+        }
     }
+
+    result
+}
+
+fn docx_text_to_markdown(text: &str, title: &str) -> String {
+    let mut md = String::with_capacity(text.len() + 256);
+    md.push_str(&format!("# {}\n\n", title));
+
+    let mut prev_blank = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !prev_blank {
+                md.push('\n');
+                prev_blank = true;
+            }
+            continue;
+        }
+        prev_blank = false;
+
+        if looks_like_heading(trimmed) {
+            md.push_str(&format!("\n## {}\n\n", trimmed));
+        } else {
+            md.push_str(trimmed);
+            md.push('\n');
+        }
+    }
+    md
 }
 
 #[cfg(test)]
@@ -441,5 +545,72 @@ mod tests {
         );
         assert!(!chunks.is_empty(), "PDF markdown should produce at least one chunk");
         assert!(!chunks[0].content.is_empty());
+    }
+
+    #[test]
+    fn test_extract_docx_text() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Hello World</w:t></w:r></w:p>
+    <w:p><w:r><w:t xml:space="preserve">Second paragraph with spaces</w:t></w:r></w:p>
+    <w:p></w:p>
+    <w:p><w:r><w:t>Third paragraph</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+        let text = extract_docx_text(xml);
+        assert!(text.contains("Hello World"), "Should extract text: {}", text);
+        assert!(text.contains("Second paragraph"), "Should extract second paragraph: {}", text);
+        assert!(text.contains("Third paragraph"), "Should extract third paragraph: {}", text);
+    }
+
+    #[test]
+    fn test_extract_docx_text_with_tabs_and_breaks() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Before tab</w:t><w:tab/><w:t>After tab</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Line one</w:t><w:br/><w:t>Line two</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+        let text = extract_docx_text(xml);
+        assert!(text.contains("Before tab"), "Should have text before tab: {}", text);
+        assert!(text.contains("After tab"), "Should have text after tab: {}", text);
+        assert!(text.contains("Line one"), "Should have line one: {}", text);
+        assert!(text.contains("Line two"), "Should have line two: {}", text);
+    }
+
+    #[test]
+    fn test_parse_docx_with_real_zip() {
+        use std::io::Write;
+        let mut buf = Vec::new();
+        {
+            let cursor = std::io::Cursor::new(&mut buf);
+            let mut zip_writer = zip::ZipWriter::new(cursor);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip_writer.start_file("word/document.xml", options).unwrap();
+            write!(zip_writer, r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Test DOCX Content</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Second Paragraph</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#).unwrap();
+            zip_writer.finish().unwrap();
+        }
+
+        let result = parse_local(&buf, "test.docx", "docx").unwrap();
+        assert!(result.markdown.contains("Test DOCX Content"), "Markdown: {}", result.markdown);
+        assert!(result.markdown.contains("Second Paragraph"), "Markdown: {}", result.markdown);
+        assert!(result.metadata.title.is_some());
+    }
+
+    #[test]
+    fn test_docx_text_to_markdown() {
+        let text = "Document Title\nFirst paragraph of content.\n\nSecond paragraph.";
+        let md = docx_text_to_markdown(text, "My Doc");
+        assert!(md.starts_with("# My Doc\n\n"));
+        assert!(md.contains("First paragraph"));
+        assert!(md.contains("Second paragraph"));
     }
 }

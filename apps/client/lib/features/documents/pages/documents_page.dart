@@ -11,7 +11,7 @@ import '../../dashboard/providers/workspace_provider.dart';
 import '../providers/document_provider.dart';
 import 'document_viewer_page.dart';
 
-const _desktopSupportedExtensions = {'txt', 'md', 'html', 'htm', 'pdf'};
+const _desktopSupportedExtensions = {'txt', 'md', 'html', 'htm', 'pdf', 'docx'};
 
 class DocumentsPage extends ConsumerStatefulWidget {
   const DocumentsPage({super.key});
@@ -209,10 +209,10 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                 if (_isDesktopEmbedded) ...[
                   const SizedBox(width: 8),
                   Tooltip(
-                    message: '桌面模式支持 TXT/MD/HTML/PDF\n'
-                        'DOCX 需要部署服务器模式',
+                    message: '桌面模式支持 PDF/TXT/MD/HTML/DOCX 本地解析\n'
+                        '扫描版 PDF 需要 OCR 支持',
                     child: Icon(Icons.info_outline,
-                        size: 18, color: Colors.orange.shade600),
+                        size: 18, color: Colors.blue.shade600),
                   ),
                 ],
               ],
@@ -245,7 +245,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                       const SizedBox(height: 8),
                       Text(
                           _isDesktopEmbedded
-                              ? '点击"上传文档"添加 PDF、TXT、MD 或 HTML 文件'
+                              ? '点击"上传文档"添加 PDF、DOCX、TXT、MD 或 HTML 文件'
                               : '点击"上传文档"添加 PDF、DOCX 或 TXT 文件',
                           style: TextStyle(color: Colors.grey.shade500)),
                       if (_isDesktopEmbedded) ...[
@@ -254,25 +254,25 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 10),
                           decoration: BoxDecoration(
-                            color: Colors.orange.shade50,
+                            color: Colors.blue.shade50,
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                                color: Colors.orange.shade200),
+                                color: Colors.blue.shade200),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.info_outline,
                                   size: 16,
-                                  color: Colors.orange.shade700),
+                                  color: Colors.blue.shade700),
                               const SizedBox(width: 8),
                               Flexible(
                                 child: Text(
-                                  '桌面模式暂不支持 PDF/DOCX 解析，'
-                                  '如需解析这些格式请部署服务器模式',
+                                  '桌面模式支持 PDF/TXT/MD/HTML 本地解析。'
+                                  '扫描版 PDF 和图片型 PDF 暂需 OCR 支持',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: Colors.orange.shade800,
+                                    color: Colors.blue.shade800,
                                   ),
                                 ),
                               ),
