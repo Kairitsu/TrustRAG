@@ -303,6 +303,7 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
   final TransformationController _transformCtrl = TransformationController();
   String? _selectedNodeId;
   String? _hoveredNodeId;
+  GraphEdge? _selectedEdge;
   final Set<String> _hiddenTypes = {};
 
   @override
@@ -378,6 +379,16 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
               onClose: () => setState(() => _selectedNodeId = null),
             ),
           ),
+        if (_selectedEdge != null && selectedNode == null)
+          Positioned(
+            left: 12,
+            bottom: 12,
+            child: _EdgeInfoCard(
+              edge: _selectedEdge!,
+              allNodes: visibleNodes,
+              onClose: () => setState(() => _selectedEdge = null),
+            ),
+          ),
         Positioned(
           left: 12,
           top: 12,
@@ -410,7 +421,45 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
         break;
       }
     }
-    setState(() => _selectedNodeId = tappedId);
+
+    if (tappedId != null) {
+      setState(() {
+        _selectedNodeId = tappedId;
+        _selectedEdge = null;
+      });
+      return;
+    }
+
+    final nodeMap = {for (final n in visibleNodes) n.id: n};
+    final visibleNodeIds = visibleNodes.map((n) => n.id).toSet();
+    final visibleEdges = widget.data.edges
+        .where((e) => visibleNodeIds.contains(e.source) && visibleNodeIds.contains(e.target))
+        .toList();
+    GraphEdge? tappedEdge;
+    for (final edge in visibleEdges) {
+      final src = nodeMap[edge.source];
+      final tgt = nodeMap[edge.target];
+      if (src == null || tgt == null) continue;
+      final dist = _pointToSegmentDistance(transformed, src.position, tgt.position);
+      if (dist < 12) {
+        tappedEdge = edge;
+        break;
+      }
+    }
+
+    setState(() {
+      _selectedNodeId = null;
+      _selectedEdge = tappedEdge;
+    });
+  }
+
+  double _pointToSegmentDistance(Offset p, Offset a, Offset b) {
+    final ab = b - a;
+    final ap = p - a;
+    final t = (ap.dx * ab.dx + ap.dy * ab.dy) / (ab.dx * ab.dx + ab.dy * ab.dy);
+    final clamped = t.clamp(0.0, 1.0);
+    final closest = Offset(a.dx + clamped * ab.dx, a.dy + clamped * ab.dy);
+    return (p - closest).distance;
   }
 }
 
@@ -641,20 +690,23 @@ class _NodeInfoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
+    final theme = Theme.of(context);
     final nodeMap = {for (final n in allNodes) n.id: n};
     final related = edges
         .where((e) => e.source == node.id || e.target == node.id)
-        .take(10)
         .toList();
+    final incomingCount = related.where((e) => e.target == node.id).length;
+    final outgoingCount = related.where((e) => e.source == node.id).length;
 
     return Container(
-      width: 280,
+      width: 320,
+      constraints: const BoxConstraints(maxHeight: 400),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 8)
+          BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 12)
         ],
         border: Border.all(color: Colors.grey.shade200),
       ),
@@ -681,48 +733,256 @@ class _NodeInfoCard extends StatelessWidget {
               InkWell(onTap: onClose, child: const Icon(Icons.close, size: 18)),
             ],
           ),
-          const SizedBox(height: 4),
-          Text('${s.entityType}: ${node.entityType}',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: node.color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(node.entityType,
+                style: TextStyle(fontSize: 11, color: node.color, fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Icons.arrow_downward, size: 12, color: Colors.green.shade400),
+              const SizedBox(width: 2),
+              Text('入: $incomingCount', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              const SizedBox(width: 12),
+              Icon(Icons.arrow_upward, size: 12, color: Colors.blue.shade400),
+              const SizedBox(width: 2),
+              Text('出: $outgoingCount', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              const SizedBox(width: 12),
+              Icon(Icons.link, size: 12, color: Colors.grey.shade500),
+              const SizedBox(width: 2),
+              Text('共: ${related.length}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+            ],
+          ),
           if (node.documentId != null) ...[
-            const SizedBox(height: 2),
-            Text('${s.document}: ${node.documentId!.substring(0, 8)}...',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.description_outlined, size: 12, color: Colors.grey.shade500),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text('${s.document}: ${node.documentId!.substring(0, 8)}...',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                ),
+              ],
+            ),
           ],
           if (related.isNotEmpty) ...[
             const SizedBox(height: 8),
+            const Divider(height: 1),
+            const SizedBox(height: 6),
             Text(s.relatedEntities,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
             const SizedBox(height: 4),
-            ...related.map((e) {
-              final otherId =
-                  e.source == node.id ? e.target : e.source;
-              final other = nodeMap[otherId];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: other?.color ?? Colors.grey,
-                        shape: BoxShape.circle,
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: related.take(15).map((e) {
+                    final isOutgoing = e.source == node.id;
+                    final otherId = isOutgoing ? e.target : e.source;
+                    final other = nodeMap[otherId];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: Row(
+                        children: [
+                          Icon(
+                            isOutgoing ? Icons.arrow_forward : Icons.arrow_back,
+                            size: 10,
+                            color: isOutgoing ? Colors.blue.shade300 : Colors.green.shade300,
+                          ),
+                          const SizedBox(width: 4),
+                          Container(
+                            width: 8, height: 8,
+                            decoration: BoxDecoration(
+                              color: other?.color ?? Colors.grey,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text.rich(
+                              TextSpan(children: [
+                                TextSpan(
+                                  text: other?.label ?? otherId,
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+                                ),
+                                TextSpan(
+                                  text: ' — ${e.relation}',
+                                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500, fontStyle: FontStyle.italic),
+                                ),
+                                if (e.weight != 1.0)
+                                  TextSpan(
+                                    text: ' (${(e.weight * 100).toStringAsFixed(0)}%)',
+                                    style: TextStyle(fontSize: 10, color: Colors.orange.shade400),
+                                  ),
+                              ]),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '${other?.label ?? otherId} (${e.relation})',
-                        style: const TextStyle(fontSize: 11),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+                    );
+                  }).toList(),
                 ),
-              );
-            }),
+              ),
+            ),
+            if (related.length > 15)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('还有 ${related.length - 15} 条关系...',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _EdgeInfoCard extends StatelessWidget {
+  final GraphEdge edge;
+  final List<GraphNode> allNodes;
+  final VoidCallback onClose;
+
+  const _EdgeInfoCard({
+    required this.edge,
+    required this.allNodes,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final nodeMap = {for (final n in allNodes) n.id: n};
+    final srcNode = nodeMap[edge.source];
+    final tgtNode = nodeMap[edge.target];
+
+    return Container(
+      width: 300,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 12)
+        ],
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.link, size: 16, color: theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('关系详情',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              ),
+              InkWell(onTap: onClose, child: const Icon(Icons.close, size: 18)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                if (srcNode != null) ...[
+                  Container(
+                    width: 10, height: 10,
+                    decoration: BoxDecoration(color: srcNode.color, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(srcNode.label,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                ] else
+                  Expanded(child: Text(edge.source, style: const TextStyle(fontSize: 12))),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Column(
+                    children: [
+                      Icon(Icons.arrow_forward, size: 14, color: theme.colorScheme.primary),
+                      Text(edge.relation,
+                          style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: theme.colorScheme.primary)),
+                    ],
+                  ),
+                ),
+                if (tgtNode != null) ...[
+                  Expanded(
+                    child: Text(tgtNode.label,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.end),
+                  ),
+                  const SizedBox(width: 4),
+                  Container(
+                    width: 10, height: 10,
+                    decoration: BoxDecoration(color: tgtNode.color, shape: BoxShape.circle),
+                  ),
+                ] else
+                  Expanded(child: Text(edge.target, style: const TextStyle(fontSize: 12), textAlign: TextAlign.end)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text('关系类型: ', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(edge.relation,
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.orange.shade700)),
+              ),
+            ],
+          ),
+          if (edge.weight != 1.0) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text('置信度: ', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: edge.weight.clamp(0.0, 1.0),
+                      backgroundColor: Colors.grey.shade200,
+                      valueColor: AlwaysStoppedAnimation(
+                        edge.weight > 0.7 ? Colors.green : edge.weight > 0.4 ? Colors.orange : Colors.red,
+                      ),
+                      minHeight: 6,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text('${(edge.weight * 100).toStringAsFixed(0)}%',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey.shade700)),
+              ],
+            ),
+          ],
+          if (srcNode != null && tgtNode != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${srcNode.entityType} → ${tgtNode.entityType}',
+              style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+            ),
           ],
         ],
       ),
