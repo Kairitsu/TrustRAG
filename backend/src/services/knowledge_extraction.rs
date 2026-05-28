@@ -18,8 +18,14 @@ pub struct ExtractedRelation {
     pub source: String,
     pub target: String,
     pub relation_type: String,
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
     #[serde(default)]
     pub description: String,
+}
+
+fn default_confidence() -> f64 {
+    0.8
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +42,7 @@ Output ONLY a JSON object with this exact structure:
     {"name": "Entity Name", "entity_type": "person|organization|concept|technology|location|event|other", "description": "brief description"}
   ],
   "relations": [
-    {"source": "Entity A", "target": "Entity B", "relation_type": "uses|part_of|related_to|causes|depends_on|created_by|belongs_to|similar_to", "description": "brief description of relationship"}
+    {"source": "Entity A", "target": "Entity B", "relation_type": "uses|part_of|related_to|causes|depends_on|created_by|belongs_to|similar_to", "confidence": 0.85, "description": "brief description of relationship"}
   ]
 }
 
@@ -46,7 +52,8 @@ Rules:
 3. Each relation must reference entities from the entities list
 4. Keep entity_type to the predefined categories
 5. Maximum 15 entities and 20 relations per passage
-6. Output ONLY the JSON, no explanation"#;
+6. confidence is a float 0.0-1.0 indicating how confident you are about the relationship
+7. Output ONLY the JSON, no explanation"#;
 
 pub async fn extract_from_text(
     llm_provider: &dyn LlmProvider,
@@ -162,14 +169,16 @@ pub async fn store_extraction(
                     "source_document_id": document_id.to_string(),
                 });
 
+                let weight = relation.confidence.clamp(0.0, 1.0);
                 sqlx::query(
                     "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, metadata) \
-                     VALUES ($1, $2, $3, $4, 1.0, $5)"
+                     VALUES ($1, $2, $3, $4, $5, $6)"
                 )
                 .bind(workspace_id.to_string())
                 .bind(src)
                 .bind(tgt)
                 .bind(&relation.relation_type)
+                .bind(weight)
                 .bind(metadata.to_string())
                 .execute(pool)
                 .await?;
@@ -319,6 +328,22 @@ mod tests {
         let result: ExtractionResult = serde_json::from_str(json).unwrap();
         assert_eq!(result.entities[0].description, "");
         assert_eq!(result.relations[0].description, "");
+        assert!((result.relations[0].confidence - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_parse_extraction_with_confidence() {
+        let json = r#"{
+            "entities": [
+                {"name": "Rust", "entity_type": "technology", "description": "A language"}
+            ],
+            "relations": [
+                {"source": "Rust", "target": "Rust", "relation_type": "related_to", "confidence": 0.95, "description": "self-ref"}
+            ]
+        }"#;
+
+        let result: ExtractionResult = serde_json::from_str(json).unwrap();
+        assert!((result.relations[0].confidence - 0.95).abs() < 0.001);
     }
 
     #[test]

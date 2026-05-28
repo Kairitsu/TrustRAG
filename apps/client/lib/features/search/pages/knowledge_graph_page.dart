@@ -18,6 +18,9 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
   late TabController _tabController;
   String _entityFilter = '';
   bool _isGenerating = false;
+  String? _generationTaskId;
+  int _generationProcessed = 0;
+  int _generationTotal = 0;
 
   @override
   void initState() {
@@ -34,19 +37,33 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
   Future<void> _generateAll() async {
     final ws = ref.read(selectedWorkspaceProvider);
     if (ws == null) return;
-    setState(() => _isGenerating = true);
+    setState(() {
+      _isGenerating = true;
+      _generationProcessed = 0;
+      _generationTotal = 0;
+      _generationTaskId = null;
+    });
     try {
       final service = ref.read(knowledgeGraphServiceProvider);
       final result = await service.generateForAll(ws.id);
-      if (mounted) {
-        final entities = result['entities_created'] ?? 0;
-        final relations = result['relations_created'] ?? 0;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('图谱生成完成: $entities 个实体, $relations 条关系')),
-        );
-        ref.invalidate(graphDataProvider);
-        ref.invalidate(entityListProvider);
+      final taskId = result['task_id'] as String?;
+      final total = result['total_documents'] as int? ?? 0;
+
+      if (taskId == null || taskId.isEmpty || total == 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(result['message'] as String? ?? '无文档可处理')),
+          );
+        }
+        return;
       }
+
+      setState(() {
+        _generationTaskId = taskId;
+        _generationTotal = total;
+      });
+
+      await _pollGenerationStatus(ws.id, taskId);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -54,7 +71,47 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
         );
       }
     } finally {
-      if (mounted) setState(() => _isGenerating = false);
+      if (mounted) setState(() {
+        _isGenerating = false;
+        _generationTaskId = null;
+      });
+    }
+  }
+
+  Future<void> _pollGenerationStatus(String wsId, String taskId) async {
+    final service = ref.read(knowledgeGraphServiceProvider);
+    while (mounted) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+      try {
+        final status = await service.getGenerationStatus(wsId, taskId);
+        final state = status['status'] as String? ?? '';
+        final processed = status['processed_documents'] as int? ?? 0;
+        final entities = status['entities_created'] as int? ?? 0;
+        final relations = status['relations_created'] as int? ?? 0;
+
+        if (mounted) {
+          setState(() => _generationProcessed = processed);
+        }
+
+        if (state == 'completed') {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('图谱生成完成: $entities 个实体, $relations 条关系')),
+            );
+            ref.invalidate(graphDataProvider);
+            ref.invalidate(entityListProvider);
+          }
+          return;
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('查询进度失败: $e'), backgroundColor: Colors.orange),
+          );
+        }
+        return;
+      }
     }
   }
 
@@ -130,11 +187,23 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
                           ?.copyWith(fontWeight: FontWeight.bold)),
                   const Spacer(),
                   if (_isGenerating)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: SizedBox(
-                        width: 20, height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          if (_generationTotal > 0) ...[
+                            const SizedBox(width: 6),
+                            Text(
+                              '$_generationProcessed/$_generationTotal',
+                              style: theme.textTheme.labelSmall,
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   PopupMenuButton<String>(

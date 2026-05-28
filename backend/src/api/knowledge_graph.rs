@@ -4,6 +4,9 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
@@ -12,6 +15,25 @@ use crate::services::knowledge_extraction;
 use crate::services::llm::OpenAILlmProvider;
 
 use super::AppState;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GenerationTask {
+    pub task_id: String,
+    pub workspace_id: String,
+    pub status: String,
+    pub total_documents: usize,
+    pub processed_documents: usize,
+    pub entities_created: usize,
+    pub relations_created: usize,
+    pub errors: Vec<String>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
+fn generation_tasks() -> &'static Arc<RwLock<HashMap<String, GenerationTask>>> {
+    static TASKS: OnceLock<Arc<RwLock<HashMap<String, GenerationTask>>>> = OnceLock::new();
+    TASKS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -27,6 +49,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/workspaces/{ws_id}/knowledge-graph/generate-all",
             post(generate_for_all_documents),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/generation-status/{task_id}",
+            get(generation_status),
         )
         .route(
             "/workspaces/{ws_id}/knowledge-graph/reset",
@@ -280,11 +306,19 @@ async fn generate_for_document(
     }))
 }
 
+#[derive(Serialize)]
+struct AsyncGenerateResponse {
+    task_id: String,
+    status: String,
+    total_documents: usize,
+    message: String,
+}
+
 async fn generate_for_all_documents(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(ws_id): Path<Uuid>,
-) -> Result<Json<GenerateResponse>, AppError> {
+) -> Result<Json<AsyncGenerateResponse>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
 
     let llm = load_default_llm(&state.pool, auth.id, &state.jwt_secret).await?;
@@ -297,41 +331,109 @@ async fn generate_for_all_documents(
     .await?;
 
     if doc_ids.is_empty() {
-        return Ok(Json(GenerateResponse {
-            success: true,
-            entities_created: 0,
-            relations_created: 0,
+        return Ok(Json(AsyncGenerateResponse {
+            task_id: String::new(),
+            status: "completed".into(),
+            total_documents: 0,
             message: "No completed documents found in this workspace".into(),
         }));
     }
 
-    let mut total_entities = 0;
-    let mut total_relations = 0;
+    let task_id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let total = doc_ids.len();
 
-    for (doc_id_str,) in &doc_ids {
-        let doc_id: Uuid = doc_id_str.parse().unwrap_or_default();
-        match knowledge_extraction::extract_for_document(&state.pool, &llm, ws_id, doc_id).await {
-            Ok((e, r)) => {
-                total_entities += e;
-                total_relations += r;
-            }
-            Err(e) => {
-                tracing::warn!(document_id = %doc_id, error = %e, "Failed to extract for document");
-            }
-        }
+    let task = GenerationTask {
+        task_id: task_id.clone(),
+        workspace_id: ws_id.to_string(),
+        status: "running".into(),
+        total_documents: total,
+        processed_documents: 0,
+        entities_created: 0,
+        relations_created: 0,
+        errors: Vec::new(),
+        started_at: now,
+        completed_at: None,
+    };
+
+    {
+        let mut tasks = generation_tasks().write().await;
+        tasks.insert(task_id.clone(), task);
     }
 
-    Ok(Json(GenerateResponse {
-        success: true,
-        entities_created: total_entities,
-        relations_created: total_relations,
-        message: format!(
-            "Processed {} documents: {} entities, {} relations",
-            doc_ids.len(),
-            total_entities,
-            total_relations
-        ),
+    let pool = state.pool.clone();
+    let bg_task_id = task_id.clone();
+
+    tokio::spawn(async move {
+        let mut total_entities = 0usize;
+        let mut total_relations = 0usize;
+        let mut errors = Vec::new();
+        let mut processed = 0usize;
+
+        for (doc_id_str,) in &doc_ids {
+            let doc_id: Uuid = doc_id_str.parse().unwrap_or_default();
+            match knowledge_extraction::extract_for_document(&pool, &llm, ws_id, doc_id).await {
+                Ok((e, r)) => {
+                    total_entities += e;
+                    total_relations += r;
+                }
+                Err(e) => {
+                    let msg = format!("doc {}: {}", doc_id, e);
+                    tracing::warn!(document_id = %doc_id, error = %e, "Failed to extract for document");
+                    errors.push(msg);
+                }
+            }
+            processed += 1;
+
+            let mut tasks = generation_tasks().write().await;
+            if let Some(t) = tasks.get_mut(&bg_task_id) {
+                t.processed_documents = processed;
+                t.entities_created = total_entities;
+                t.relations_created = total_relations;
+                t.errors = errors.clone();
+            }
+        }
+
+        let mut tasks = generation_tasks().write().await;
+        if let Some(t) = tasks.get_mut(&bg_task_id) {
+            t.status = "completed".into();
+            t.completed_at = Some(chrono::Utc::now().to_rfc3339());
+        }
+
+        tracing::info!(
+            task_id = %bg_task_id,
+            workspace_id = %ws_id,
+            docs = total,
+            entities = total_entities,
+            relations = total_relations,
+            "Background knowledge graph generation completed"
+        );
+    });
+
+    Ok(Json(AsyncGenerateResponse {
+        task_id,
+        status: "running".into(),
+        total_documents: total,
+        message: format!("Generation started for {} documents. Poll the status endpoint for progress.", total),
     }))
+}
+
+async fn generation_status(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((ws_id, task_id)): Path<(Uuid, String)>,
+) -> Result<Json<GenerationTask>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let tasks = generation_tasks().read().await;
+    let task = tasks.get(&task_id)
+        .ok_or_else(|| AppError::NotFound("Generation task not found".into()))?;
+
+    if task.workspace_id != ws_id.to_string() {
+        return Err(AppError::NotFound("Generation task not found".into()));
+    }
+
+    Ok(Json(task.clone()))
 }
 
 async fn reset_graph(

@@ -149,6 +149,12 @@ class KnowledgeGraphService {
     return resp.data as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> getGenerationStatus(String workspaceId, String taskId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get('/workspaces/$workspaceId/knowledge-graph/generation-status/$taskId');
+    return resp.data as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> resetGraph(String workspaceId) async {
     final api = ref.read(apiClientProvider);
     final resp = await api.dio.delete('/workspaces/$workspaceId/knowledge-graph/reset');
@@ -177,8 +183,8 @@ class GraphStats {
 
   factory GraphStats.fromJson(Map<String, dynamic> json) {
     return GraphStats(
-      totalEntities: json['total_entities'] ?? 0,
-      totalRelations: json['total_relations'] ?? 0,
+      totalEntities: json['entity_count'] ?? json['total_entities'] ?? 0,
+      totalRelations: json['relation_count'] ?? json['total_relations'] ?? 0,
       entityTypes: (json['entity_types'] as List? ?? [])
           .map((e) => TypeCount.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -197,7 +203,7 @@ class TypeCount {
 
   factory TypeCount.fromJson(Map<String, dynamic> json) {
     return TypeCount(
-      typeName: json['type_name'] ?? '',
+      typeName: json['name'] ?? json['type_name'] ?? '',
       count: json['count'] ?? 0,
     );
   }
