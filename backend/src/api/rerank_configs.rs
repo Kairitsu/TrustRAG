@@ -38,6 +38,8 @@ pub struct CreateRerankConfigRequest {
     pub initial_recall_k: i32,
     #[serde(default = "default_fallback_enabled")]
     pub fallback_enabled: bool,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: i32,
     #[serde(default)]
     pub is_default: bool,
     #[serde(default)]
@@ -47,6 +49,7 @@ pub struct CreateRerankConfigRequest {
 fn default_top_n() -> i32 { 5 }
 fn default_initial_recall_k() -> i32 { 30 }
 fn default_fallback_enabled() -> bool { true }
+fn default_timeout_secs() -> i32 { 30 }
 
 #[derive(Deserialize)]
 pub struct UpdateRerankConfigRequest {
@@ -58,6 +61,7 @@ pub struct UpdateRerankConfigRequest {
     pub top_n: Option<i32>,
     pub initial_recall_k: Option<i32>,
     pub fallback_enabled: Option<bool>,
+    pub timeout_secs: Option<i32>,
     pub is_default: Option<bool>,
 }
 
@@ -74,14 +78,15 @@ pub struct RerankConfigResponse {
     pub top_n: i32,
     pub initial_recall_k: i32,
     pub fallback_enabled: bool,
+    pub timeout_secs: i32,
     pub is_default: bool,
     pub created_at: String,
     pub updated_at: String,
 }
 
-const RERANK_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
+const RERANK_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, timeout_secs, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
 
-type RerankRow = (String, Option<String>, String, String, String, String, Option<String>, String, i32, i32, bool, bool, String, String);
+type RerankRow = (String, Option<String>, String, String, String, String, Option<String>, String, i32, i32, bool, i32, bool, String, String);
 
 fn row_to_response(r: RerankRow) -> RerankConfigResponse {
     RerankConfigResponse {
@@ -96,9 +101,10 @@ fn row_to_response(r: RerankRow) -> RerankConfigResponse {
         top_n: r.8,
         initial_recall_k: r.9,
         fallback_enabled: r.10,
-        is_default: r.11,
-        created_at: r.12,
-        updated_at: r.13,
+        timeout_secs: r.11,
+        is_default: r.12,
+        created_at: r.13,
+        updated_at: r.14,
     }
 }
 
@@ -135,8 +141,8 @@ async fn create_config(
     let ws_id = req.workspace_id.map(|w| w.to_string());
 
     sqlx::query(
-        "INSERT INTO rerank_configs (id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        "INSERT INTO rerank_configs (id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, timeout_secs, is_default)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(id.to_string())
     .bind(&ws_id)
@@ -149,6 +155,7 @@ async fn create_config(
     .bind(req.top_n)
     .bind(req.initial_recall_k)
     .bind(req.fallback_enabled)
+    .bind(req.timeout_secs)
     .bind(req.is_default)
     .execute(&state.pool)
     .await?;
@@ -228,6 +235,12 @@ async fn update_config(
         idx += 1;
     }
 
+    if let Some(timeout_secs) = req.timeout_secs {
+        sets.push(format!("timeout_secs = ${}", idx));
+        binds.push(timeout_secs.to_string());
+        idx += 1;
+    }
+
     if let Some(is_default) = req.is_default {
         sets.push(format!("is_default = ${}", idx));
         binds.push(is_default.to_string());
@@ -287,24 +300,25 @@ async fn test_connection(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let row = sqlx::query_as::<_, (String, String, Option<String>, String)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name FROM rerank_configs WHERE id = $1 AND user_id = $2",
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, timeout_secs FROM rerank_configs WHERE id = $1 AND user_id = $2",
     )
     .bind(id.to_string())
     .bind(auth.id.to_string())
     .fetch_optional(&_state.pool)
     .await?;
 
-    let (provider, api_base_url, api_key, model_name) = match row {
+    let (provider, api_base_url, api_key, model_name, timeout_secs) = match row {
         Some(r) => r,
         None => return Err(AppError::NotFound("Rerank config not found".into())),
     };
 
-    let reranker = crate::services::reranker::HttpRerankerProvider::new(
+    let reranker = crate::services::reranker::HttpRerankerProvider::with_timeout(
         format!("{}/rerank", api_base_url.trim_end_matches('/')),
         api_key.unwrap_or_default(),
         model_name.clone(),
         provider.clone(),
+        timeout_secs as u64,
     );
 
     let test_docs = &["The capital of France is Paris.", "Machine learning is a subset of AI."];

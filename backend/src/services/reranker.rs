@@ -234,8 +234,16 @@ pub struct HttpRerankerProvider {
 
 impl HttpRerankerProvider {
     pub fn new(api_url: String, api_key: String, model: String, provider_name: String) -> Self {
+        Self::with_timeout(api_url, api_key, model, provider_name, 30)
+    }
+
+    pub fn with_timeout(api_url: String, api_key: String, model: String, provider_name: String, timeout_secs: u64) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            client: reqwest::Client::new(),
+            client,
             api_url,
             api_key,
             model,

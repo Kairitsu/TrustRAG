@@ -427,8 +427,8 @@ async fn load_default_rerank(
     user_id: Uuid,
     jwt_secret: &str,
 ) -> Option<(RagRerank, HttpRerankerProvider)> {
-    let row = sqlx::query_as::<_, (String, String, Option<String>, String, i32, i32, bool)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled \
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String, i32, i32, bool, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, timeout_secs \
          FROM rerank_configs WHERE user_id = $1 AND is_default = 1 LIMIT 1",
     )
     .bind(user_id.to_string())
@@ -445,11 +445,14 @@ async fn load_default_rerank(
         row.1.trim_end_matches('/')
     );
 
-    let provider = HttpRerankerProvider::new(
+    let timeout_secs = (row.7 as u64).max(5);
+
+    let provider = HttpRerankerProvider::with_timeout(
         api_url,
         api_key,
         row.3.clone(),
         row.0.clone(),
+        timeout_secs,
     );
 
     let rerank_cfg = RagRerank {

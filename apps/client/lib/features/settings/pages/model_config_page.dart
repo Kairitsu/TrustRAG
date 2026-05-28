@@ -280,7 +280,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
           ],
         ]),
         subtitle: Text(
-            '${cfg.provider} · 召回 ${cfg.initialRecallK} → 保留 ${cfg.topN}${cfg.fallbackEnabled ? ' · 降级' : ''}'),
+            '${cfg.provider} · 召回 ${cfg.initialRecallK} → 保留 ${cfg.topN} · ${cfg.timeoutSecs}s${cfg.fallbackEnabled ? ' · 降级' : ''}'),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -742,6 +742,8 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
         text: config?.topN.toString() ?? '5');
     final recallKCtl = TextEditingController(
         text: config?.initialRecallK.toString() ?? '30');
+    final timeoutCtl = TextEditingController(
+        text: config?.timeoutSecs.toString() ?? '30');
     bool fallbackEnabled = config?.fallbackEnabled ?? true;
     bool isDefault = config?.isDefault ?? true;
 
@@ -838,6 +840,17 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                     ],
                   ),
                   const SizedBox(height: 8),
+                  TextField(
+                    controller: timeoutCtl,
+                    decoration: const InputDecoration(
+                      labelText: '超时时间（秒）',
+                      helperText: 'Rerank API 请求超时（默认 30 秒）',
+                      helperMaxLines: 2,
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  ),
+                  const SizedBox(height: 8),
                   SwitchListTile(
                     title: const Text('失败自动降级'),
                     subtitle: const Text(
@@ -871,6 +884,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   'api_base_url': endpointCtl.text,
                   'top_n': (int.tryParse(topNCtl.text) ?? 5).clamp(1, 100),
                   'initial_recall_k': (int.tryParse(recallKCtl.text) ?? 30).clamp(5, 200),
+                  'timeout_secs': (int.tryParse(timeoutCtl.text) ?? 30).clamp(5, 300),
                   'fallback_enabled': fallbackEnabled,
                   'is_default': isDefault,
                 };

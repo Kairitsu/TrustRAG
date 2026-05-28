@@ -12,6 +12,7 @@ class RerankConfig {
   final int topN;
   final int initialRecallK;
   final bool fallbackEnabled;
+  final int timeoutSecs;
   final bool isDefault;
 
   RerankConfig({
@@ -24,6 +25,7 @@ class RerankConfig {
     required this.topN,
     required this.initialRecallK,
     required this.fallbackEnabled,
+    required this.timeoutSecs,
     required this.isDefault,
   });
 
@@ -38,6 +40,7 @@ class RerankConfig {
       topN: json['top_n'] ?? 5,
       initialRecallK: json['initial_recall_k'] ?? 30,
       fallbackEnabled: json['fallback_enabled'] ?? true,
+      timeoutSecs: json['timeout_secs'] ?? 30,
       isDefault: json['is_default'] ?? false,
     );
   }
