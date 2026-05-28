@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../../core/services/backend_manager.dart';
 import '../../../core/services/update_checker.dart';
@@ -162,12 +163,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 child: Align(
                   alignment: Alignment.bottomCenter,
                   child: Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: IconButton(
-                      icon: const Icon(Icons.logout),
-                      tooltip: S.of(context).logout,
-                      onPressed: () => _showLogoutDialog(context, ref),
-                    ),
+                    padding: const EdgeInsets.only(bottom: 12, left: 4, right: 4),
+                    child: _buildAccountWidget(extended),
                   ),
                 ),
               ),
@@ -931,6 +928,90 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     );
   }
 
+  Widget _buildAccountWidget(bool extended) {
+    final authState = ref.watch(authProvider);
+    final email = authState.user?['email'] as String? ?? '';
+    final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
+
+    if (!extended) {
+      return Tooltip(
+        message: email.isNotEmpty ? email : '账号',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _showAccountMenu(context, ref),
+          child: CircleAvatar(
+            radius: 18,
+            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+            child: Text(initial,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                )),
+          ),
+        ),
+      );
+    }
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => _showAccountMenu(context, ref),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+              child: Text(initial,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  )),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                email.isNotEmpty ? email : '未登录',
+                style: const TextStyle(fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Icon(Icons.unfold_more, size: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAccountMenu(BuildContext context, WidgetRef ref) {
+    final authState = ref.read(authProvider);
+    final currentEmail = authState.user?['email'] as String? ?? '';
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => _AccountMenuSheet(
+        currentEmail: currentEmail,
+        onLogout: () {
+          Navigator.pop(ctx);
+          _showLogoutDialog(context, ref);
+        },
+        onSwitchAccount: (email) {
+          Navigator.pop(ctx);
+          ref.read(authProvider.notifier).logout();
+          context.go('/login');
+        },
+      ),
+    );
+  }
+
   void _showLogoutDialog(BuildContext context, WidgetRef ref) {
     final authState = ref.read(authProvider);
     final userEmail = authState.user?['email'] as String? ?? '';
@@ -1415,6 +1496,108 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             },
             child: Text(S.of(context).create),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AccountMenuSheet extends StatefulWidget {
+  final String currentEmail;
+  final VoidCallback onLogout;
+  final ValueChanged<String> onSwitchAccount;
+
+  const _AccountMenuSheet({
+    required this.currentEmail,
+    required this.onLogout,
+    required this.onSwitchAccount,
+  });
+
+  @override
+  State<_AccountMenuSheet> createState() => _AccountMenuSheetState();
+}
+
+class _AccountMenuSheetState extends State<_AccountMenuSheet> {
+  List<String> _savedAccounts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAccounts();
+  }
+
+  Future<void> _loadAccounts() async {
+    final accounts = await ApiClient.getSavedAccounts();
+    if (mounted) {
+      setState(() => _savedAccounts = accounts);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final otherAccounts = _savedAccounts
+        .where((e) => e != widget.currentEmail)
+        .toList();
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 8),
+          Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (widget.currentEmail.isNotEmpty) ...[
+            ListTile(
+              leading: CircleAvatar(
+                backgroundColor: theme.colorScheme.primaryContainer,
+                child: Text(
+                  widget.currentEmail[0].toUpperCase(),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+              title: Text(widget.currentEmail),
+              subtitle: const Text('当前账号', style: TextStyle(fontSize: 12)),
+              trailing: const Icon(Icons.check_circle, color: Colors.green, size: 20),
+            ),
+            const Divider(),
+          ],
+          if (otherAccounts.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('其他已登录账号',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              ),
+            ),
+            ...otherAccounts.map((email) => ListTile(
+              leading: CircleAvatar(
+                backgroundColor: Colors.grey.shade200,
+                child: Text(email[0].toUpperCase(),
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              title: Text(email),
+              subtitle: const Text('点击切换', style: TextStyle(fontSize: 11)),
+              onTap: () => widget.onSwitchAccount(email),
+            )),
+            const Divider(),
+          ],
+          ListTile(
+            leading: const Icon(Icons.logout),
+            title: const Text('退出登录'),
+            onTap: widget.onLogout,
+          ),
+          const SizedBox(height: 8),
         ],
       ),
     );
