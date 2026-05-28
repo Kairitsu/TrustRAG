@@ -34,6 +34,8 @@ class Citation {
   final int? page;
   final double score;
   final String text;
+  final int? embeddingRank;
+  final double? rerankScore;
 
   Citation({
     required this.id,
@@ -44,6 +46,8 @@ class Citation {
     this.page,
     required this.score,
     required this.text,
+    this.embeddingRank,
+    this.rerankScore,
   });
 
   factory Citation.fromJson(Map<String, dynamic> json) {
@@ -55,6 +59,8 @@ class Citation {
       heading: json['heading'] ?? json['heading_path'],
       page: json['page'] ?? json['page_number'],
       score: (json['score'] ?? json['relevance_score'] ?? 0).toDouble(),
+      embeddingRank: json['embedding_rank'],
+      rerankScore: (json['rerank_score'] as num?)?.toDouble(),
       text: json['text'] ?? json['quoted_text'] ?? '',
     );
   }

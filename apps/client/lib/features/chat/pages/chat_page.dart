@@ -234,6 +234,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           page: _streamingCitations[i].page,
                           score: _streamingCitations[i].score,
                           text: _streamingCitations[i].text,
+                          embeddingRank: _streamingCitations[i].embeddingRank,
+                          rerankScore: _streamingCitations[i].rerankScore,
                         );
                         break;
                       }
@@ -1738,28 +1740,61 @@ class _CitationPanelState extends ConsumerState<_CitationPanel> {
             controller: widget.scrollController,
             padding: const EdgeInsets.all(12),
             children: [
-              if (c.page != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      Icon(Icons.description_outlined,
-                          size: 16, color: Colors.grey.shade600),
-                      const SizedBox(width: 4),
-                      Text('第 ${c.page} 页',
-                          style: TextStyle(
-                              color: Colors.grey.shade600, fontSize: 13)),
-                      const Spacer(),
-                      Text(
-                          '相关度: ${(c.score * 100).toStringAsFixed(1)}%',
-                          style: TextStyle(
-                            color: theme.colorScheme.primary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          )),
-                    ],
-                  ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 4,
+                  children: [
+                    if (c.page != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.description_outlined,
+                              size: 16, color: Colors.grey.shade600),
+                          const SizedBox(width: 4),
+                          Text('第 ${c.page} 页',
+                              style: TextStyle(
+                                  color: Colors.grey.shade600, fontSize: 13)),
+                        ],
+                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.score, size: 16, color: theme.colorScheme.primary),
+                        const SizedBox(width: 4),
+                        Text(
+                            '相关度: ${(c.score * 100).toStringAsFixed(1)}%',
+                            style: TextStyle(
+                              color: theme.colorScheme.primary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            )),
+                      ],
+                    ),
+                    if (c.embeddingRank != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.format_list_numbered, size: 16, color: Colors.teal.shade400),
+                          const SizedBox(width: 4),
+                          Text('向量排名: #${c.embeddingRank}',
+                              style: TextStyle(color: Colors.teal.shade600, fontSize: 13)),
+                        ],
+                      ),
+                    if (c.rerankScore != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.swap_vert, size: 16, color: Colors.deepPurple.shade300),
+                          const SizedBox(width: 4),
+                          Text('重排分: ${(c.rerankScore! * 100).toStringAsFixed(1)}%',
+                              style: TextStyle(color: Colors.deepPurple.shade500, fontSize: 13)),
+                        ],
+                      ),
+                  ],
                 ),
+              ),
               const Divider(),
               const SizedBox(height: 8),
               Text(c.text, style: const TextStyle(fontSize: 14, height: 1.6)),

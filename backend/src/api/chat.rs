@@ -190,6 +190,10 @@ struct CitationEvent {
     page: Option<i32>,
     score: f64,
     text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embedding_rank: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rerank_score: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -672,14 +676,24 @@ async fn send_message(
             }
         }
 
-        let citations: Vec<CitationEvent> = result.sources.iter().map(|s| CitationEvent {
-                index: s.index,
-                chunk_id: s.chunk_id,
-                document_id: s.document_id,
-                heading: s.heading_path.clone(),
-                page: s.page_start,
-                score: s.score,
-                text: s.content.chars().take(200).collect(),
+        let trace_ref = result.trace.as_ref();
+        let citations: Vec<CitationEvent> = result.sources.iter().map(|s| {
+                let (emb_rank, rr_score) = trace_ref
+                    .and_then(|t| t.reranked_results.iter()
+                        .find(|r| r.chunk_id == s.chunk_id)
+                        .map(|r| (r.embedding_rank, r.rerank_score)))
+                    .unwrap_or((None, None));
+                CitationEvent {
+                    index: s.index,
+                    chunk_id: s.chunk_id,
+                    document_id: s.document_id,
+                    heading: s.heading_path.clone(),
+                    page: s.page_start,
+                    score: s.score,
+                    text: s.content.chars().take(200).collect(),
+                    embedding_rank: emb_rank,
+                    rerank_score: rr_score,
+                }
             })
             .collect();
 
@@ -764,6 +778,7 @@ fn build_sse_stream(
                 Ok(pipeline_output) => {
                     let context = pipeline_output.context;
                     let sources = pipeline_output.sources;
+                    let pipeline_trace = pipeline_output.trace.as_ref();
 
                     if let Ok(data) = serde_json::to_string(&RetrievalFinishedEvent {
                         sources_count: sources.len(),
@@ -775,6 +790,11 @@ fn build_sse_stream(
 
                     // Emit citations
                     for s in &sources {
+                        let (emb_rank, rr_score) = pipeline_trace
+                            .and_then(|t| t.reranked_results.iter()
+                                .find(|r| r.chunk_id == s.chunk_id)
+                                .map(|r| (r.embedding_rank, r.rerank_score)))
+                            .unwrap_or((None, None));
                         let citation = CitationEvent {
                             index: s.index,
                             chunk_id: s.chunk_id,
@@ -783,6 +803,8 @@ fn build_sse_stream(
                             page: s.page_start,
                             score: s.score,
                             text: s.content.chars().take(200).collect(),
+                            embedding_rank: emb_rank,
+                            rerank_score: rr_score,
                         };
                         if let Ok(data) = serde_json::to_string(&citation) {
                             yield Ok(Event::default().event("citation").data(data));
