@@ -21,6 +21,7 @@ use crate::error::AppError;
 use crate::services::llm::OpenAILlmProvider;
 use crate::services::citation;
 use crate::services::rag::{self, AssembledSource, RagConfig};
+use crate::services::reranker::{HttpRerankerProvider, ReRankConfig, ReRankMethod};
 use crate::traits::llm_provider::{LlmMessage, LlmProvider, StreamEvent};
 
 use super::AppState;
@@ -415,6 +416,53 @@ async fn list_messages(
     Ok(Json(msgs))
 }
 
+// ── Load Rerank Config ──
+
+async fn load_default_rerank(
+    pool: &crate::db::DbPool,
+    user_id: Uuid,
+    jwt_secret: &str,
+) -> Option<(RagRerank, HttpRerankerProvider)> {
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, top_n \
+         FROM rerank_configs WHERE user_id = $1 AND is_default = 1 LIMIT 1",
+    )
+    .bind(user_id.to_string())
+    .fetch_optional(pool)
+    .await
+    .ok()??;
+
+    let api_key = row.2.as_deref()
+        .and_then(|enc| crate::api::models::decrypt_api_key(enc, jwt_secret))
+        .unwrap_or_default();
+
+    let api_url = format!(
+        "{}/rerank",
+        row.1.trim_end_matches('/')
+    );
+
+    let provider = HttpRerankerProvider::new(
+        api_url,
+        api_key,
+        row.3.clone(),
+        row.0.clone(),
+    );
+
+    let rerank_cfg = RagRerank {
+        config: ReRankConfig {
+            enabled: true,
+            top_n: row.4 as usize,
+            method: ReRankMethod::ExternalApi,
+        },
+    };
+
+    Some((rerank_cfg, provider))
+}
+
+struct RagRerank {
+    config: ReRankConfig,
+}
+
 // ── Send Message (main RAG endpoint) ──
 
 async fn send_message(
@@ -535,11 +583,17 @@ async fn send_message(
         .map(|(role, content)| LlmMessage { role, content })
         .collect();
 
-    let rag_config = RagConfig {
+    let rerank_data = load_default_rerank(&state.pool, auth.id, &state.jwt_secret).await;
+
+    let mut rag_config = RagConfig {
         temperature: temperature.unwrap_or(0.1),
         max_tokens: max_tokens.unwrap_or(4096) as u32,
         ..RagConfig::default()
     };
+
+    if let Some((ref rerank_info, _)) = rerank_data {
+        rag_config.rerank = rerank_info.config.clone();
+    }
 
     let embedding_provider = state.embedding_provider.read().await.clone();
 
@@ -547,6 +601,8 @@ async fn send_message(
         // Return SSE stream
         let pool = state.pool.clone();
         let query = content.clone();
+
+        let reranker: Option<Arc<HttpRerankerProvider>> = rerank_data.map(|(_, p)| Arc::new(p));
 
         let stream = build_sse_stream(
             pool,
@@ -558,6 +614,7 @@ async fn send_message(
             history,
             doc_scope,
             rag_config,
+            reranker,
         );
 
         Ok(Sse::new(stream).keep_alive(KeepAlive::default()).into_response())
@@ -642,6 +699,7 @@ fn build_sse_stream(
     history: Vec<LlmMessage>,
     doc_scope: Vec<Uuid>,
     rag_config: RagConfig,
+    reranker: Option<Arc<HttpRerankerProvider>>,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
         let message_id = Uuid::new_v4();
@@ -687,7 +745,8 @@ fn build_sse_stream(
             }
 
             let retrieval_start = std::time::Instant::now();
-            match crate::services::retrieval_pipeline::run(
+            let reranker_ref = reranker.as_ref().map(|r| r.as_ref() as &dyn crate::services::reranker::RerankerProvider);
+            match crate::services::retrieval_pipeline::run_with_reranker(
                 &pool,
                 emb_provider.as_ref(),
                 &*llm_provider,
@@ -695,6 +754,7 @@ fn build_sse_stream(
                 &analysis.rewritten_query,
                 if doc_scope.is_empty() { None } else { Some(&doc_scope[..]) },
                 &pipeline_config,
+                reranker_ref,
             ).await {
                 Ok(pipeline_output) => {
                     let context = pipeline_output.context;
