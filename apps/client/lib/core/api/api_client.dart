@@ -127,7 +127,8 @@ class ApiClient {
     return prefs.getStringList(_accountListKey) ?? [];
   }
 
-  /// Switch to a previously saved account, restoring its token.
+  /// Switch to a previously saved account, restoring its token
+  /// and restarting the embedded backend with the new account's data.
   /// Returns true if the account had a saved token.
   static Future<bool> switchToAccount(String email) async {
     final prefs = await SharedPreferences.getInstance();
@@ -141,10 +142,15 @@ class ApiClient {
     final savedToken = prefs.getString(_accountTokenKey(email));
     if (savedToken != null && savedToken.isNotEmpty) {
       await prefs.setString(_tokenKey, savedToken);
-      return true;
+    } else {
+      await prefs.remove(_tokenKey);
     }
-    await prefs.remove(_tokenKey);
-    return false;
+
+    if (BackendManager.shouldRunEmbedded) {
+      await BackendManager().restart(accountId: email);
+    }
+
+    return savedToken != null && savedToken.isNotEmpty;
   }
 
   static Future<void> removeAccount(String email) async {

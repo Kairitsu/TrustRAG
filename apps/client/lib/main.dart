@@ -37,8 +37,9 @@ void main() async {
   await ApiClient.loadSavedServerUrl();
 
   if (BackendManager.shouldRunEmbedded) {
-    debugPrint('[App] Starting embedded backend...');
-    await BackendManager().start();
+    final activeAccount = await ApiClient.getActiveAccount();
+    debugPrint('[App] Starting embedded backend for account: ${activeAccount ?? "default"}...');
+    await BackendManager().start(accountId: activeAccount);
     debugPrint('[App] Backend status: running=${BackendManager().isRunning}, url=${BackendManager().baseUrl}');
   }
 

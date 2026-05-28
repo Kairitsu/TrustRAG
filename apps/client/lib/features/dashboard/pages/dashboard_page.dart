@@ -1039,6 +1039,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           Navigator.pop(ctx);
           final restored = await ApiClient.switchToAccount(email);
           if (restored) {
+            ref.read(selectedWorkspaceProvider.notifier).state = null;
+            ref.invalidate(workspaceProvider);
             ref.invalidate(authProvider);
             ref.read(authProvider.notifier).checkAuthStatus();
           } else {

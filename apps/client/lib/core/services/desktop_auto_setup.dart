@@ -66,6 +66,7 @@ class DesktopAutoSetup {
 
   static Future<void> _loginDefaultUser(ApiClient api) async {
     try {
+      final previousAccount = await ApiClient.getActiveAccount();
       final resp = await api.dio.post('/auth/login', data: {
         'email': _defaultEmail,
         'password': _defaultPassword,
@@ -73,6 +74,14 @@ class DesktopAutoSetup {
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
       await ApiClient.saveToken(token);
       await ApiClient.setActiveAccount(_defaultEmail);
+
+      if (BackendManager.shouldRunEmbedded &&
+          previousAccount != null &&
+          previousAccount != _defaultEmail &&
+          BackendManager().isRunning) {
+        await BackendManager().restart(accountId: _defaultEmail);
+      }
+
       debugPrint('[AutoSetup] Auto-login successful');
     } on DioException catch (e) {
       debugPrint('[AutoSetup] Auto-login failed: ${e.message}');

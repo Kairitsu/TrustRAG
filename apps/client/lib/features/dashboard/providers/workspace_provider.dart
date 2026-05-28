@@ -1,9 +1,17 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../core/api/api_client.dart';
 import '../../../features/auth/providers/auth_provider.dart';
 
 const _kLastWorkspaceId = 'last_workspace_id';
+
+String _accountWorkspaceKey(String? account) {
+  if (account != null && account.isNotEmpty) {
+    return 'last_workspace_id_$account';
+  }
+  return _kLastWorkspaceId;
+}
 
 enum WorkspaceLoadError {
   networkUnavailable,
@@ -139,7 +147,9 @@ class WorkspaceNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
     if (current != null) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final savedId = prefs.getString(_kLastWorkspaceId);
+    final activeAccount = await ApiClient.getActiveAccount();
+    final key = _accountWorkspaceKey(activeAccount);
+    final savedId = prefs.getString(key) ?? prefs.getString(_kLastWorkspaceId);
     Workspace target;
     if (savedId != null) {
       target = list.firstWhere((w) => w.id == savedId, orElse: () => list.first);
@@ -147,7 +157,7 @@ class WorkspaceNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
       target = list.first;
     }
     ref.read(selectedWorkspaceProvider.notifier).state = target;
-    await prefs.setString(_kLastWorkspaceId, target.id);
+    await prefs.setString(key, target.id);
   }
 
   Future<Workspace?> createWorkspace(String name, String? description, {String type = 'personal'}) async {
@@ -215,5 +225,8 @@ final selectedWorkspaceProvider = StateProvider<Workspace?>((ref) => null);
 
 Future<void> saveLastWorkspaceId(String id) async {
   final prefs = await SharedPreferences.getInstance();
+  final activeAccount = await ApiClient.getActiveAccount();
+  final key = _accountWorkspaceKey(activeAccount);
+  await prefs.setString(key, id);
   await prefs.setString(_kLastWorkspaceId, id);
 }

@@ -107,7 +107,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
       } else {
         await ApiClient.clearToken();
       }
+
+      final previousAccount = await ApiClient.getActiveAccount();
       await ApiClient.setActiveAccount(email);
+
+      if (BackendManager.shouldRunEmbedded && previousAccount != email) {
+        await BackendManager().restart(accountId: email);
+      }
+
       state = AuthState(
         status: AuthStatus.authenticated,
         token: token,
@@ -150,7 +157,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
       await ApiClient.saveToken(token);
+
+      final previousAccount = await ApiClient.getActiveAccount();
       await ApiClient.setActiveAccount(email);
+
+      if (BackendManager.shouldRunEmbedded && previousAccount != email) {
+        await BackendManager().restart(accountId: email);
+      }
+
       state = AuthState(
         status: AuthStatus.authenticated,
         token: token,
@@ -173,9 +187,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> logout({bool clearData = false}) async {
+    final email = await ApiClient.getActiveAccount();
     if (clearData) {
-      final email = await ApiClient.getActiveAccount();
       if (email != null) {
+        if (BackendManager.shouldRunEmbedded) {
+          await BackendManager().deleteAccountData(email);
+        }
         await ApiClient.removeAccount(email);
       }
       await ApiClient.clearAllAccountData();

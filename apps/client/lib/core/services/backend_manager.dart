@@ -21,7 +21,9 @@ class BackendManager {
   bool _isRunning = false;
   bool _startAttempted = false;
   String? _startupError;
-  final _readyCompleter = Completer<void>();
+  Completer<void> _readyCompleter = Completer<void>();
+  String? _currentAccountId;
+  String? _currentDataDir;
 
   int? get port => _port;
   bool get isRunning => _isRunning;
@@ -30,6 +32,8 @@ class BackendManager {
   bool get hasFailed => _startupError != null;
   String get baseUrl => 'http://127.0.0.1:$_port';
   Future<void> get ready => _readyCompleter.future;
+  String? get currentAccountId => _currentAccountId;
+  String? get currentDataDir => _currentDataDir;
 
   /// Whether this platform should run an embedded backend.
   static bool get shouldRunEmbedded {
@@ -37,10 +41,11 @@ class BackendManager {
     return Platform.isWindows || Platform.isLinux || Platform.isMacOS || Platform.isAndroid;
   }
 
-  Future<void> start() async {
+  Future<void> start({String? accountId}) async {
     if (!shouldRunEmbedded || _isRunning) return;
 
     _startAttempted = true;
+    _currentAccountId = accountId;
     _port = await _findFreePort();
     final backendPath = await _findBackendBinary();
 
@@ -56,7 +61,8 @@ class BackendManager {
       return;
     }
 
-    final dataDir = await _getDataDir();
+    final dataDir = await _getDataDir(accountId: accountId);
+    _currentDataDir = dataDir;
     await Directory(dataDir).create(recursive: true);
 
     final dbPath = p.join(dataDir, 'trustrag.db');
@@ -73,8 +79,9 @@ class BackendManager {
 
     debugPrint('[BackendManager] Starting backend on port $_port');
     debugPrint('[BackendManager] Data dir: $dataDir');
+    debugPrint('[BackendManager] Account: ${accountId ?? "default"}');
     debugPrint('[BackendManager] Binary: $backendPath');
-    DebugLogBuffer().add('BACKEND 启动中 port=$_port');
+    DebugLogBuffer().add('BACKEND 启动中 port=$_port account=${accountId ?? "default"}');
     DebugLogBuffer().add('BACKEND 数据目录: $dataDir');
 
     try {
@@ -125,6 +132,35 @@ class BackendManager {
           ? 'BACKEND 健康检查通过，端口 $_port'
           : 'ERROR BACKEND 健康检查失败');
     }
+  }
+
+  /// Stop the current backend, then start a new one pointing to
+  /// the given account's isolated data directory.
+  Future<void> restart({String? accountId}) async {
+    debugPrint('[BackendManager] Restarting for account: ${accountId ?? "default"}');
+    DebugLogBuffer().add('BACKEND 重启中，切换账号: ${accountId ?? "default"}');
+    await stop();
+    _readyCompleter = Completer<void>();
+    _startupError = null;
+    _startAttempted = false;
+    await start(accountId: accountId);
+  }
+
+  /// Get the data directory path for an account (without creating it).
+  Future<String> getAccountDataDir(String accountId) async {
+    return _getDataDir(accountId: accountId);
+  }
+
+  /// Delete the local data directory for a specific account.
+  Future<bool> deleteAccountData(String accountId) async {
+    final dir = Directory(await getAccountDataDir(accountId));
+    if (await dir.exists()) {
+      debugPrint('[BackendManager] Deleting data for account: $accountId');
+      DebugLogBuffer().add('BACKEND 删除账号数据: $accountId');
+      await dir.delete(recursive: true);
+      return true;
+    }
+    return false;
   }
 
   /// HTTP health check to verify the backend is actually responding.
@@ -238,9 +274,14 @@ class BackendManager {
     return null;
   }
 
-  Future<String> _getDataDir() async {
+  Future<String> _getDataDir({String? accountId}) async {
     final appSupport = await getApplicationSupportDirectory();
-    return p.join(appSupport.path, 'TrustRAG');
+    final base = p.join(appSupport.path, 'TrustRAG');
+    if (accountId != null && accountId.isNotEmpty) {
+      final safeId = accountId.replaceAll(RegExp(r'[^\w.@\-]'), '_');
+      return p.join(base, 'accounts', safeId);
+    }
+    return base;
   }
 
   String _generateJwtSecret() {
