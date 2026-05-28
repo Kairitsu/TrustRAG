@@ -1,7 +1,9 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::SqlitePool;
+use sqlx::{Executor, Row, SqlitePool};
 use std::str::FromStr;
 use std::time::Duration;
+
+pub const CURRENT_SCHEMA_VERSION: i32 = 2;
 
 pub async fn create_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(database_url)?
@@ -21,4 +23,115 @@ pub async fn create_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
         .await?;
 
     Ok(pool)
+}
+
+pub async fn get_schema_version(pool: &SqlitePool) -> anyhow::Result<i32> {
+    let row = sqlx::query("PRAGMA user_version")
+        .fetch_one(pool)
+        .await?;
+    let version: i32 = row.try_get(0)?;
+    Ok(version)
+}
+
+pub async fn set_schema_version(pool: &SqlitePool, version: i32) -> anyhow::Result<()> {
+    pool.execute(sqlx::raw_sql(&format!("PRAGMA user_version = {}", version)))
+        .await?;
+    Ok(())
+}
+
+pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
+    let current = get_schema_version(pool).await?;
+    tracing::info!(current_version = current, target_version = CURRENT_SCHEMA_VERSION, "Checking SQLite schema version");
+
+    if current == 0 {
+        let has_tables = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+            .fetch_optional(pool)
+            .await?;
+
+        if has_tables.is_some() {
+            tracing::info!("Existing database without version tracking detected, running incremental migrations from v1");
+            migrate_v1_to_v2(pool).await?;
+            set_schema_version(pool, CURRENT_SCHEMA_VERSION).await?;
+        } else {
+            let sql = include_str!("../../migrations_sqlite/init.sql");
+            pool.execute(sqlx::raw_sql(sql)).await?;
+            set_schema_version(pool, CURRENT_SCHEMA_VERSION).await?;
+            tracing::info!(version = CURRENT_SCHEMA_VERSION, "Fresh SQLite database initialized");
+        }
+    } else if current < CURRENT_SCHEMA_VERSION {
+        for v in current..CURRENT_SCHEMA_VERSION {
+            match v {
+                1 => migrate_v1_to_v2(pool).await?,
+                _ => tracing::warn!(version = v, "No migration handler for this version step"),
+            }
+        }
+        set_schema_version(pool, CURRENT_SCHEMA_VERSION).await?;
+        tracing::info!(from = current, to = CURRENT_SCHEMA_VERSION, "SQLite schema migrated");
+    } else {
+        tracing::info!(version = current, "SQLite schema is up to date");
+    }
+
+    Ok(())
+}
+
+async fn migrate_v1_to_v2(pool: &SqlitePool) -> anyhow::Result<()> {
+    tracing::info!("Running migration v1 -> v2");
+
+    let stmts = vec![
+        "ALTER TABLE embedding_configs ADD COLUMN batch_size INTEGER NOT NULL DEFAULT 10",
+    ];
+
+    for stmt in stmts {
+        match pool.execute(sqlx::raw_sql(stmt)).await {
+            Ok(_) => tracing::debug!(stmt = stmt, "Migration statement executed"),
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("duplicate column") || err_str.contains("already exists") {
+                    tracing::debug!(stmt = stmt, "Column already exists, skipping");
+                } else {
+                    tracing::warn!(stmt = stmt, error = %e, "Migration statement failed (non-fatal)");
+                }
+            }
+        }
+    }
+
+    let check = sqlx::query(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='documents'"
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(row) = check {
+        let create_sql: String = row.try_get(0)?;
+        if !create_sql.contains("embedding_failed") {
+            tracing::info!("Updating documents processing_status CHECK constraint for embedding_failed");
+            tracing::warn!("SQLite does not support ALTER CHECK constraint; \
+                           embedding_failed status will be handled at the application level");
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn validate_token_user(pool: &SqlitePool, user_id: &str) -> anyhow::Result<bool> {
+    let row = sqlx::query("SELECT COUNT(*) as cnt FROM users WHERE id = $1 AND status = 'active'")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await?;
+    let count: i32 = row.try_get(0)?;
+    Ok(count > 0)
+}
+
+pub async fn backup_database(data_dir: &str) -> anyhow::Result<String> {
+    let db_path = format!("{}/trustrag.db", data_dir);
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let backup_path = format!("{}/trustrag_backup_{}.db", data_dir, timestamp);
+
+    if std::path::Path::new(&db_path).exists() {
+        std::fs::copy(&db_path, &backup_path)?;
+        tracing::info!(backup = %backup_path, "Database backed up");
+        Ok(backup_path)
+    } else {
+        anyhow::bail!("Database file not found at {}", db_path)
+    }
 }

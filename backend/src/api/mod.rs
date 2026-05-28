@@ -24,6 +24,8 @@ pub mod reviews;
 pub mod embedding_configs;
 pub mod knowledge_graph;
 pub mod workspace_members;
+#[cfg(sqlite_mode)]
+pub mod system;
 
 #[derive(Clone)]
 pub struct AppState {

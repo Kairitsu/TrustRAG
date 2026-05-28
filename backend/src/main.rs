@@ -43,10 +43,7 @@ async fn ensure_data_dir(config: &config::AppConfig) -> anyhow::Result<()> {
 
 #[cfg(sqlite_mode)]
 async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
-    use sqlx::Executor;
-    let sql = include_str!("../migrations_sqlite/init.sql");
-    pool.execute(sqlx::raw_sql(sql)).await?;
-    tracing::info!("SQLite schema initialized");
+    db::run_migrations(pool).await?;
     Ok(())
 }
 
@@ -181,7 +178,12 @@ async fn main() -> anyhow::Result<()> {
         .merge(api::evidence::router())
         .merge(api::answer_status::router())
         .merge(api::domain_profiles::router())
-        .merge(api::retrieval_traces::router())
+        .merge(api::retrieval_traces::router());
+
+    #[cfg(sqlite_mode)]
+    let app = app.merge(api::system::router());
+
+    let app = app
         .with_state(state)
         .layer(axum::Extension(JwtSecret(config.jwt_secret.clone())))
         .layer(DefaultBodyLimit::max(upload_limit as usize))
