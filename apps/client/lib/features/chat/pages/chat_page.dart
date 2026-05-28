@@ -659,7 +659,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       (m) {
         final num = int.tryParse(m.group(1)!);
         if (num == null || !validIndices.contains(num)) return m.group(0)!;
-        return '[`[$num]`](#cite-$num)';
+        return '[**\u2060[$num]**](#cite-$num)';
       },
     );
   }
@@ -734,9 +734,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     code: GoogleFonts.jetBrainsMono(fontSize: 14, height: 1.5),
                     a: TextStyle(
                       color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
                       decoration: TextDecoration.none,
+                      backgroundColor: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
                     ),
                     codeblockDecoration: BoxDecoration(
                       color: theme.colorScheme.surfaceContainerHighest,
