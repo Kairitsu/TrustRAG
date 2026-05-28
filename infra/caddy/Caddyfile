@@ -15,3 +15,14 @@
         file_server
     }
 }
+
+:8443 {
+    reverse_proxy mobbin-proxy:8000 {
+        header_up X-Forwarded-For {remote_host}
+    }
+    header {
+        Access-Control-Allow-Origin *
+        Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        Access-Control-Allow-Headers "Content-Type, Authorization, X-Admin-Key"
+    }
+}

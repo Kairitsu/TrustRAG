@@ -125,6 +125,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "8443:8443"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile
       - ../apps/client/build/web:/srv/web:ro
@@ -134,9 +135,24 @@ services:
       - backend
     restart: unless-stopped
 
+  mobbin-proxy:
+    build:
+      context: ../../mobbin-pro-unlocked/backend
+      dockerfile: Dockerfile
+    container_name: mobbin-proxy
+    volumes:
+      - mobbin_proxy_data:/data
+    environment:
+      MOBBIN_REFRESH_TOKEN: ${MOBBIN_REFRESH_TOKEN}
+      JWT_SECRET: ${MOBBIN_JWT_SECRET:-mobbin-jwt-secret-change-me}
+      ADMIN_KEY: ${MOBBIN_ADMIN_KEY:-mobbin-admin-key-change-me}
+      DATABASE_PATH: /data/mobbin-proxy.db
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   caddy_data:
   caddy_config:
+  mobbin_proxy_data:

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/services/backend_manager.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../../chat/providers/chat_provider.dart';
 import '../../dashboard/providers/workspace_provider.dart';
 import '../providers/document_provider.dart';
@@ -405,6 +406,8 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                       trailing: PopupMenuButton(
                         itemBuilder: (ctx) => [
                           const PopupMenuItem(
+                              value: 'generate_graph', child: Text('生成知识图谱')),
+                          const PopupMenuItem(
                               value: 'move_folder', child: Text('移动到文件夹')),
                           const PopupMenuItem(
                               value: 'delete', child: Text('删除')),
@@ -416,6 +419,8 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                                 .deleteDocument(ws.id, doc.id);
                           } else if (value == 'move_folder') {
                             _showMoveFolderDialog(doc, ws);
+                          } else if (value == 'generate_graph') {
+                            _generateGraphForDoc(ws.id, doc.id, doc.filename);
                           }
                         },
                       ),
@@ -605,6 +610,34 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
     controller.dispose();
     if (name != null && name.isNotEmpty) {
       setState(() => _activeFolder = name);
+    }
+  }
+
+  Future<void> _generateGraphForDoc(String workspaceId, String docId, String filename) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('正在为「$filename」生成知识图谱...'), duration: const Duration(seconds: 30)),
+    );
+    try {
+      final api = ref.read(apiClientProvider);
+      final resp = await api.dio.post('/workspaces/$workspaceId/knowledge-graph/generate/$docId');
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        final entities = resp.data['entities_created'] ?? 0;
+        final relations = resp.data['relations_created'] ?? 0;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('图谱生成完成: $entities 个实体, $relations 条关系'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('图谱生成失败: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
