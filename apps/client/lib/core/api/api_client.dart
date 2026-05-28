@@ -85,9 +85,15 @@ class ApiClient {
     return 'http://localhost:8080';
   }
 
+  static String _accountTokenKey(String email) => 'auth_token_$email';
+
   static Future<void> saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, token);
+    final email = prefs.getString(_activeAccountKey);
+    if (email != null && email.isNotEmpty) {
+      await prefs.setString(_accountTokenKey(email), token);
+    }
   }
 
   static Future<String?> getToken() async {
@@ -121,11 +127,32 @@ class ApiClient {
     return prefs.getStringList(_accountListKey) ?? [];
   }
 
+  /// Switch to a previously saved account, restoring its token.
+  /// Returns true if the account had a saved token.
+  static Future<bool> switchToAccount(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    final currentEmail = prefs.getString(_activeAccountKey);
+    final currentToken = prefs.getString(_tokenKey);
+    if (currentEmail != null && currentEmail.isNotEmpty && currentToken != null) {
+      await prefs.setString(_accountTokenKey(currentEmail), currentToken);
+    }
+
+    await prefs.setString(_activeAccountKey, email);
+    final savedToken = prefs.getString(_accountTokenKey(email));
+    if (savedToken != null && savedToken.isNotEmpty) {
+      await prefs.setString(_tokenKey, savedToken);
+      return true;
+    }
+    await prefs.remove(_tokenKey);
+    return false;
+  }
+
   static Future<void> removeAccount(String email) async {
     final prefs = await SharedPreferences.getInstance();
     final accounts = prefs.getStringList(_accountListKey) ?? [];
     accounts.remove(email);
     await prefs.setStringList(_accountListKey, accounts);
+    await prefs.remove(_accountTokenKey(email));
 
     final active = prefs.getString(_activeAccountKey);
     if (active == email) {

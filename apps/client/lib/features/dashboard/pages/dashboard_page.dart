@@ -1019,10 +1019,16 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           Navigator.pop(ctx);
           _showLogoutDialog(context, ref);
         },
-        onSwitchAccount: (email) {
+        onSwitchAccount: (email) async {
           Navigator.pop(ctx);
-          ref.read(authProvider.notifier).logout();
-          context.go('/login');
+          final restored = await ApiClient.switchToAccount(email);
+          if (restored) {
+            ref.invalidate(authProvider);
+            ref.read(authProvider.notifier).checkAuthStatus();
+          } else {
+            ref.read(authProvider.notifier).logout();
+            if (context.mounted) context.go('/login');
+          }
         },
       ),
     );

@@ -46,6 +46,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _checkAuth();
   }
 
+  Future<void> checkAuthStatus() => _checkAuth();
+
   Future<void> _checkAuth() async {
     // For desktop embedded mode, auto-setup creates and logs in a local user
     if (DesktopAutoSetup.shouldAutoSetup) {
