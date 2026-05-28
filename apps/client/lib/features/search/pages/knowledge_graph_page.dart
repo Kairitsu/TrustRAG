@@ -303,6 +303,7 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
   final TransformationController _transformCtrl = TransformationController();
   String? _selectedNodeId;
   String? _hoveredNodeId;
+  final Set<String> _hiddenTypes = {};
 
   @override
   void dispose() {
@@ -313,8 +314,17 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
+
+    final visibleNodes = widget.data.nodes
+        .where((n) => !_hiddenTypes.contains(n.entityType))
+        .toList();
+    final visibleNodeIds = visibleNodes.map((n) => n.id).toSet();
+    final visibleEdges = widget.data.edges
+        .where((e) => visibleNodeIds.contains(e.source) && visibleNodeIds.contains(e.target))
+        .toList();
+
     final selectedNode = _selectedNodeId != null
-        ? widget.data.nodes
+        ? visibleNodes
             .where((n) => n.id == _selectedNodeId)
             .firstOrNull
         : null;
@@ -327,12 +337,12 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
           maxScale: 4.0,
           boundaryMargin: const EdgeInsets.all(500),
           child: GestureDetector(
-            onTapUp: (details) => _handleTap(details.localPosition),
+            onTapUp: (details) => _handleTap(details.localPosition, visibleNodes),
             child: CustomPaint(
               size: const Size(800, 600),
               painter: _GraphPainter(
-                nodes: widget.data.nodes,
-                edges: widget.data.edges,
+                nodes: visibleNodes,
+                edges: visibleEdges,
                 selectedNodeId: _selectedNodeId,
                 hoveredNodeId: _hoveredNodeId,
                 theme: Theme.of(context),
@@ -343,7 +353,19 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
         Positioned(
           right: 12,
           top: 12,
-          child: _Legend(nodes: widget.data.nodes),
+          child: _FilterableLegend(
+            allNodes: widget.data.nodes,
+            hiddenTypes: _hiddenTypes,
+            onToggleType: (type) {
+              setState(() {
+                if (_hiddenTypes.contains(type)) {
+                  _hiddenTypes.remove(type);
+                } else {
+                  _hiddenTypes.add(type);
+                }
+              });
+            },
+          ),
         ),
         if (selectedNode != null)
           Positioned(
@@ -351,8 +373,8 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
             bottom: 12,
             child: _NodeInfoCard(
               node: selectedNode,
-              edges: widget.data.edges,
-              allNodes: widget.data.nodes,
+              edges: visibleEdges,
+              allNodes: visibleNodes,
               onClose: () => setState(() => _selectedNodeId = null),
             ),
           ),
@@ -367,7 +389,7 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
               border: Border.all(color: Colors.grey.shade200),
             ),
             child: Text(
-              '${s.nodes}: ${widget.data.nodes.length}  |  ${s.edges}: ${widget.data.edges.length}',
+              '${s.nodes}: ${visibleNodes.length}/${widget.data.nodes.length}  |  ${s.edges}: ${visibleEdges.length}',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
             ),
           ),
@@ -376,13 +398,13 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
     );
   }
 
-  void _handleTap(Offset localPosition) {
+  void _handleTap(Offset localPosition, List<GraphNode> visibleNodes) {
     final matrix = _transformCtrl.value;
     final inverted = Matrix4.inverted(matrix);
     final transformed = MatrixUtils.transformPoint(inverted, localPosition);
 
     String? tappedId;
-    for (final node in widget.data.nodes) {
+    for (final node in visibleNodes) {
       if ((node.position - transformed).distance < 20) {
         tappedId = node.id;
         break;
@@ -526,19 +548,27 @@ class _GraphPainter extends CustomPainter {
   bool shouldRepaint(covariant _GraphPainter oldDelegate) => true;
 }
 
-class _Legend extends StatelessWidget {
-  final List<GraphNode> nodes;
-  const _Legend({required this.nodes});
+class _FilterableLegend extends StatelessWidget {
+  final List<GraphNode> allNodes;
+  final Set<String> hiddenTypes;
+  final ValueChanged<String> onToggleType;
+
+  const _FilterableLegend({
+    required this.allNodes,
+    required this.hiddenTypes,
+    required this.onToggleType,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final types = <String>{};
-    for (final n in nodes) {
-      types.add(n.entityType);
+    final typeCounts = <String, int>{};
+    for (final n in allNodes) {
+      typeCounts[n.entityType] = (typeCounts[n.entityType] ?? 0) + 1;
     }
-    if (types.isEmpty) return const SizedBox.shrink();
+    if (typeCounts.isEmpty) return const SizedBox.shrink();
 
     return Container(
+      constraints: const BoxConstraints(maxWidth: 180),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
@@ -548,27 +578,48 @@ class _Legend extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
-        children: types.take(8).map((type) {
-          final sampleNode = nodes.firstWhere((n) => n.entityType == type);
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: sampleNode.color,
-                    shape: BoxShape.circle,
-                  ),
+        children: [
+          Text('类型过滤', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+          const SizedBox(height: 4),
+          ...typeCounts.entries.take(10).map((entry) {
+            final type = entry.key;
+            final count = entry.value;
+            final sampleNode = allNodes.firstWhere((n) => n.entityType == type);
+            final isHidden = hiddenTypes.contains(type);
+            return InkWell(
+              onTap: () => onToggleType(type),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: isHidden ? Colors.grey.shade300 : sampleNode.color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        '$type ($count)',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isHidden ? Colors.grey.shade400 : null,
+                          decoration: isHidden ? TextDecoration.lineThrough : null,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Text(type, style: const TextStyle(fontSize: 11)),
-              ],
-            ),
-          );
-        }).toList(),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
