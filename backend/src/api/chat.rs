@@ -594,7 +594,22 @@ async fn send_message(
         .map(|(role, content)| LlmMessage { role, content })
         .collect();
 
-    let rerank_data = load_default_rerank(&state.pool, auth.id, &state.jwt_secret).await;
+    let ws_rerank_enabled: bool = sqlx::query_scalar::<_, i32>(
+        "SELECT rerank_enabled FROM workspaces WHERE id = $1",
+    )
+    .bind(ws_id.to_string())
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .map(|v| v != 0)
+    .unwrap_or(true);
+
+    let rerank_data = if ws_rerank_enabled {
+        load_default_rerank(&state.pool, auth.id, &state.jwt_secret).await
+    } else {
+        None
+    };
 
     let mut rag_config = RagConfig {
         temperature: temperature.unwrap_or(0.1),

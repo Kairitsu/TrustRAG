@@ -23,6 +23,7 @@ pub struct WorkspaceResponse {
     #[serde(rename = "type")]
     pub ws_type: String,
     pub invite_code: Option<String>,
+    pub rerank_enabled: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -41,6 +42,7 @@ pub struct UpdateWorkspaceRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub visibility: Option<String>,
+    pub rerank_enabled: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -81,10 +83,11 @@ async fn list(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<WorkspaceResponse>>, AppError> {
-    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, String, String)>(
+    let rows = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, i32, String, String)>(
         r#"
         SELECT w.id, w.name, w.description, w.owner_id, w.visibility,
                COALESCE(w.type, 'personal') as type, w.invite_code,
+               w.rerank_enabled,
                CAST(w.created_at AS TEXT) as created_at, CAST(w.updated_at AS TEXT) as updated_at
         FROM workspaces w
         WHERE w.owner_id = $1
@@ -106,8 +109,9 @@ async fn list(
             visibility: r.4,
             ws_type: r.5,
             invite_code: r.6,
-            created_at: r.7,
-            updated_at: r.8,
+            rerank_enabled: r.7 != 0,
+            created_at: r.8,
+            updated_at: r.9,
         });
     }
 
@@ -140,11 +144,11 @@ async fn create(
         None
     };
 
-    let r = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, String, String)>(
+    let r = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, i32, String, String)>(
         r#"INSERT INTO workspaces (name, description, owner_id, visibility, type, invite_code)
            VALUES ($1, $2, $3, $4, $5, $6)
            RETURNING id, name, description, owner_id, visibility, COALESCE(type, 'personal'),
-                     invite_code, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)"#,
+                     invite_code, rerank_enabled, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)"#,
     )
     .bind(&name)
     .bind(&req.description)
@@ -176,8 +180,9 @@ async fn create(
         visibility: r.4,
         ws_type: r.5,
         invite_code: r.6,
-        created_at: r.7,
-        updated_at: r.8,
+        rerank_enabled: r.7 != 0,
+        created_at: r.8,
+        updated_at: r.9,
     };
 
     Ok((axum::http::StatusCode::CREATED, Json(ws)))
@@ -188,10 +193,10 @@ async fn get_one(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<WorkspaceResponse>, AppError> {
-    let r = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, String, String)>(
+    let r = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, i32, String, String)>(
         r#"
         SELECT w.id, w.name, w.description, w.owner_id, w.visibility,
-               COALESCE(w.type, 'personal'), w.invite_code,
+               COALESCE(w.type, 'personal'), w.invite_code, w.rerank_enabled,
                CAST(w.created_at AS TEXT), CAST(w.updated_at AS TEXT)
         FROM workspaces w
         WHERE w.id = $1
@@ -214,8 +219,9 @@ async fn get_one(
         visibility: r.4,
         ws_type: r.5,
         invite_code: r.6,
-        created_at: r.7,
-        updated_at: r.8,
+        rerank_enabled: r.7 != 0,
+        created_at: r.8,
+        updated_at: r.9,
     }))
 }
 
@@ -225,8 +231,8 @@ async fn update(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateWorkspaceRequest>,
 ) -> Result<Json<WorkspaceResponse>, AppError> {
-    let existing = sqlx::query_as::<_, (String, Option<String>, String)>(
-        "SELECT name, description, visibility FROM workspaces WHERE id = $1 AND owner_id = $2",
+    let existing = sqlx::query_as::<_, (String, Option<String>, String, i32)>(
+        "SELECT name, description, visibility, rerank_enabled FROM workspaces WHERE id = $1 AND owner_id = $2",
     )
     .bind(id.to_string())
     .bind(auth.id.to_string())
@@ -243,15 +249,17 @@ async fn update(
     if !matches!(visibility.as_str(), "private" | "public") {
         return Err(AppError::BadRequest("Visibility must be 'private' or 'public'".into()));
     }
+    let rerank_enabled = req.rerank_enabled.unwrap_or(existing.3 != 0);
 
-    let r = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, String, String)>(
-        r#"UPDATE workspaces SET name = $1, description = $2, visibility = $3 WHERE id = $4
+    let r = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, i32, String, String)>(
+        r#"UPDATE workspaces SET name = $1, description = $2, visibility = $3, rerank_enabled = $4 WHERE id = $5
            RETURNING id, name, description, owner_id, visibility, COALESCE(type, 'personal'),
-                     invite_code, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)"#,
+                     invite_code, rerank_enabled, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)"#,
     )
     .bind(&name)
     .bind(&description)
     .bind(&visibility)
+    .bind(rerank_enabled as i32)
     .bind(id.to_string())
     .fetch_one(&state.pool)
     .await?;
@@ -264,8 +272,9 @@ async fn update(
         visibility: r.4,
         ws_type: r.5,
         invite_code: r.6,
-        created_at: r.7,
-        updated_at: r.8,
+        rerank_enabled: r.7 != 0,
+        created_at: r.8,
+        updated_at: r.9,
     }))
 }
 
@@ -299,10 +308,10 @@ async fn join_workspace(
         return Err(AppError::BadRequest("Invite code is required".into()));
     }
 
-    let ws = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, String, String)>(
+    let ws = sqlx::query_as::<_, (String, String, Option<String>, String, String, String, Option<String>, i32, String, String)>(
         r#"
         SELECT id, name, description, owner_id, visibility,
-               COALESCE(type, 'personal'), invite_code,
+               COALESCE(type, 'personal'), invite_code, rerank_enabled,
                CAST(created_at AS TEXT), CAST(updated_at AS TEXT)
         FROM workspaces
         WHERE invite_code = $1 AND COALESCE(type, 'personal') = 'team'
@@ -348,8 +357,9 @@ async fn join_workspace(
         visibility: ws.4,
         ws_type: ws.5,
         invite_code: ws.6,
-        created_at: ws.7,
-        updated_at: ws.8,
+        rerank_enabled: ws.7 != 0,
+        created_at: ws.8,
+        updated_at: ws.9,
     }))
 }
 

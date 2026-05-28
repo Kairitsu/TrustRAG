@@ -495,6 +495,27 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 ),
               ),
               const SizedBox(height: 8),
+              if (selectedWs != null) Card(
+                child: SwitchListTile(
+                  secondary: const Icon(Icons.sort),
+                  title: const Text('Rerank 重排序'),
+                  subtitle: Text(selectedWs.rerankEnabled
+                      ? '当前工作区已启用 Rerank 重排序'
+                      : '当前工作区已关闭 Rerank，仅使用嵌入检索'),
+                  value: selectedWs.rerankEnabled,
+                  onChanged: (v) async {
+                    final api = ref.read(apiClientProvider);
+                    try {
+                      await api.dio.put(
+                        '/workspaces/${selectedWs.id}',
+                        data: {'rerank_enabled': v},
+                      );
+                      ref.invalidate(workspaceProvider);
+                    } catch (_) {}
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
               if (isTeamWs) ...[
                 Card(
                   child: ListTile(

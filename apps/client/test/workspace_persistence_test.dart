@@ -53,4 +53,44 @@ void main() {
       expect(ws.documentCount, 5);
     });
   });
+
+  group('Workspace rerank_enabled', () {
+    test('fromJson parses rerank_enabled true', () {
+      final ws = Workspace.fromJson({
+        'id': 'ws-1',
+        'name': 'WS1',
+        'rerank_enabled': true,
+        'created_at': '2026-05-21T00:00:00Z',
+      });
+      expect(ws.rerankEnabled, true);
+    });
+
+    test('fromJson parses rerank_enabled false', () {
+      final ws = Workspace.fromJson({
+        'id': 'ws-2',
+        'name': 'WS2',
+        'rerank_enabled': false,
+        'created_at': '2026-05-21T00:00:00Z',
+      });
+      expect(ws.rerankEnabled, false);
+    });
+
+    test('fromJson defaults rerank_enabled to true when missing', () {
+      final ws = Workspace.fromJson({
+        'id': 'ws-3',
+        'name': 'WS3',
+        'created_at': '2026-05-21T00:00:00Z',
+      });
+      expect(ws.rerankEnabled, true);
+    });
+
+    test('Workspace constructor defaults rerankEnabled to true', () {
+      final ws = Workspace(
+        id: 'ws-4',
+        name: 'WS4',
+        createdAt: DateTime.now(),
+      );
+      expect(ws.rerankEnabled, true);
+    });
+  });
 }

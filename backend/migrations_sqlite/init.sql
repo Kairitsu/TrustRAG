@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     type            TEXT NOT NULL DEFAULT 'personal',
     invite_code     TEXT UNIQUE,
     domain_profile  TEXT DEFAULT '{}',
+    rerank_enabled  INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

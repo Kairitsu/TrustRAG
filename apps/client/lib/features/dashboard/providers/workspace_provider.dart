@@ -76,6 +76,7 @@ class Workspace {
   final int documentCount;
   final String type;
   final String? inviteCode;
+  final bool rerankEnabled;
   final DateTime createdAt;
 
   Workspace({
@@ -85,6 +86,7 @@ class Workspace {
     this.documentCount = 0,
     this.type = 'personal',
     this.inviteCode,
+    this.rerankEnabled = true,
     required this.createdAt,
   });
 
@@ -99,6 +101,7 @@ class Workspace {
       documentCount: json['document_count'] ?? 0,
       type: json['type'] ?? 'personal',
       inviteCode: json['invite_code'],
+      rerankEnabled: json['rerank_enabled'] ?? true,
       createdAt: DateTime.parse(json['created_at']),
     );
   }
