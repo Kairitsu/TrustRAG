@@ -19,6 +19,7 @@ import '../../search/pages/workspace_search_page.dart';
 import '../../search/pages/knowledge_graph_page.dart';
 import '../../settings/pages/model_config_page.dart';
 import '../../settings/pages/data_management_page.dart';
+import '../../settings/pages/ocr_settings_page.dart';
 import '../../settings/pages/server_config_page.dart';
 import '../../settings/pages/workspace_members_page.dart';
 import '../../settings/pages/team_management_page.dart';
@@ -474,6 +475,21 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                     Navigator.of(context).push(
                       MaterialPageRoute(
                           builder: (_) => const DataManagementPage()),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.document_scanner),
+                  title: const Text('OCR 组件管理'),
+                  subtitle: const Text('扫描版 PDF 识别，Tesseract / PaddleOCR'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const OcrSettingsPage()),
                     );
                   },
                 ),

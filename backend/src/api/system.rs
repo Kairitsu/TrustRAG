@@ -16,6 +16,7 @@ pub fn router() -> Router<AppState> {
         .route("/system/backup-db", post(backup_db))
         .route("/system/reset-db", post(reset_db))
         .route("/system/validate-token", get(validate_token))
+        .route("/system/ocr-status", get(ocr_status))
 }
 
 #[derive(Serialize)]
@@ -151,4 +152,64 @@ async fn validate_token(
             message: "Token 有效但当前数据库中不存在对应用户，请重新登录".into(),
         }))
     }
+}
+
+#[derive(Serialize)]
+struct OcrToolStatus {
+    name: String,
+    available: bool,
+    version: Option<String>,
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+struct OcrStatus {
+    any_available: bool,
+    tools: Vec<OcrToolStatus>,
+    recommendation: String,
+}
+
+async fn ocr_status(
+    _auth: AuthUser,
+) -> Result<Json<OcrStatus>, AppError> {
+    let mut tools = Vec::new();
+
+    for (name, commands) in [
+        ("tesseract", vec!["tesseract", "--version"]),
+        ("paddleocr", vec!["python3", "-c", "import paddleocr; print(paddleocr.VERSION)"]),
+    ] {
+        let result = tokio::process::Command::new(&commands[0])
+            .args(&commands[1..])
+            .output()
+            .await;
+
+        let (available, version, path) = match result {
+            Ok(output) if output.status.success() => {
+                let ver = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let bin_path = None;
+                (true, Some(ver), bin_path)
+            }
+            _ => (false, None, None),
+        };
+
+        tools.push(OcrToolStatus { name: name.into(), available, version, path });
+    }
+
+    let any = tools.iter().any(|t| t.available);
+    let recommendation = if any {
+        "已检测到 OCR 工具，可处理扫描版 PDF。".into()
+    } else {
+        "未检测到 OCR 工具。建议安装 Tesseract (推荐) 或 PaddleOCR:\n\
+         • macOS: brew install tesseract tesseract-lang\n\
+         • Ubuntu: sudo apt install tesseract-ocr tesseract-ocr-chi-sim\n\
+         • Windows: 从 https://github.com/UB-Mannheim/tesseract/wiki 下载安装"
+            .into()
+    };
+
+    Ok(Json(OcrStatus { any_available: any, tools, recommendation }))
 }
