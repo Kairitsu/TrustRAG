@@ -22,6 +22,7 @@ pub mod citations;
 pub mod retrieval_traces;
 pub mod reviews;
 pub mod embedding_configs;
+pub mod rerank_configs;
 pub mod knowledge_graph;
 pub mod workspace_members;
 #[cfg(sqlite_mode)]

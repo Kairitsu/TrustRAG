@@ -500,3 +500,25 @@ CREATE INDEX IF NOT EXISTS idx_source_reviews_workspace ON source_reviews(worksp
 CREATE INDEX IF NOT EXISTS idx_source_reviews_document ON source_reviews(document_id);
 CREATE INDEX IF NOT EXISTS idx_source_reviews_task ON source_reviews(review_task_id);
 CREATE INDEX IF NOT EXISTS idx_source_reviews_verdict ON source_reviews(verdict);
+
+-- ============================================================
+-- Equivalent of migration 0019: rerank configs
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS rerank_configs (
+    id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+    workspace_id    TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    provider        TEXT NOT NULL CHECK (provider IN ('jina', 'cohere', 'openai', 'custom')),
+    api_base_url    TEXT NOT NULL,
+    api_key_enc     TEXT,
+    model_name      TEXT NOT NULL,
+    top_n           INTEGER NOT NULL DEFAULT 5,
+    is_default      INTEGER DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_rerank_configs_user ON rerank_configs (user_id);
+CREATE INDEX IF NOT EXISTS idx_rerank_configs_workspace ON rerank_configs (workspace_id);

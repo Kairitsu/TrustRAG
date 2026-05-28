@@ -3,7 +3,7 @@ use sqlx::{Executor, Row, SqlitePool};
 use std::str::FromStr;
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 2;
+pub const CURRENT_SCHEMA_VERSION: i32 = 3;
 
 pub async fn create_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(database_url)?
@@ -62,6 +62,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         for v in current..CURRENT_SCHEMA_VERSION {
             match v {
                 1 => migrate_v1_to_v2(pool).await?,
+                2 => migrate_v2_to_v3(pool).await?,
                 _ => tracing::warn!(version = v, "No migration handler for this version step"),
             }
         }
@@ -108,6 +109,39 @@ async fn migrate_v1_to_v2(pool: &SqlitePool) -> anyhow::Result<()> {
             tracing::warn!("SQLite does not support ALTER CHECK constraint; \
                            embedding_failed status will be handled at the application level");
         }
+    }
+
+    Ok(())
+}
+
+async fn migrate_v2_to_v3(pool: &SqlitePool) -> anyhow::Result<()> {
+    tracing::info!("Running migration v2 -> v3: add rerank_configs table");
+
+    let sql = r#"
+        CREATE TABLE IF NOT EXISTS rerank_configs (
+            id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))),
+            workspace_id    TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+            user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name            TEXT NOT NULL,
+            provider        TEXT NOT NULL CHECK (provider IN ('jina', 'cohere', 'openai', 'custom')),
+            api_base_url    TEXT NOT NULL,
+            api_key_enc     TEXT,
+            model_name      TEXT NOT NULL,
+            top_n           INTEGER NOT NULL DEFAULT 5,
+            is_default      INTEGER DEFAULT 0,
+            created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    "#;
+
+    pool.execute(sqlx::raw_sql(sql)).await?;
+
+    let idx_stmts = vec![
+        "CREATE INDEX IF NOT EXISTS idx_rerank_configs_user ON rerank_configs (user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_rerank_configs_workspace ON rerank_configs (workspace_id)",
+    ];
+    for stmt in idx_stmts {
+        let _ = pool.execute(sqlx::raw_sql(stmt)).await;
     }
 
     Ok(())

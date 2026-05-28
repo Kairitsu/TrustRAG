@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/utils/ai_icon_helper.dart';
 import '../providers/model_config_provider.dart';
 import '../providers/embedding_config_provider.dart';
+import '../providers/rerank_config_provider.dart';
 
 class ModelConfigPage extends ConsumerStatefulWidget {
   const ModelConfigPage({super.key});
@@ -20,9 +21,10 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     ref.read(modelConfigProvider.notifier).loadConfigs();
     ref.read(embeddingConfigProvider.notifier).load();
+    ref.read(rerankConfigProvider.notifier).load();
   }
 
   @override
@@ -41,15 +43,22 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
           tabs: const [
             Tab(icon: Icon(Icons.smart_toy), text: 'LLM 模型'),
             Tab(icon: Icon(Icons.data_array), text: '嵌入模型'),
+            Tab(icon: Icon(Icons.sort), text: 'Rerank 模型'),
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          if (_tabController.index == 0) {
-            _showLlmDialog();
-          } else {
-            _showEmbeddingDialog();
+          switch (_tabController.index) {
+            case 0:
+              _showLlmDialog();
+              break;
+            case 1:
+              _showEmbeddingDialog();
+              break;
+            case 2:
+              _showRerankDialog();
+              break;
           }
         },
         child: const Icon(Icons.add),
@@ -59,6 +68,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
         children: [
           _buildLlmTab(),
           _buildEmbeddingTab(),
+          _buildRerankTab(),
         ],
       ),
     );
@@ -229,6 +239,99 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
         ));
       } else {
         _showErrorDialog('嵌入模型连接测试失败', message);
+      }
+    }
+  }
+
+  // ── Rerank Tab ──
+
+  Widget _buildRerankTab() {
+    final configs = ref.watch(rerankConfigProvider);
+    return configs.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('加载失败: $e')),
+      data: (list) {
+        if (list.isEmpty) {
+          return _buildEmptyState('Rerank 模型', () => _showRerankDialog());
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: list.length,
+          itemBuilder: (context, i) => _buildRerankCard(list[i]),
+        );
+      },
+    );
+  }
+
+  Widget _buildRerankCard(RerankConfig cfg) {
+    return Card(
+      child: ListTile(
+        leading: AIIconHelper.buildProviderAvatar(
+          cfg.modelName.isNotEmpty ? cfg.modelName : cfg.provider,
+          radius: 20,
+          isDefault: cfg.isDefault,
+        ),
+        title: Row(children: [
+          Text(cfg.modelName,
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+          if (cfg.isDefault) ...[
+            const SizedBox(width: 8),
+            _defaultBadge(),
+          ],
+        ]),
+        subtitle: Text(
+            '${cfg.provider} · ${cfg.apiBaseUrl} · top_n: ${cfg.topN}'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.play_circle_outline),
+              tooltip: '测试连接',
+              onPressed: () => _testRerankConnection(cfg),
+            ),
+            if (!cfg.isDefault)
+              IconButton(
+                icon: const Icon(Icons.star_outline, size: 20),
+                tooltip: '设为默认',
+                onPressed: () => ref
+                    .read(rerankConfigProvider.notifier)
+                    .setDefault(cfg.id),
+              ),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 20),
+              onPressed: () => _showRerankDialog(config: cfg),
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, size: 20),
+              onPressed: () =>
+                  ref.read(rerankConfigProvider.notifier).delete(cfg.id),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _testRerankConnection(RerankConfig cfg) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+          content: Text('正在测试 Rerank 连接...'),
+          duration: Duration(seconds: 30)),
+    );
+    final result =
+        await ref.read(rerankConfigProvider.notifier).testConnection(cfg.id);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      final success = result['success'] == true;
+      final message = result['message'] ?? '未知结果';
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ));
+      } else {
+        _showErrorDialog('Rerank 模型连接测试失败', message);
       }
     }
   }
@@ -589,6 +692,152 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                 } else {
                   ok = await ref
                       .read(embeddingConfigProvider.notifier)
+                      .update(config.id, data);
+                }
+                if (ok && ctx.mounted) Navigator.pop(ctx);
+              },
+              child: Text(config == null ? '创建' : '保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Rerank Dialog ──
+
+  String _rerankEndpointHint(String provider) {
+    switch (provider) {
+      case 'jina':
+        return 'https://api.jina.ai/v1';
+      case 'cohere':
+        return 'https://api.cohere.ai/v1';
+      case 'openai':
+        return 'https://api.openai.com/v1';
+      default:
+        return 'https://your-rerank-api.com/v1';
+    }
+  }
+
+  String _rerankModelHint(String provider) {
+    switch (provider) {
+      case 'jina':
+        return '如 jina-reranker-v2-base-multilingual';
+      case 'cohere':
+        return '如 rerank-v3.5';
+      case 'openai':
+        return '如 gpt-4o-mini (chat-based rerank)';
+      default:
+        return '如 BAAI/bge-reranker-v2-m3';
+    }
+  }
+
+  void _showRerankDialog({RerankConfig? config}) {
+    String selectedProvider = config?.provider ?? 'jina';
+    final modelCtl = TextEditingController(text: config?.modelName ?? '');
+    final endpointCtl =
+        TextEditingController(text: config?.apiBaseUrl ?? '');
+    final apiKeyCtl = TextEditingController();
+    final topNCtl = TextEditingController(
+        text: config?.topN.toString() ?? '5');
+    bool isDefault = config?.isDefault ?? true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(config == null ? '添加 Rerank 模型' : '编辑 Rerank 模型'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: selectedProvider,
+                  decoration: const InputDecoration(labelText: 'Provider'),
+                  items: ['jina', 'cohere', 'openai', 'custom']
+                      .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                      .toList(),
+                  onChanged: (v) {
+                    setDialogState(() => selectedProvider = v ?? 'jina');
+                    if (endpointCtl.text.isEmpty) {
+                      endpointCtl.text =
+                          _rerankEndpointHint(selectedProvider);
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: modelCtl,
+                  decoration: InputDecoration(
+                    labelText: '模型名称',
+                    hintText: _rerankModelHint(selectedProvider),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: endpointCtl,
+                  decoration: InputDecoration(
+                    labelText: 'API Endpoint',
+                    hintText: _rerankEndpointHint(selectedProvider),
+                    helperText: '兼容 /v1/rerank 或 /rerank 接口',
+                    helperMaxLines: 2,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: apiKeyCtl,
+                  decoration: InputDecoration(
+                    labelText: 'API Key',
+                    hintText: config != null ? '留空则不修改' : 'your-api-key',
+                  ),
+                  obscureText: true,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: topNCtl,
+                  decoration: const InputDecoration(
+                    labelText: 'Top N',
+                    helperText: '重排后返回的最大结果数，默认 5',
+                    helperMaxLines: 2,
+                  ),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  title: const Text('设为默认'),
+                  contentPadding: EdgeInsets.zero,
+                  value: isDefault,
+                  onChanged: (v) => setDialogState(() => isDefault = v),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消')),
+            FilledButton(
+              onPressed: () async {
+                final data = <String, dynamic>{
+                  'name': '${modelCtl.text} ($selectedProvider)',
+                  'provider': selectedProvider,
+                  'model_name': modelCtl.text,
+                  'api_base_url': endpointCtl.text,
+                  'top_n': (int.tryParse(topNCtl.text) ?? 5).clamp(1, 100),
+                  'is_default': isDefault,
+                };
+                if (apiKeyCtl.text.isNotEmpty) {
+                  data['api_key'] = apiKeyCtl.text;
+                }
+                bool ok;
+                if (config == null) {
+                  ok = await ref
+                      .read(rerankConfigProvider.notifier)
+                      .create(data);
+                } else {
+                  ok = await ref
+                      .read(rerankConfigProvider.notifier)
                       .update(config.id, data);
                 }
                 if (ok && ctx.mounted) Navigator.pop(ctx);

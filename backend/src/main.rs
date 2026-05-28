@@ -169,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(api::search::router())
         .merge(api::models::router())
         .merge(api::embedding_configs::router())
+        .merge(api::rerank_configs::router())
         .merge(api::chat::router())
         .merge(api::citations::router())
         .merge(api::reviews::router())
