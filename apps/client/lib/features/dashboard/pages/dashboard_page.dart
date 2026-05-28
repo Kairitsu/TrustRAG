@@ -166,10 +166,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                     child: IconButton(
                       icon: const Icon(Icons.logout),
                       tooltip: S.of(context).logout,
-                      onPressed: () {
-                        ref.read(authProvider.notifier).logout();
-                        context.go('/login');
-                      },
+                      onPressed: () => _showLogoutDialog(context, ref),
                     ),
                   ),
                 ),
@@ -931,6 +928,54 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 fontWeight: FontWeight.w600, color: Colors.grey)),
         Expanded(child: Text(value)),
       ],
+    );
+  }
+
+  void _showLogoutDialog(BuildContext context, WidgetRef ref) {
+    final authState = ref.read(authProvider);
+    final userEmail = authState.user?['email'] as String? ?? '';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('退出登录'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (userEmail.isNotEmpty) ...[
+              Text('当前账号: $userEmail',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+              const SizedBox(height: 16),
+            ],
+            const Text('请选择退出方式：'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ref.read(authProvider.notifier).logout(clearData: true);
+              context.go('/login');
+            },
+            icon: const Icon(Icons.delete_outline, size: 18),
+            label: const Text('退出并清除数据'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ref.read(authProvider.notifier).logout();
+              context.go('/login');
+            },
+            icon: const Icon(Icons.logout, size: 18),
+            label: const Text('退出登录'),
+          ),
+        ],
+      ),
     );
   }
 

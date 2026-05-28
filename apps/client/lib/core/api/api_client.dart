@@ -10,6 +10,8 @@ class ApiClient {
   late final Dio dio;
   final String baseUrl;
   static const _tokenKey = 'auth_token';
+  static const _activeAccountKey = 'active_account_email';
+  static const _accountListKey = 'account_list';
 
   ApiClient({String? baseUrl})
       : baseUrl = baseUrl ?? _resolveBaseUrl() {
@@ -96,6 +98,45 @@ class ApiClient {
   static Future<void> clearToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
+  }
+
+  static Future<void> setActiveAccount(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_activeAccountKey, email);
+
+    final accounts = prefs.getStringList(_accountListKey) ?? [];
+    if (!accounts.contains(email)) {
+      accounts.add(email);
+      await prefs.setStringList(_accountListKey, accounts);
+    }
+  }
+
+  static Future<String?> getActiveAccount() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_activeAccountKey);
+  }
+
+  static Future<List<String>> getSavedAccounts() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_accountListKey) ?? [];
+  }
+
+  static Future<void> removeAccount(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    final accounts = prefs.getStringList(_accountListKey) ?? [];
+    accounts.remove(email);
+    await prefs.setStringList(_accountListKey, accounts);
+
+    final active = prefs.getString(_activeAccountKey);
+    if (active == email) {
+      await prefs.remove(_activeAccountKey);
+    }
+  }
+
+  static Future<void> clearAllAccountData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey);
+    await prefs.remove(_activeAccountKey);
   }
 }
 

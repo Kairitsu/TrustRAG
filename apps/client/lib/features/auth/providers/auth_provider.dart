@@ -105,6 +105,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       } else {
         await ApiClient.clearToken();
       }
+      await ApiClient.setActiveAccount(email);
       state = AuthState(
         status: AuthStatus.authenticated,
         token: token,
@@ -147,6 +148,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
       await ApiClient.saveToken(token);
+      await ApiClient.setActiveAccount(email);
       state = AuthState(
         status: AuthStatus.authenticated,
         token: token,
@@ -168,8 +170,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> logout() async {
-    await ApiClient.clearToken();
+  Future<void> logout({bool clearData = false}) async {
+    if (clearData) {
+      final email = await ApiClient.getActiveAccount();
+      if (email != null) {
+        await ApiClient.removeAccount(email);
+      }
+      await ApiClient.clearAllAccountData();
+    } else {
+      await ApiClient.clearToken();
+    }
     state = const AuthState(status: AuthStatus.unauthenticated);
   }
 }

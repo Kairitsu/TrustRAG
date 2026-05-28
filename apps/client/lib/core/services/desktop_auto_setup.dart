@@ -72,6 +72,7 @@ class DesktopAutoSetup {
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
       await ApiClient.saveToken(token);
+      await ApiClient.setActiveAccount(_defaultEmail);
       debugPrint('[AutoSetup] Auto-login successful');
     } on DioException catch (e) {
       debugPrint('[AutoSetup] Auto-login failed: ${e.message}');

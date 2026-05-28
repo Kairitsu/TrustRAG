@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/api/api_client.dart';
 import '../providers/auth_provider.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
@@ -18,6 +19,20 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _rememberLogin = true;
+  List<String> _savedAccounts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedAccounts();
+  }
+
+  Future<void> _loadSavedAccounts() async {
+    final accounts = await ApiClient.getSavedAccounts();
+    if (mounted) {
+      setState(() => _savedAccounts = accounts);
+    }
+  }
 
   @override
   void dispose() {
@@ -96,7 +111,30 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   ),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 40),
+                if (_savedAccounts.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  Text(
+                    '已有账号',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: _savedAccounts.map((email) => ActionChip(
+                      avatar: const Icon(Icons.person, size: 18),
+                      label: Text(email, style: const TextStyle(fontSize: 13)),
+                      onPressed: () {
+                        _emailController.text = email;
+                        _passwordController.clear();
+                        FocusScope.of(context).nextFocus();
+                      },
+                    )).toList(),
+                  ),
+                ],
+                const SizedBox(height: 24),
                 Form(
                   key: _formKey,
                   child: Column(
