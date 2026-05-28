@@ -1,0 +1,325 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../auth/providers/auth_provider.dart';
+
+class DataManagementPage extends ConsumerStatefulWidget {
+  const DataManagementPage({super.key});
+
+  @override
+  ConsumerState<DataManagementPage> createState() => _DataManagementPageState();
+}
+
+class _DataManagementPageState extends ConsumerState<DataManagementPage> {
+  Map<String, dynamic>? _dbInfo;
+  bool _loading = false;
+  String? _lastMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDbInfo();
+  }
+
+  Future<void> _loadDbInfo() async {
+    setState(() => _loading = true);
+    try {
+      final api = ref.read(apiClientProvider);
+      final resp = await api.dio.get('/system/db-info');
+      setState(() {
+        _dbInfo = Map<String, dynamic>.from(resp.data);
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _dbInfo = null;
+        _loading = false;
+        _lastMessage = '无法获取数据库信息: $e';
+      });
+    }
+  }
+
+  Future<void> _backupDb() async {
+    setState(() => _loading = true);
+    try {
+      final api = ref.read(apiClientProvider);
+      final resp = await api.dio.post('/system/backup-db');
+      final path = resp.data['backup_path'] ?? '未知路径';
+      setState(() {
+        _loading = false;
+        _lastMessage = '备份成功: $path';
+      });
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _lastMessage = '备份失败: $e';
+      });
+    }
+  }
+
+  Future<void> _resetDb() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber, color: Colors.red, size: 24),
+            SizedBox(width: 8),
+            Text('确认重置数据库'),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('此操作将：', style: TextStyle(fontWeight: FontWeight.w600)),
+            SizedBox(height: 8),
+            Text('1. 自动备份当前数据库'),
+            Text('2. 删除现有数据库'),
+            Text('3. 创建全新的空数据库'),
+            Text('4. 清除当前登录状态'),
+            SizedBox(height: 12),
+            Text(
+              '所有工作区、文档、对话记录和模型配置都将丢失。备份文件会保留在应用数据目录中。',
+              style: TextStyle(color: Colors.red, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('确认重置'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _loading = true);
+    try {
+      final api = ref.read(apiClientProvider);
+      await api.dio.post('/system/reset-db');
+      setState(() {
+        _loading = false;
+        _lastMessage = '数据库已重置。请重新登录。';
+      });
+      if (mounted) {
+        ref.read(authProvider.notifier).logout(clearData: true);
+      }
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _lastMessage = '重置失败: $e';
+      });
+    }
+  }
+
+  Future<void> _validateToken() async {
+    setState(() => _loading = true);
+    try {
+      final api = ref.read(apiClientProvider);
+      final resp = await api.dio.get('/system/validate-token');
+      final valid = resp.data['valid'] == true;
+      setState(() {
+        _loading = false;
+        _lastMessage = valid ? 'Token 有效，用户状态正常' : 'Token 无效或用户不存在，建议重新登录';
+      });
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _lastMessage = 'Token 校验失败: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('本地数据管理'),
+      ),
+      body: _loading && _dbInfo == null
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_lastMessage != null) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: _lastMessage!.contains('失败') || _lastMessage!.contains('无效')
+                            ? Colors.red.shade50
+                            : Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _lastMessage!.contains('失败') || _lastMessage!.contains('无效')
+                              ? Colors.red.shade200
+                              : Colors.green.shade200,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: SelectableText(
+                              _lastMessage!,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: _lastMessage!.contains('失败') || _lastMessage!.contains('无效')
+                                    ? Colors.red.shade800
+                                    : Colors.green.shade800,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.copy, size: 16),
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: _lastMessage!));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)),
+                              );
+                            },
+                            tooltip: '复制信息',
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 16),
+                            onPressed: () => setState(() => _lastMessage = null),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  Text('数据库信息', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+
+                  if (_dbInfo != null)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _infoRow('Schema 版本', '${_dbInfo!['schema_version'] ?? '未知'}'),
+                            _infoRow('数据库路径', '${_dbInfo!['db_path'] ?? '未知'}'),
+                            _infoRow('用户数', '${_dbInfo!['user_count'] ?? '?'}'),
+                            _infoRow('工作区数', '${_dbInfo!['workspace_count'] ?? '?'}'),
+                            _infoRow('文档数', '${_dbInfo!['document_count'] ?? '?'}'),
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: _loadDbInfo,
+                                icon: const Icon(Icons.refresh, size: 16),
+                                label: const Text('刷新'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          '无法连接到本地后端或此功能仅在桌面模式可用',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      ),
+                    ),
+
+                  const SizedBox(height: 24),
+                  Text('诊断工具', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+
+                  _actionCard(
+                    icon: Icons.verified_user,
+                    title: '校验登录状态',
+                    subtitle: '检查当前 Token 与数据库用户是否一致',
+                    onTap: _validateToken,
+                    color: Colors.blue,
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  _actionCard(
+                    icon: Icons.backup,
+                    title: '备份数据库',
+                    subtitle: '创建当前数据库的备份副本',
+                    onTap: _backupDb,
+                    color: Colors.teal,
+                  ),
+
+                  const SizedBox(height: 24),
+                  Text('危险操作', style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold, color: Colors.red,
+                  )),
+                  const SizedBox(height: 12),
+
+                  _actionCard(
+                    icon: Icons.delete_forever,
+                    title: '重置数据库',
+                    subtitle: '清除所有本地数据并重新初始化（会先自动备份）',
+                    onTap: _resetDb,
+                    color: Colors.red,
+                  ),
+
+                  if (_loading)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 16),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _infoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(label, style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+          ),
+          Expanded(
+            child: SelectableText(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    required Color color,
+  }) {
+    return Card(
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: color.withValues(alpha: 0.1),
+          child: Icon(icon, color: color, size: 22),
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: _loading ? null : onTap,
+      ),
+    );
+  }
+}

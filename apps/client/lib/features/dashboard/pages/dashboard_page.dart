@@ -18,6 +18,7 @@ import '../../review/pages/review_list_page.dart';
 import '../../search/pages/workspace_search_page.dart';
 import '../../search/pages/knowledge_graph_page.dart';
 import '../../settings/pages/model_config_page.dart';
+import '../../settings/pages/data_management_page.dart';
 import '../../settings/pages/server_config_page.dart';
 import '../../settings/pages/workspace_members_page.dart';
 import '../../settings/pages/team_management_page.dart';
@@ -462,6 +463,21 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               ),
               const SizedBox(height: 8),
               _buildServerConfigCard(),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.storage),
+                  title: const Text('本地数据管理'),
+                  subtitle: const Text('数据库信息、备份、重置、状态诊断'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const DataManagementPage()),
+                    );
+                  },
+                ),
+              ),
               const SizedBox(height: 8),
               if (isTeamWs) ...[
                 Card(
