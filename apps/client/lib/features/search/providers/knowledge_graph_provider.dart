@@ -136,6 +136,71 @@ class KnowledgeGraphService {
         .map((e) => EntityInfo.fromJson(e as Map<String, dynamic>))
         .toList();
   }
+
+  Future<Map<String, dynamic>> generateForDocument(String workspaceId, String documentId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.post('/workspaces/$workspaceId/knowledge-graph/generate/$documentId');
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> generateForAll(String workspaceId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.post('/workspaces/$workspaceId/knowledge-graph/generate-all');
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> resetGraph(String workspaceId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.delete('/workspaces/$workspaceId/knowledge-graph/reset');
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<GraphStats> getStats(String workspaceId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get('/workspaces/$workspaceId/knowledge-graph/stats');
+    return GraphStats.fromJson(resp.data as Map<String, dynamic>);
+  }
+}
+
+class GraphStats {
+  final int totalEntities;
+  final int totalRelations;
+  final List<TypeCount> entityTypes;
+  final List<TypeCount> relationTypes;
+
+  GraphStats({
+    required this.totalEntities,
+    required this.totalRelations,
+    required this.entityTypes,
+    required this.relationTypes,
+  });
+
+  factory GraphStats.fromJson(Map<String, dynamic> json) {
+    return GraphStats(
+      totalEntities: json['total_entities'] ?? 0,
+      totalRelations: json['total_relations'] ?? 0,
+      entityTypes: (json['entity_types'] as List? ?? [])
+          .map((e) => TypeCount.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      relationTypes: (json['relation_types'] as List? ?? [])
+          .map((e) => TypeCount.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class TypeCount {
+  final String typeName;
+  final int count;
+
+  TypeCount({required this.typeName, required this.count});
+
+  factory TypeCount.fromJson(Map<String, dynamic> json) {
+    return TypeCount(
+      typeName: json['type_name'] ?? '',
+      count: json['count'] ?? 0,
+    );
+  }
 }
 
 final graphDataProvider =

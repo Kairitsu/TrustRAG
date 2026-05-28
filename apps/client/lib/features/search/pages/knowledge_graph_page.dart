@@ -17,6 +17,7 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   String _entityFilter = '';
+  bool _isGenerating = false;
 
   @override
   void initState() {
@@ -28,6 +29,74 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _generateAll() async {
+    final ws = ref.read(selectedWorkspaceProvider);
+    if (ws == null) return;
+    setState(() => _isGenerating = true);
+    try {
+      final service = ref.read(knowledgeGraphServiceProvider);
+      final result = await service.generateForAll(ws.id);
+      if (mounted) {
+        final entities = result['entities_created'] ?? 0;
+        final relations = result['relations_created'] ?? 0;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('图谱生成完成: $entities 个实体, $relations 条关系')),
+        );
+        ref.invalidate(graphDataProvider);
+        ref.invalidate(entityListProvider);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('图谱生成失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGenerating = false);
+    }
+  }
+
+  Future<void> _resetGraph() async {
+    final ws = ref.read(selectedWorkspaceProvider);
+    if (ws == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认清空图谱'),
+        content: const Text('此操作将删除当前工作区的所有实体和关系数据，不可撤销。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('确认清空'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final service = ref.read(knowledgeGraphServiceProvider);
+      await service.resetGraph(ws.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('图谱已清空')),
+        );
+        ref.invalidate(graphDataProvider);
+        ref.invalidate(entityListProvider);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('清空失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   @override
@@ -60,13 +129,63 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
                       style: theme.textTheme.titleLarge
                           ?.copyWith(fontWeight: FontWeight.bold)),
                   const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    onPressed: () {
-                      ref.invalidate(graphDataProvider);
-                      ref.invalidate(entityListProvider);
+                  if (_isGenerating)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: SizedBox(
+                        width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    tooltip: '更多操作',
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'generate':
+                          _generateAll();
+                          break;
+                        case 'reset':
+                          _resetGraph();
+                          break;
+                        case 'refresh':
+                          ref.invalidate(graphDataProvider);
+                          ref.invalidate(entityListProvider);
+                          break;
+                      }
                     },
-                    tooltip: s.refresh,
+                    itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        value: 'generate',
+                        enabled: !_isGenerating,
+                        child: const ListTile(
+                          leading: Icon(Icons.auto_fix_high),
+                          title: Text('生成知识图谱'),
+                          subtitle: Text('从所有文档抽取实体和关系', style: TextStyle(fontSize: 11)),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'refresh',
+                        child: ListTile(
+                          leading: Icon(Icons.refresh),
+                          title: Text('刷新图谱'),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'reset',
+                        child: ListTile(
+                          leading: Icon(Icons.delete_forever, color: Colors.red),
+                          title: Text('清空图谱', style: TextStyle(color: Colors.red)),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -89,7 +208,7 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
           child: TabBarView(
             controller: _tabController,
             children: [
-              _GraphViewTab(),
+              _GraphViewTab(isGenerating: _isGenerating, onGenerate: _generateAll),
               _EntityListTab(
                 filter: _entityFilter,
                 onFilterChanged: (v) => setState(() => _entityFilter = v),
@@ -103,6 +222,11 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
 }
 
 class _GraphViewTab extends ConsumerWidget {
+  final bool isGenerating;
+  final VoidCallback onGenerate;
+
+  const _GraphViewTab({required this.isGenerating, required this.onGenerate});
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final graphAsync = ref.watch(graphDataProvider);
@@ -136,8 +260,26 @@ class _GraphViewTab extends ConsumerWidget {
                         .headlineSmall
                         ?.copyWith(color: Colors.grey)),
                 const SizedBox(height: 8),
-                Text(s.noGraphDataHint,
-                    style: TextStyle(color: Colors.grey.shade500)),
+                Text(
+                  '点击下方按钮从文档中抽取实体和关系，生成知识图谱',
+                  style: TextStyle(color: Colors.grey.shade500),
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: isGenerating ? null : onGenerate,
+                  icon: isGenerating
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.auto_fix_high),
+                  label: Text(isGenerating ? '生成中...' : '生成知识图谱'),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '需要已配置 LLM 模型，将通过 LLM 从文档 chunk 中抽取实体与关系',
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                ),
               ],
             ),
           );

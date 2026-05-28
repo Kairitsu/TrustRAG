@@ -110,6 +110,10 @@ pub struct ScoredChunkRef {
     pub document_id: Uuid,
     pub score: f64,
     pub rank: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_rank: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank_score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +165,10 @@ pub struct RetrievalTrace {
     pub claim_checks: Vec<ClaimCheck>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_context: Option<String>,
+    #[serde(default)]
+    pub rerank_degraded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank_error: Option<String>,
 }
 
 /// Query expansion: generate alternative search queries via LLM
@@ -326,6 +334,25 @@ fn results_to_refs(results: &[SearchResult]) -> Vec<ScoredChunkRef> {
         document_id: r.document_id,
         score: r.relevance_score,
         rank: i + 1,
+        embedding_rank: None,
+        rerank_score: r.rerank_score,
+    }).collect()
+}
+
+fn results_to_rerank_refs(results: &[SearchResult], pre_rerank_results: &[SearchResult]) -> Vec<ScoredChunkRef> {
+    let embedding_ranks: std::collections::HashMap<Uuid, usize> = pre_rerank_results
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.chunk_id, i + 1))
+        .collect();
+
+    results.iter().enumerate().map(|(i, r)| ScoredChunkRef {
+        chunk_id: r.chunk_id,
+        document_id: r.document_id,
+        score: r.relevance_score,
+        rank: i + 1,
+        embedding_rank: embedding_ranks.get(&r.chunk_id).copied(),
+        rerank_score: r.rerank_score,
     }).collect()
 }
 
@@ -371,25 +398,43 @@ pub async fn run_with_reranker(
     let expansion_ms = expansion_start.elapsed().as_millis() as u64;
 
     let search_refs = if config.enable_trace { results_to_refs(&raw_results) } else { vec![] };
+    let pre_rerank_snapshot = if config.enable_trace && config.enable_rerank { raw_results.clone() } else { Vec::new() };
 
-    // Step 2: Rerank
+    // Step 2: Rerank (with automatic fallback to embedding-only on failure)
     let rerank_start = std::time::Instant::now();
-    let reranked = if config.enable_rerank {
-        reranker::rerank_with_provider(
-            raw_results,
+    let (reranked, rerank_degraded, rerank_error_msg) = if config.enable_rerank {
+        match reranker::rerank_with_provider(
+            raw_results.clone(),
             query,
             &config.rerank,
             llm_provider,
             reranker_provider,
-        ).await?
+        ).await {
+            Ok(results) => (results, false, None),
+            Err(e) => {
+                let err_msg = e.to_string();
+                tracing::warn!(error = %err_msg, "Rerank failed, falling back to embedding-only results");
+                let mut r = raw_results;
+                r.truncate(config.final_top_k);
+                (r, true, Some(err_msg))
+            }
+        }
     } else {
         let mut r = raw_results;
         r.truncate(config.final_top_k);
-        r
+        (r, false, None)
     };
     let rerank_ms = rerank_start.elapsed().as_millis() as u64;
 
-    let reranked_refs = if config.enable_trace { results_to_refs(&reranked) } else { vec![] };
+    let reranked_refs = if config.enable_trace {
+        if config.enable_rerank && !rerank_degraded {
+            results_to_rerank_refs(&reranked, &pre_rerank_snapshot)
+        } else {
+            results_to_refs(&reranked)
+        }
+    } else {
+        vec![]
+    };
 
     // Step 3: Assemble context
     let assembly_start = std::time::Instant::now();
@@ -435,6 +480,8 @@ pub async fn run_with_reranker(
             query_plan: None,
             claim_checks: Vec::new(),
             final_context: Some(context.clone()),
+            rerank_degraded,
+            rerank_error: rerank_error_msg.clone(),
         })
     } else {
         None
@@ -678,6 +725,8 @@ mod tests {
                 document_id: Uuid::new_v4(),
                 score: 0.9,
                 rank: 1,
+                embedding_rank: None,
+                rerank_score: None,
             }],
             sparse_results: Vec::new(),
             fuzzy_results: Vec::new(),
@@ -690,6 +739,8 @@ mod tests {
                 supporting_chunk_ids: Vec::new(),
             }],
             final_context: Some("assembled context here".to_string()),
+            rerank_degraded: false,
+            rerank_error: None,
         };
         let json = serde_json::to_string(&trace).unwrap();
         assert!(json.contains("dense_results"));
@@ -731,6 +782,8 @@ mod tests {
             query_plan: None,
             claim_checks: Vec::new(),
             final_context: None,
+            rerank_degraded: false,
+            rerank_error: None,
         };
         let json = serde_json::to_string(&trace).unwrap();
         assert!(!json.contains("dense_results"));

@@ -143,6 +143,15 @@ async fn create_config(
         return Err(AppError::BadRequest("Model name is required".into()));
     }
 
+    if is_likely_rerank_model(&model_name) {
+        return Err(AppError::BadRequest(
+            format!(
+                "模型 '{}' 看起来是重排(Rerank)模型，不能用于嵌入模型配置。请在「Rerank 模型」Tab 中配置此模型。",
+                model_name
+            )
+        ));
+    }
+
     let api_base_url = req.api_base_url.trim().to_string();
 
     let valid_providers = ["openai", "ollama", "local", "custom"];
@@ -370,9 +379,20 @@ async fn test_connection(
         }
         Err(e) => {
             let latency = start.elapsed().as_millis() as u64;
+            let err_str = e.to_string();
+            let message = if (err_str.contains("Unsupported model") || err_str.contains("unsupported"))
+                && is_likely_rerank_model(&model_name)
+            {
+                format!(
+                    "模型 '{}' 属于重排(Rerank)模型，不能用于嵌入模型配置。请在「Rerank 模型」Tab 中配置此模型。(原始错误: {})",
+                    model_name, err_str
+                )
+            } else {
+                format!("Connection failed: {}", err_str)
+            };
             Ok(Json(TestEmbeddingResponse {
                 success: false,
-                message: format!("Connection failed: {}", e),
+                message,
                 latency_ms: Some(latency),
             }))
         }
@@ -427,4 +447,13 @@ async fn reload_embedding_provider(state: &AppState) {
 
 pub async fn init_embedding_provider(state: &AppState) {
     reload_embedding_provider(state).await;
+}
+
+fn is_likely_rerank_model(model_name: &str) -> bool {
+    let lower = model_name.to_lowercase();
+    let rerank_patterns = [
+        "rerank", "re-rank", "reranker", "re-ranker",
+        "bge-reranker", "jina-reranker", "cohere-rerank",
+    ];
+    rerank_patterns.iter().any(|p| lower.contains(p))
 }

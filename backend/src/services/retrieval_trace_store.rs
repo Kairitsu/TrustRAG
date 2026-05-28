@@ -172,12 +172,16 @@ mod tests {
                 document_id: Uuid::new_v4(),
                 score: 0.95,
                 rank: 1,
+                embedding_rank: None,
+                rerank_score: None,
             }],
             reranked_results: vec![ScoredChunkRef {
                 chunk_id: Uuid::new_v4(),
                 document_id: Uuid::new_v4(),
                 score: 0.88,
                 rank: 1,
+                embedding_rank: Some(3),
+                rerank_score: Some(0.88),
             }],
             timings: RetrievalTimings {
                 query_expansion_ms: 100,
@@ -197,6 +201,8 @@ mod tests {
             query_plan: None,
             claim_checks: Vec::new(),
             final_context: None,
+            rerank_degraded: false,
+            rerank_error: None,
         }
     }
 
@@ -268,12 +274,16 @@ mod tests {
                 document_id: Uuid::new_v4(),
                 score: 0.95,
                 rank: 1,
+                embedding_rank: None,
+                rerank_score: None,
             },
             ScoredChunkRef {
                 chunk_id: Uuid::new_v4(),
                 document_id: Uuid::new_v4(),
                 score: 0.85,
                 rank: 2,
+                embedding_rank: Some(5),
+                rerank_score: Some(0.85),
             },
         ];
         let json = serde_json::to_value(&refs).unwrap();
