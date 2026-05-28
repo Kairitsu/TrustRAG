@@ -3,7 +3,7 @@ use sqlx::{Executor, Row, SqlitePool};
 use std::str::FromStr;
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 3;
+pub const CURRENT_SCHEMA_VERSION: i32 = 4;
 
 pub async fn create_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(database_url)?
@@ -63,6 +63,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
             match v {
                 1 => migrate_v1_to_v2(pool).await?,
                 2 => migrate_v2_to_v3(pool).await?,
+                3 => migrate_v3_to_v4(pool).await?,
                 _ => tracing::warn!(version = v, "No migration handler for this version step"),
             }
         }
@@ -142,6 +143,31 @@ async fn migrate_v2_to_v3(pool: &SqlitePool) -> anyhow::Result<()> {
     ];
     for stmt in idx_stmts {
         let _ = pool.execute(sqlx::raw_sql(stmt)).await;
+    }
+
+    Ok(())
+}
+
+async fn migrate_v3_to_v4(pool: &SqlitePool) -> anyhow::Result<()> {
+    tracing::info!("Running migration v3 -> v4: add rerank extra params");
+
+    let stmts = vec![
+        "ALTER TABLE rerank_configs ADD COLUMN initial_recall_k INTEGER NOT NULL DEFAULT 30",
+        "ALTER TABLE rerank_configs ADD COLUMN fallback_enabled INTEGER NOT NULL DEFAULT 1",
+    ];
+
+    for stmt in stmts {
+        match pool.execute(sqlx::raw_sql(stmt)).await {
+            Ok(_) => tracing::debug!(stmt = stmt, "Migration statement executed"),
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("duplicate column") || err_str.contains("already exists") {
+                    tracing::debug!(stmt = stmt, "Column already exists, skipping");
+                } else {
+                    tracing::warn!(stmt = stmt, error = %e, "Migration statement failed (non-fatal)");
+                }
+            }
+        }
     }
 
     Ok(())

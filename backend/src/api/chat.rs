@@ -423,8 +423,8 @@ async fn load_default_rerank(
     user_id: Uuid,
     jwt_secret: &str,
 ) -> Option<(RagRerank, HttpRerankerProvider)> {
-    let row = sqlx::query_as::<_, (String, String, Option<String>, String, i32)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name, top_n \
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String, i32, i32, bool)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled \
          FROM rerank_configs WHERE user_id = $1 AND is_default = 1 LIMIT 1",
     )
     .bind(user_id.to_string())
@@ -454,6 +454,8 @@ async fn load_default_rerank(
             top_n: row.4 as usize,
             method: ReRankMethod::ExternalApi,
         },
+        initial_recall_k: row.5 as usize,
+        fallback_enabled: row.6,
     };
 
     Some((rerank_cfg, provider))
@@ -461,6 +463,8 @@ async fn load_default_rerank(
 
 struct RagRerank {
     config: ReRankConfig,
+    initial_recall_k: usize,
+    fallback_enabled: bool,
 }
 
 // ── Send Message (main RAG endpoint) ──
@@ -593,6 +597,7 @@ async fn send_message(
 
     if let Some((ref rerank_info, _)) = rerank_data {
         rag_config.rerank = rerank_info.config.clone();
+        rag_config.search_top_k = rerank_info.initial_recall_k;
     }
 
     let embedding_provider = state.embedding_provider.read().await.clone();

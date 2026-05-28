@@ -515,6 +515,8 @@ CREATE TABLE IF NOT EXISTS rerank_configs (
     api_key_enc     TEXT,
     model_name      TEXT NOT NULL,
     top_n           INTEGER NOT NULL DEFAULT 5,
+    initial_recall_k INTEGER NOT NULL DEFAULT 30,
+    fallback_enabled INTEGER NOT NULL DEFAULT 1,
     is_default      INTEGER DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

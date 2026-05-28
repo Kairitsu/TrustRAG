@@ -280,7 +280,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
           ],
         ]),
         subtitle: Text(
-            '${cfg.provider} · ${cfg.apiBaseUrl} · top_n: ${cfg.topN}'),
+            '${cfg.provider} · 召回 ${cfg.initialRecallK} → 保留 ${cfg.topN}${cfg.fallbackEnabled ? ' · 降级' : ''}'),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -740,6 +740,9 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
     final apiKeyCtl = TextEditingController();
     final topNCtl = TextEditingController(
         text: config?.topN.toString() ?? '5');
+    final recallKCtl = TextEditingController(
+        text: config?.initialRecallK.toString() ?? '30');
+    bool fallbackEnabled = config?.fallbackEnabled ?? true;
     bool isDefault = config?.isDefault ?? true;
 
     showDialog(
@@ -747,70 +750,112 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           title: Text(config == null ? '添加 Rerank 模型' : '编辑 Rerank 模型'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: selectedProvider,
-                  decoration: const InputDecoration(labelText: 'Provider'),
-                  items: ['jina', 'cohere', 'openai', 'custom']
-                      .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                      .toList(),
-                  onChanged: (v) {
-                    setDialogState(() => selectedProvider = v ?? 'jina');
-                    if (endpointCtl.text.isEmpty) {
-                      endpointCtl.text =
-                          _rerankEndpointHint(selectedProvider);
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: modelCtl,
-                  decoration: InputDecoration(
-                    labelText: '模型名称',
-                    hintText: _rerankModelHint(selectedProvider),
+          content: SizedBox(
+            width: 400,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedProvider,
+                    decoration: const InputDecoration(labelText: 'Provider'),
+                    items: ['jina', 'cohere', 'openai', 'custom']
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                        .toList(),
+                    onChanged: (v) {
+                      setDialogState(() => selectedProvider = v ?? 'jina');
+                      if (endpointCtl.text.isEmpty) {
+                        endpointCtl.text =
+                            _rerankEndpointHint(selectedProvider);
+                      }
+                    },
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: endpointCtl,
-                  decoration: InputDecoration(
-                    labelText: 'API Endpoint',
-                    hintText: _rerankEndpointHint(selectedProvider),
-                    helperText: '兼容 /v1/rerank 或 /rerank 接口',
-                    helperMaxLines: 2,
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: modelCtl,
+                    decoration: InputDecoration(
+                      labelText: '模型名称',
+                      hintText: _rerankModelHint(selectedProvider),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: apiKeyCtl,
-                  decoration: InputDecoration(
-                    labelText: 'API Key',
-                    hintText: config != null ? '留空则不修改' : 'your-api-key',
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: endpointCtl,
+                    decoration: InputDecoration(
+                      labelText: 'API Endpoint',
+                      hintText: _rerankEndpointHint(selectedProvider),
+                      helperText: '兼容 /v1/rerank 或 /rerank 接口',
+                      helperMaxLines: 2,
+                    ),
                   ),
-                  obscureText: true,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: topNCtl,
-                  decoration: const InputDecoration(
-                    labelText: 'Top N',
-                    helperText: '重排后返回的最大结果数，默认 5',
-                    helperMaxLines: 2,
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: apiKeyCtl,
+                    decoration: InputDecoration(
+                      labelText: 'API Key',
+                      hintText: config != null ? '留空则不修改' : 'your-api-key',
+                    ),
+                    obscureText: true,
                   ),
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile(
-                  title: const Text('设为默认'),
-                  contentPadding: EdgeInsets.zero,
-                  value: isDefault,
-                  onChanged: (v) => setDialogState(() => isDefault = v),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Text('检索参数', style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: Colors.grey.shade700,
+                    )),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: recallKCtl,
+                          decoration: const InputDecoration(
+                            labelText: '初始召回数',
+                            helperText: '嵌入检索候选数（默认 30）',
+                            helperMaxLines: 2,
+                          ),
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: topNCtl,
+                          decoration: const InputDecoration(
+                            labelText: '重排保留数',
+                            helperText: '重排后保留 Top N（默认 5）',
+                            helperMaxLines: 2,
+                          ),
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    title: const Text('失败自动降级'),
+                    subtitle: const Text(
+                      'Rerank 调用失败时自动回退到嵌入检索',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    contentPadding: EdgeInsets.zero,
+                    value: fallbackEnabled,
+                    onChanged: (v) => setDialogState(() => fallbackEnabled = v),
+                  ),
+                  SwitchListTile(
+                    title: const Text('设为默认'),
+                    contentPadding: EdgeInsets.zero,
+                    value: isDefault,
+                    onChanged: (v) => setDialogState(() => isDefault = v),
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -825,6 +870,8 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   'model_name': modelCtl.text,
                   'api_base_url': endpointCtl.text,
                   'top_n': (int.tryParse(topNCtl.text) ?? 5).clamp(1, 100),
+                  'initial_recall_k': (int.tryParse(recallKCtl.text) ?? 30).clamp(5, 200),
+                  'fallback_enabled': fallbackEnabled,
                   'is_default': isDefault,
                 };
                 if (apiKeyCtl.text.isNotEmpty) {

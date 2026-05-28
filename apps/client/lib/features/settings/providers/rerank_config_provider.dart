@@ -10,6 +10,8 @@ class RerankConfig {
   final bool hasApiKey;
   final String modelName;
   final int topN;
+  final int initialRecallK;
+  final bool fallbackEnabled;
   final bool isDefault;
 
   RerankConfig({
@@ -20,6 +22,8 @@ class RerankConfig {
     required this.hasApiKey,
     required this.modelName,
     required this.topN,
+    required this.initialRecallK,
+    required this.fallbackEnabled,
     required this.isDefault,
   });
 
@@ -32,6 +36,8 @@ class RerankConfig {
       hasApiKey: json['has_api_key'] ?? false,
       modelName: json['model_name'] ?? '',
       topN: json['top_n'] ?? 5,
+      initialRecallK: json['initial_recall_k'] ?? 30,
+      fallbackEnabled: json['fallback_enabled'] ?? true,
       isDefault: json['is_default'] ?? false,
     );
   }

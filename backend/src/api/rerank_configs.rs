@@ -34,15 +34,19 @@ pub struct CreateRerankConfigRequest {
     pub model_name: String,
     #[serde(default = "default_top_n")]
     pub top_n: i32,
+    #[serde(default = "default_initial_recall_k")]
+    pub initial_recall_k: i32,
+    #[serde(default = "default_fallback_enabled")]
+    pub fallback_enabled: bool,
     #[serde(default)]
     pub is_default: bool,
     #[serde(default)]
     pub workspace_id: Option<Uuid>,
 }
 
-fn default_top_n() -> i32 {
-    5
-}
+fn default_top_n() -> i32 { 5 }
+fn default_initial_recall_k() -> i32 { 30 }
+fn default_fallback_enabled() -> bool { true }
 
 #[derive(Deserialize)]
 pub struct UpdateRerankConfigRequest {
@@ -52,6 +56,8 @@ pub struct UpdateRerankConfigRequest {
     pub api_key: Option<String>,
     pub model_name: Option<String>,
     pub top_n: Option<i32>,
+    pub initial_recall_k: Option<i32>,
+    pub fallback_enabled: Option<bool>,
     pub is_default: Option<bool>,
 }
 
@@ -66,14 +72,16 @@ pub struct RerankConfigResponse {
     pub has_api_key: bool,
     pub model_name: String,
     pub top_n: i32,
+    pub initial_recall_k: i32,
+    pub fallback_enabled: bool,
     pub is_default: bool,
     pub created_at: String,
     pub updated_at: String,
 }
 
-const RERANK_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
+const RERANK_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
 
-type RerankRow = (String, Option<String>, String, String, String, String, Option<String>, String, i32, bool, String, String);
+type RerankRow = (String, Option<String>, String, String, String, String, Option<String>, String, i32, i32, bool, bool, String, String);
 
 fn row_to_response(r: RerankRow) -> RerankConfigResponse {
     RerankConfigResponse {
@@ -86,9 +94,11 @@ fn row_to_response(r: RerankRow) -> RerankConfigResponse {
         has_api_key: r.6.is_some(),
         model_name: r.7,
         top_n: r.8,
-        is_default: r.9,
-        created_at: r.10,
-        updated_at: r.11,
+        initial_recall_k: r.9,
+        fallback_enabled: r.10,
+        is_default: r.11,
+        created_at: r.12,
+        updated_at: r.13,
     }
 }
 
@@ -125,8 +135,8 @@ async fn create_config(
     let ws_id = req.workspace_id.map(|w| w.to_string());
 
     sqlx::query(
-        "INSERT INTO rerank_configs (id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        "INSERT INTO rerank_configs (id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, is_default)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
     )
     .bind(id.to_string())
     .bind(&ws_id)
@@ -137,6 +147,8 @@ async fn create_config(
     .bind(&req.api_key)
     .bind(&req.model_name)
     .bind(req.top_n)
+    .bind(req.initial_recall_k)
+    .bind(req.fallback_enabled)
     .bind(req.is_default)
     .execute(&state.pool)
     .await?;
@@ -201,6 +213,18 @@ async fn update_config(
     if let Some(top_n) = req.top_n {
         sets.push(format!("top_n = ${}", idx));
         binds.push(top_n.to_string());
+        idx += 1;
+    }
+
+    if let Some(initial_recall_k) = req.initial_recall_k {
+        sets.push(format!("initial_recall_k = ${}", idx));
+        binds.push(initial_recall_k.to_string());
+        idx += 1;
+    }
+
+    if let Some(fallback_enabled) = req.fallback_enabled {
+        sets.push(format!("fallback_enabled = ${}", idx));
+        binds.push(fallback_enabled.to_string());
         idx += 1;
     }
 
