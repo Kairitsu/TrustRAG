@@ -146,7 +146,9 @@ async fn parse_document(
     file_type: &str,
     _doc_processor_url: &str,
 ) -> anyhow::Result<(String, Option<i32>, Option<String>, Option<String>)> {
-    let result = crate::services::local_doc_processor::parse_local(file_bytes, filename, file_type)?;
+    let result = crate::services::local_doc_processor::parse_local_with_ocr(
+        file_bytes, filename, file_type, true, "chi_sim+eng", None,
+    ).await?;
     Ok((
         result.markdown,
         result.metadata.page_count,
