@@ -16,6 +16,7 @@ pub mod metadata;
 pub mod query_planner;
 pub mod reranker;
 pub mod knowledge_extraction;
+pub mod ocr_executor;
 pub mod retrieval_pipeline;
 pub mod retrieval_trace_store;
 pub mod search;

@@ -6,11 +6,17 @@ pub struct LocalParseResult {
     pub metadata: LocalDocMetadata,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct LocalDocMetadata {
     pub title: Option<String>,
     pub page_count: Option<i32>,
     pub language: Option<String>,
+    #[serde(default)]
+    pub ocr_used: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ocr_backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ocr_pages: Option<usize>,
 }
 
 pub fn parse_local(data: &[u8], filename: &str, file_type: &str) -> anyhow::Result<LocalParseResult> {
@@ -21,6 +27,58 @@ pub fn parse_local(data: &[u8], filename: &str, file_type: &str) -> anyhow::Resu
         "docx" => parse_docx_fallback(data, filename),
         _ => anyhow::bail!("Unsupported file type for local processing: {}", file_type),
     }
+}
+
+/// Async version that can fallback to OCR for scanned PDFs
+pub async fn parse_local_with_ocr(
+    data: &[u8],
+    filename: &str,
+    file_type: &str,
+    ocr_enabled: bool,
+    ocr_lang: &str,
+    max_ocr_pages: Option<usize>,
+) -> anyhow::Result<LocalParseResult> {
+    let mut result = parse_local(data, filename, file_type)?;
+
+    if file_type == "pdf" && ocr_enabled && result.markdown.contains("无法提取文本内容") {
+        tracing::info!(filename, "PDF text empty, attempting OCR fallback");
+
+        let ocr_backend = super::ocr_executor::detect_available_ocr().await;
+        if ocr_backend == super::ocr_executor::OcrBackend::None {
+            tracing::warn!("OCR requested but no backend available");
+            return Ok(result);
+        }
+
+        let temp_dir = tempfile::tempdir()?;
+        let pdf_path = temp_dir.path().join("input.pdf");
+        tokio::fs::write(&pdf_path, data).await?;
+
+        match super::ocr_executor::ocr_pdf(&pdf_path, ocr_lang, max_ocr_pages).await {
+            Ok(ocr_result) => {
+                if !ocr_result.text.is_empty() {
+                    let title = result.metadata.title.clone()
+                        .unwrap_or_else(|| strip_extension(filename).to_string());
+                    result.markdown = text_to_markdown(&ocr_result.text, &title);
+                    result.metadata.ocr_used = true;
+                    result.metadata.ocr_backend = Some(ocr_result.backend.to_string());
+                    result.metadata.ocr_pages = Some(ocr_result.pages_processed);
+                    tracing::info!(
+                        filename,
+                        backend = %ocr_result.backend,
+                        pages = ocr_result.pages_processed,
+                        "OCR fallback successful"
+                    );
+                } else {
+                    tracing::warn!(filename, "OCR returned empty text");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(filename, error = %e, "OCR fallback failed");
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 fn parse_text(data: &[u8], filename: &str) -> anyhow::Result<LocalParseResult> {
@@ -38,6 +96,7 @@ fn parse_text(data: &[u8], filename: &str) -> anyhow::Result<LocalParseResult> {
             title: Some(title),
             page_count: Some(1),
             language: None,
+            ..Default::default()
         },
     })
 }
@@ -63,6 +122,7 @@ fn parse_html(data: &[u8], filename: &str) -> anyhow::Result<LocalParseResult> {
             title: Some(title),
             page_count: Some(1),
             language: None,
+            ..Default::default()
         },
     })
 }
@@ -117,6 +177,7 @@ fn parse_pdf_with_lopdf(data: &[u8], filename: &str) -> anyhow::Result<LocalPars
                 title: Some(strip_extension(filename).to_string()),
                 page_count: Some(page_count),
                 language: None,
+                ..Default::default()
             },
         });
     }
@@ -130,6 +191,7 @@ fn parse_pdf_with_lopdf(data: &[u8], filename: &str) -> anyhow::Result<LocalPars
             title: Some(title),
             page_count: Some(page_count),
             language: None,
+            ..Default::default()
         },
     })
 }
@@ -240,6 +302,7 @@ fn parse_docx_fallback(data: &[u8], filename: &str) -> anyhow::Result<LocalParse
                 title: Some(strip_extension(filename).to_string()),
                 page_count: None,
                 language: None,
+                ..Default::default()
             },
         });
     }
@@ -254,6 +317,7 @@ fn parse_docx_fallback(data: &[u8], filename: &str) -> anyhow::Result<LocalParse
             title: Some(title),
             page_count: None,
             language: None,
+            ..Default::default()
         },
     })
 }

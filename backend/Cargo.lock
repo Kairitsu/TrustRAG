@@ -4136,6 +4136,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "sqlx",
+ "tempfile",
  "text-splitter",
  "thiserror 2.0.18",
  "tokio",
