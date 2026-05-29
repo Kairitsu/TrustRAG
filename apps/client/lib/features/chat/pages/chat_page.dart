@@ -993,7 +993,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         if (citation.page != null)
                           Text(
                             'p.${citation.page}',
-                            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
                           ),
                         if (citation.page != null) const SizedBox(width: 6),
                         Text(
@@ -1388,11 +1388,11 @@ class _CitationDetailDialogState
                 child: Row(
                   children: [
                     Icon(Icons.description_outlined,
-                        size: 16, color: Colors.grey.shade600),
+                        size: 16, color: theme.colorScheme.onSurfaceVariant),
                     const SizedBox(width: 4),
                     Text('第 ${c.page} 页',
                         style: TextStyle(
-                            color: Colors.grey.shade600, fontSize: 13)),
+                            color: theme.colorScheme.onSurfaceVariant, fontSize: 13)),
                     const Spacer(),
                     Text(
                         '相关度: ${(c.score * 100).toStringAsFixed(1)}%',
@@ -1460,7 +1460,7 @@ class _CitationDetailDialogState
               const SizedBox(height: 12),
               Text('审核记录',
                   style: theme.textTheme.labelMedium
-                      ?.copyWith(color: Colors.grey.shade600)),
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
               const SizedBox(height: 4),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 120),
@@ -1496,7 +1496,7 @@ class _CitationDetailDialogState
                             : r.createdAt,
                         style: TextStyle(
                             fontSize: 11,
-                            color: Colors.grey.shade500),
+                            color: theme.colorScheme.onSurfaceVariant),
                       ),
                     );
                   },
@@ -1751,11 +1751,11 @@ class _CitationPanelState extends ConsumerState<_CitationPanel> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(Icons.description_outlined,
-                              size: 16, color: Colors.grey.shade600),
+                              size: 16, color: theme.colorScheme.onSurfaceVariant),
                           const SizedBox(width: 4),
                           Text('第 ${c.page} 页',
                               style: TextStyle(
-                                  color: Colors.grey.shade600, fontSize: 13)),
+                                  color: theme.colorScheme.onSurfaceVariant, fontSize: 13)),
                         ],
                       ),
                     Row(
@@ -1843,7 +1843,7 @@ class _CitationPanelState extends ConsumerState<_CitationPanel> {
                 const SizedBox(height: 12),
                 Text('审核记录',
                     style: theme.textTheme.labelMedium
-                        ?.copyWith(color: Colors.grey.shade600)),
+                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                 const SizedBox(height: 4),
                 ...(_reviews!.map((r) => ListTile(
                       dense: true,
@@ -1872,7 +1872,7 @@ class _CitationPanelState extends ConsumerState<_CitationPanel> {
                                 .replaceFirst('T', ' ')
                             : r.createdAt,
                         style: TextStyle(
-                            fontSize: 11, color: Colors.grey.shade500),
+                            fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
                       ),
                     ))),
               ],

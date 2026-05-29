@@ -50,12 +50,16 @@ class GraphEdge {
   final String target;
   final String relation;
   final double weight;
+  final String? description;
+  final String? sourceDocumentId;
 
   GraphEdge({
     required this.source,
     required this.target,
     required this.relation,
     required this.weight,
+    this.description,
+    this.sourceDocumentId,
   });
 
   factory GraphEdge.fromJson(Map<String, dynamic> json) {
@@ -64,6 +68,8 @@ class GraphEdge {
       target: json['target'] ?? '',
       relation: json['relation'] ?? '',
       weight: (json['weight'] as num?)?.toDouble() ?? 1.0,
+      description: json['description'],
+      sourceDocumentId: json['source_document_id'],
     );
   }
 }

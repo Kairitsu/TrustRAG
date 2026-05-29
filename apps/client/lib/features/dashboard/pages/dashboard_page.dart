@@ -1594,9 +1594,20 @@ class _AccountMenuSheetState extends State<_AccountMenuSheet> {
     }
   }
 
+  static const _avatarColors = [
+    Colors.blue, Colors.purple, Colors.teal, Colors.orange,
+    Colors.indigo, Colors.pink, Colors.cyan, Colors.deepOrange,
+  ];
+
+  Color _colorForEmail(String email) {
+    final hash = email.codeUnits.fold<int>(0, (prev, c) => prev + c);
+    return _avatarColors[hash % _avatarColors.length];
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final otherAccounts = _savedAccounts
         .where((e) => e != widget.currentEmail)
         .toList();
@@ -1609,54 +1620,109 @@ class _AccountMenuSheetState extends State<_AccountMenuSheet> {
           Container(
             width: 40, height: 4,
             decoration: BoxDecoration(
-              color: Colors.grey.shade300,
+              color: cs.onSurfaceVariant.withAlpha(60),
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text('账号管理', style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            )),
+          ),
+          const SizedBox(height: 12),
           if (widget.currentEmail.isNotEmpty) ...[
-            ListTile(
-              leading: CircleAvatar(
-                backgroundColor: theme.colorScheme.primaryContainer,
-                child: Text(
-                  widget.currentEmail[0].toUpperCase(),
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: theme.colorScheme.onPrimaryContainer,
-                  ),
-                ),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: cs.primaryContainer.withAlpha(30),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: cs.primary.withAlpha(40)),
               ),
-              title: Text(widget.currentEmail),
-              subtitle: const Text('当前账号', style: TextStyle(fontSize: 12)),
-              trailing: const Icon(Icons.check_circle, color: Colors.green, size: 20),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 22,
+                    backgroundColor: _colorForEmail(widget.currentEmail),
+                    child: Text(
+                      widget.currentEmail[0].toUpperCase(),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.currentEmail,
+                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Icon(Icons.check_circle, color: Colors.green, size: 14),
+                            const SizedBox(width: 4),
+                            Text('当前活跃', style: TextStyle(
+                              fontSize: 12, color: Colors.green.shade600,
+                              fontWeight: FontWeight.w500,
+                            )),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const Divider(),
+            const SizedBox(height: 8),
           ],
           if (otherAccounts.isNotEmpty) ...[
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('其他已登录账号',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                child: Text('切换到其他账号',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500,
+                        color: cs.onSurfaceVariant)),
               ),
             ),
-            ...otherAccounts.map((email) => ListTile(
-              leading: CircleAvatar(
-                backgroundColor: Colors.grey.shade200,
-                child: Text(email[0].toUpperCase(),
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
+            ...otherAccounts.map((email) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: ListTile(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                leading: CircleAvatar(
+                  radius: 18,
+                  backgroundColor: _colorForEmail(email).withAlpha(40),
+                  child: Text(email[0].toUpperCase(),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _colorForEmail(email),
+                      )),
+                ),
+                title: Text(email, style: const TextStyle(fontSize: 14),
+                    overflow: TextOverflow.ellipsis),
+                trailing: Icon(Icons.swap_horiz, size: 18, color: cs.onSurfaceVariant),
+                onTap: () => widget.onSwitchAccount(email),
               ),
-              title: Text(email),
-              subtitle: const Text('点击切换', style: TextStyle(fontSize: 11)),
-              onTap: () => widget.onSwitchAccount(email),
             )),
-            const Divider(),
+            const SizedBox(height: 4),
           ],
-          ListTile(
-            leading: const Icon(Icons.logout),
-            title: const Text('退出登录'),
-            onTap: widget.onLogout,
+          const Divider(indent: 16, endIndent: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: ListTile(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              leading: Icon(Icons.logout, color: Colors.red.shade400),
+              title: Text('退出登录', style: TextStyle(color: Colors.red.shade400)),
+              onTap: widget.onLogout,
+            ),
           ),
           const SizedBox(height: 8),
         ],

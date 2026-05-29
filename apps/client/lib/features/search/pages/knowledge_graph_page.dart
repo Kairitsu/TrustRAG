@@ -1086,6 +1086,56 @@ class _EdgeInfoCard extends StatelessWidget {
               ],
             ),
           ],
+          if (edge.description != null && edge.description!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.notes, size: 14, color: Colors.grey.shade500),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('关系描述', style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      )),
+                      const SizedBox(height: 2),
+                      Text(edge.description!,
+                        style: TextStyle(fontSize: 12, height: 1.5, color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (edge.sourceDocumentId != null && edge.sourceDocumentId!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(Icons.description_outlined, size: 14, color: Colors.grey.shade500),
+                const SizedBox(width: 6),
+                Text('来源文档: ', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                Expanded(
+                  child: Text(
+                    edge.sourceDocumentId!.length > 8
+                        ? '${edge.sourceDocumentId!.substring(0, 8)}...'
+                        : edge.sourceDocumentId!,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           if (srcNode != null && tgtNode != null) ...[
             const SizedBox(height: 4),
             Text(

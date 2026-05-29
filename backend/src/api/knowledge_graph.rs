@@ -84,6 +84,7 @@ struct RelationRow {
     target_entity_id: Uuid,
     relation_type: String,
     weight: f64,
+    metadata: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -106,6 +107,10 @@ struct GraphEdge {
     target: String,
     relation: String,
     weight: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_document_id: Option<String>,
 }
 
 async fn check_workspace_access(
@@ -163,8 +168,8 @@ async fn get_graph(
         }
     }).collect();
 
-    let relation_rows = sqlx::query_as::<_, (String, String, String, String, f64)>(
-        "SELECT id, source_entity_id, target_entity_id, relation_type, weight
+    let relation_rows = sqlx::query_as::<_, (String, String, String, String, f64, Option<String>)>(
+        "SELECT id, source_entity_id, target_entity_id, relation_type, weight, CAST(metadata AS TEXT)
          FROM entity_relations WHERE workspace_id = $1",
     )
     .bind(ws_id.to_string())
@@ -172,12 +177,16 @@ async fn get_graph(
     .await?;
 
     let relations: Vec<RelationRow> = relation_rows.into_iter().map(|r| {
+        let metadata: serde_json::Value = r.5.as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(serde_json::json!({}));
         RelationRow {
             id: r.0.parse().unwrap_or_default(),
             source_entity_id: r.1.parse().unwrap_or_default(),
             target_entity_id: r.2.parse().unwrap_or_default(),
             relation_type: r.3,
             weight: r.4,
+            metadata,
         }
     }).collect();
 
@@ -193,11 +202,23 @@ async fn get_graph(
 
     let edges: Vec<GraphEdge> = relations
         .iter()
-        .map(|r| GraphEdge {
-            source: r.source_entity_id.to_string(),
-            target: r.target_entity_id.to_string(),
-            relation: r.relation_type.clone(),
-            weight: r.weight,
+        .map(|r| {
+            let description = r.metadata.get("description")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let source_document_id = r.metadata.get("source_document_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            GraphEdge {
+                source: r.source_entity_id.to_string(),
+                target: r.target_entity_id.to_string(),
+                relation: r.relation_type.clone(),
+                weight: r.weight,
+                description,
+                source_document_id,
+            }
         })
         .collect();
 

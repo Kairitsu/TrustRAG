@@ -252,14 +252,112 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
       error: (e, _) => Center(child: Text('加载失败: $e')),
       data: (list) {
         if (list.isEmpty) {
-          return _buildEmptyState('Rerank 模型', () => _showRerankDialog());
+          return Column(
+            children: [
+              _buildRerankInfoCard(),
+              Expanded(
+                child: _buildEmptyState('Rerank 模型', () => _showRerankDialog()),
+              ),
+            ],
+          );
         }
         return ListView.builder(
           padding: const EdgeInsets.all(16),
-          itemCount: list.length,
-          itemBuilder: (context, i) => _buildRerankCard(list[i]),
+          itemCount: list.length + 1,
+          itemBuilder: (context, i) {
+            if (i == 0) return _buildRerankInfoCard();
+            return _buildRerankCard(list[i - 1]);
+          },
         );
       },
+    );
+  }
+
+  Widget _buildRerankInfoCard() {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Card(
+        elevation: 0,
+        color: cs.primaryContainer.withAlpha(30),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: cs.primaryContainer, width: 1),
+        ),
+        child: ExpansionTile(
+          leading: Icon(Icons.info_outline, color: cs.primary, size: 20),
+          title: Text(
+            'Rerank 模型是什么？',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: cs.primary,
+            ),
+          ),
+          initiallyExpanded: false,
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          children: [
+            _buildInfoSection(
+              icon: Icons.architecture,
+              title: '两阶段检索架构',
+              content: 'TrustRAG 使用「粗召回 + 精排序」两阶段检索：\n'
+                  '1. 嵌入模型（Embedding）负责从知识库中快速召回候选文档\n'
+                  '2. 重排模型（Rerank）对候选文档重新打分，将最相关的结果排到最前面',
+            ),
+            const SizedBox(height: 12),
+            _buildInfoSection(
+              icon: Icons.compare_arrows,
+              title: 'Embedding vs Rerank 区别',
+              content: 'Embedding 模型：将文本转为向量，通过向量相似度快速检索，速度快但精度有限\n'
+                  'Rerank 模型：逐对比较查询与文档的语义相关性，精度更高但速度较慢\n'
+                  '两者配合使用效果最佳：先快速召回 30 篇，再精排保留 Top 5',
+            ),
+            const SizedBox(height: 12),
+            _buildInfoSection(
+              icon: Icons.lightbulb_outline,
+              title: '推荐配置',
+              content: 'Jina Reranker v2：多语言支持好，推荐中文场景使用\n'
+                  'Cohere Rerank v3.5：英文效果出色，API 稳定\n'
+                  'BAAI/bge-reranker-v2-m3：开源模型，可本地部署\n\n'
+                  '如不配置 Rerank，系统将仅使用嵌入模型检索，功能不受影响',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoSection({
+    required IconData icon,
+    required String title,
+    required String content,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: cs.primary.withAlpha(180)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface,
+              )),
+              const SizedBox(height: 4),
+              Text(content, style: TextStyle(
+                fontSize: 12,
+                height: 1.6,
+                color: cs.onSurface.withAlpha(180),
+              )),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
