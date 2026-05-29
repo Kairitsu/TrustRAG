@@ -462,24 +462,34 @@ async fn ocr_install(
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let combined = format!("{}\n{}", stdout, stderr).trim().to_string();
-            let success = output.status.success();
+            let lower = combined.to_lowercase();
+
+            let already_installed = lower.contains("no available upgrade")
+                || lower.contains("already installed")
+                || lower.contains("找不到可用的升级")
+                || lower.contains("已安装");
+            let success = output.status.success() || already_installed;
 
             if success {
-                tracing::info!(engine, "OCR install completed successfully");
+                tracing::info!(engine, already_installed, "OCR install completed successfully");
             } else {
                 tracing::warn!(engine, exit_code = ?output.status.code(), "OCR install failed");
             }
+
+            let message = if already_installed {
+                format!("{} 已安装（最新版本），无需更新。", engine)
+            } else if success {
+                format!("{} 安装成功！请刷新页面确认状态。", engine)
+            } else {
+                format!("{} 安装失败，请查看输出日志或手动安装。", engine)
+            };
 
             Ok(Json(OcrInstallResponse {
                 success,
                 engine: engine.into(),
                 package_manager: pm.into(),
                 output: combined,
-                message: if success {
-                    format!("{} 安装成功！请刷新页面确认状态。", engine)
-                } else {
-                    format!("{} 安装失败，请查看输出日志或手动安装。", engine)
-                },
+                message,
             }))
         }
         Err(e) => Ok(Json(OcrInstallResponse {
