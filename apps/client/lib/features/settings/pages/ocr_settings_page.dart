@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -95,10 +96,14 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
     });
     try {
       final api = ref.read(apiClientProvider);
-      final resp = await api.dio.post('/system/ocr-install', data: {
-        'engine': _selectedMethod!['engine'],
-        'package_manager': _selectedMethod!['package_manager'].toString(),
-      });
+      final resp = await api.dio.post(
+        '/system/ocr-install',
+        data: {
+          'engine': _selectedMethod!['engine'],
+          'package_manager': _selectedMethod!['package_manager'].toString(),
+        },
+        options: Options(receiveTimeout: const Duration(minutes: 5)),
+      );
       if (mounted) {
         final data = resp.data as Map<String, dynamic>;
         setState(() {
