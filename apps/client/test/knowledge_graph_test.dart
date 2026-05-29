@@ -5,18 +5,20 @@ import 'package:client/features/search/providers/knowledge_graph_provider.dart';
 
 void main() {
   group('GraphNode model', () {
-    test('fromJson parses all fields', () {
+    test('fromJson parses all fields including graph_layer', () {
       final json = {
         'id': 'n1',
         'label': 'Test Entity',
         'entity_type': 'person',
         'document_id': 'doc-123',
+        'graph_layer': 'knowledge',
       };
       final node = GraphNode.fromJson(json);
       expect(node.id, 'n1');
       expect(node.label, 'Test Entity');
       expect(node.entityType, 'person');
       expect(node.documentId, 'doc-123');
+      expect(node.graphLayer, 'knowledge');
     });
 
     test('fromJson handles missing optional fields', () {
@@ -27,6 +29,19 @@ void main() {
       };
       final node = GraphNode.fromJson(json);
       expect(node.documentId, isNull);
+      expect(node.graphLayer, isNull);
+    });
+
+    test('graph_layer values for different layers', () {
+      for (final layer in ['document', 'semantic', 'knowledge']) {
+        final node = GraphNode.fromJson({
+          'id': 'n',
+          'label': 'X',
+          'entity_type': 'concept',
+          'graph_layer': layer,
+        });
+        expect(node.graphLayer, layer);
+      }
     });
 
     test('color mapping for known entity types', () {
@@ -42,7 +57,7 @@ void main() {
   });
 
   group('GraphEdge model', () {
-    test('fromJson parses all fields including new CRUD fields', () {
+    test('fromJson parses all fields including CRUD and layer fields', () {
       final json = {
         'id': 'rel-001',
         'source': 's1',
@@ -51,6 +66,7 @@ void main() {
         'weight': 0.85,
         'description': 'Employment relationship',
         'source_document_id': 'doc-xyz',
+        'graph_layer': 'knowledge',
       };
       final edge = GraphEdge.fromJson(json);
       expect(edge.id, 'rel-001');
@@ -60,6 +76,7 @@ void main() {
       expect(edge.weight, 0.85);
       expect(edge.description, 'Employment relationship');
       expect(edge.sourceDocumentId, 'doc-xyz');
+      expect(edge.graphLayer, 'knowledge');
     });
 
     test('fromJson defaults weight to 1.0', () {
@@ -83,6 +100,7 @@ void main() {
       expect(edge.id, '');
       expect(edge.description, isNull);
       expect(edge.sourceDocumentId, isNull);
+      expect(edge.graphLayer, isNull);
     });
 
     test('fromJson with null description and source_document_id', () {

@@ -224,6 +224,7 @@ CREATE TABLE IF NOT EXISTS entities (
     entity_type     TEXT NOT NULL DEFAULT 'concept',
     document_id     TEXT REFERENCES documents(id) ON DELETE SET NULL,
     chunk_id        TEXT REFERENCES document_chunks(id) ON DELETE SET NULL,
+    graph_layer     TEXT NOT NULL DEFAULT 'knowledge',
     metadata        TEXT DEFAULT '{}',
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -235,15 +236,18 @@ CREATE TABLE IF NOT EXISTS entity_relations (
     target_entity_id    TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
     relation_type       TEXT NOT NULL DEFAULT 'related_to',
     weight              REAL NOT NULL DEFAULT 1.0,
+    graph_layer         TEXT NOT NULL DEFAULT 'knowledge',
     metadata            TEXT DEFAULT '{}',
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_entities_workspace ON entities(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(workspace_id, name);
+CREATE INDEX IF NOT EXISTS idx_entities_layer ON entities(workspace_id, graph_layer);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_source ON entity_relations(source_entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_workspace ON entity_relations(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_entity_relations_layer ON entity_relations(workspace_id, graph_layer);
 
 -- ============================================================
 -- Equivalent of migrations 0007-0009: already inlined into

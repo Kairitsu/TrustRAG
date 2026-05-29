@@ -461,6 +461,11 @@ class _InteractiveGraphState extends ConsumerState<_InteractiveGraph> {
           ),
         ),
         Positioned(
+          left: 12,
+          top: 12,
+          child: _LayerToggleBar(),
+        ),
+        Positioned(
           right: 12,
           top: 12,
           child: _FilterableLegend(
@@ -503,8 +508,8 @@ class _InteractiveGraphState extends ConsumerState<_InteractiveGraph> {
             ),
           ),
         Positioned(
-          left: 12,
-          top: 12,
+          right: 12,
+          bottom: 12,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
@@ -931,6 +936,58 @@ class _GraphPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _GraphPainter oldDelegate) => true;
+}
+
+class _LayerToggleBar extends ConsumerWidget {
+  static const _layerConfig = <String, (String, Color, IconData)>{
+    'document': ('文档网络', Colors.blue, Icons.description_outlined),
+    'semantic': ('语义图谱', Colors.green, Icons.hub_outlined),
+    'knowledge': ('知识图谱', Colors.deepPurple, Icons.psychology_outlined),
+  };
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selectedLayers = ref.watch(selectedGraphLayersProvider);
+    final theme = Theme.of(context);
+
+    return Card(
+      elevation: 2,
+      color: theme.colorScheme.surface.withAlpha(240),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: _layerConfig.entries.map((entry) {
+            final key = entry.key;
+            final (label, color, icon) = entry.value;
+            final isActive = selectedLayers.contains(key);
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: FilterChip(
+                avatar: Icon(icon, size: 16, color: isActive ? color : Colors.grey),
+                label: Text(label, style: TextStyle(fontSize: 11)),
+                selected: isActive,
+                selectedColor: color.withAlpha(40),
+                checkmarkColor: color,
+                onSelected: (selected) {
+                  final current = Set<String>.from(ref.read(selectedGraphLayersProvider));
+                  if (selected) {
+                    current.add(key);
+                  } else {
+                    if (current.length > 1) current.remove(key);
+                  }
+                  ref.read(selectedGraphLayersProvider.notifier).state = current;
+                },
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
 }
 
 class _FilterableLegend extends StatelessWidget {

@@ -3,7 +3,7 @@ use sqlx::{Executor, Row, SqlitePool};
 use std::str::FromStr;
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 7;
+pub const CURRENT_SCHEMA_VERSION: i32 = 8;
 
 pub async fn create_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(database_url)?
@@ -67,6 +67,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
                 4 => migrate_v4_to_v5(pool).await?,
                 5 => migrate_v5_to_v6(pool).await?,
                 6 => migrate_v6_to_v7(pool).await?,
+                7 => migrate_v7_to_v8(pool).await?,
                 _ => tracing::warn!(version = v, "No migration handler for this version step"),
             }
         }
@@ -242,6 +243,33 @@ async fn migrate_v6_to_v7(pool: &SqlitePool) -> anyhow::Result<()> {
                 tracing::debug!("graph_generation_logs table already exists, skipping");
             } else {
                 tracing::warn!(error = %e, "Failed to create graph_generation_logs table (non-fatal)");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn migrate_v7_to_v8(pool: &SqlitePool) -> anyhow::Result<()> {
+    tracing::info!("Running migration v7 -> v8: add graph_layer to entities and entity_relations");
+
+    let stmts = vec![
+        "ALTER TABLE entities ADD COLUMN graph_layer TEXT NOT NULL DEFAULT 'knowledge'",
+        "ALTER TABLE entity_relations ADD COLUMN graph_layer TEXT NOT NULL DEFAULT 'knowledge'",
+        "CREATE INDEX IF NOT EXISTS idx_entities_layer ON entities(workspace_id, graph_layer)",
+        "CREATE INDEX IF NOT EXISTS idx_entity_relations_layer ON entity_relations(workspace_id, graph_layer)",
+    ];
+
+    for stmt in stmts {
+        match pool.execute(sqlx::raw_sql(stmt)).await {
+            Ok(_) => tracing::debug!(stmt, "Migration v7->v8 statement OK"),
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("duplicate column") || err_str.contains("already exists") {
+                    tracing::debug!(stmt, "Column/index already exists, skipping");
+                } else {
+                    tracing::warn!(error = %e, stmt, "Migration v7->v8 statement failed (non-fatal)");
+                }
             }
         }
     }

@@ -10,6 +10,7 @@ class GraphNode {
   final String label;
   final String entityType;
   final String? documentId;
+  final String? graphLayer;
   Offset position;
   Offset velocity;
 
@@ -18,6 +19,7 @@ class GraphNode {
     required this.label,
     required this.entityType,
     this.documentId,
+    this.graphLayer,
     this.position = Offset.zero,
     this.velocity = Offset.zero,
   });
@@ -28,6 +30,7 @@ class GraphNode {
       label: json['label'] ?? '',
       entityType: json['entity_type'] ?? '',
       documentId: json['document_id'],
+      graphLayer: json['graph_layer'],
     );
   }
 
@@ -53,6 +56,7 @@ class GraphEdge {
   final double weight;
   final String? description;
   final String? sourceDocumentId;
+  final String? graphLayer;
 
   GraphEdge({
     required this.id,
@@ -62,6 +66,7 @@ class GraphEdge {
     required this.weight,
     this.description,
     this.sourceDocumentId,
+    this.graphLayer,
   });
 
   factory GraphEdge.fromJson(Map<String, dynamic> json) {
@@ -73,6 +78,7 @@ class GraphEdge {
       weight: (json['weight'] as num?)?.toDouble() ?? 1.0,
       description: json['description'],
       sourceDocumentId: json['source_document_id'],
+      graphLayer: json['graph_layer'],
     );
   }
 }
@@ -132,9 +138,16 @@ class KnowledgeGraphService {
   final Ref ref;
   KnowledgeGraphService(this.ref);
 
-  Future<GraphData> getGraph(String workspaceId) async {
+  Future<GraphData> getGraph(String workspaceId, {List<String>? layers}) async {
     final api = ref.read(apiClientProvider);
-    final resp = await api.dio.get('/workspaces/$workspaceId/knowledge-graph');
+    final queryParams = <String, dynamic>{};
+    if (layers != null && layers.isNotEmpty) {
+      queryParams['layers'] = layers.join(',');
+    }
+    final resp = await api.dio.get(
+      '/workspaces/$workspaceId/knowledge-graph',
+      queryParameters: queryParams.isNotEmpty ? queryParams : null,
+    );
     return GraphData.fromJson(resp.data);
   }
 
@@ -284,6 +297,22 @@ class KnowledgeGraphService {
     );
     return resp.data as Map<String, dynamic>;
   }
+
+  Future<Map<String, dynamic>> buildDocumentLayer(String workspaceId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.post(
+      '/workspaces/$workspaceId/knowledge-graph/build-document-layer',
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> buildSemanticLayer(String workspaceId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.post(
+      '/workspaces/$workspaceId/knowledge-graph/build-semantic-layer',
+    );
+    return resp.data as Map<String, dynamic>;
+  }
 }
 
 class GraphStats {
@@ -327,12 +356,19 @@ class TypeCount {
   }
 }
 
+final selectedGraphLayersProvider = StateProvider<Set<String>>((ref) {
+  return {'document', 'semantic', 'knowledge'};
+});
+
 final graphDataProvider =
     FutureProvider.autoDispose<GraphData?>((ref) async {
   final ws = ref.watch(selectedWorkspaceProvider);
   if (ws == null) return null;
+  final layers = ref.watch(selectedGraphLayersProvider);
   final service = ref.read(knowledgeGraphServiceProvider);
-  final data = await service.getGraph(ws.id);
+  final allLayers = {'document', 'semantic', 'knowledge'};
+  final filterLayers = layers.length < allLayers.length ? layers.toList() : null;
+  final data = await service.getGraph(ws.id, layers: filterLayers);
   _initializePositions(data);
   return data;
 });

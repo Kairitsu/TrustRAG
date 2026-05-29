@@ -283,6 +283,243 @@ pub async fn reset_workspace_graph(
     Ok((entities_deleted, relations_deleted))
 }
 
+/// Build the document network layer: creates document nodes and co-location relations
+pub async fn build_document_layer(
+    pool: &DbPool,
+    workspace_id: Uuid,
+) -> Result<(usize, usize)> {
+    let mut entity_count = 0usize;
+    let mut relation_count = 0usize;
+
+    let docs = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT id, title, folder FROM documents WHERE workspace_id = $1 AND status = 'completed'"
+    )
+    .bind(workspace_id.to_string())
+    .fetch_all(pool)
+    .await?;
+
+    let mut doc_entity_ids: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    for (doc_id, title, folder) in &docs {
+        let existing: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM entities WHERE workspace_id = $1 AND document_id = $2 AND graph_layer = 'document' AND entity_type = 'document'"
+        )
+        .bind(workspace_id.to_string())
+        .bind(doc_id)
+        .fetch_optional(pool)
+        .await?;
+
+        let entity_id = if let Some((id,)) = existing {
+            id
+        } else {
+            let metadata = serde_json::json!({
+                "source_document_id": doc_id,
+                "folder": folder.as_deref().unwrap_or(""),
+                "created_by": "auto_document_layer",
+            });
+            let row: (String,) = sqlx::query_as(
+                "INSERT INTO entities (workspace_id, name, entity_type, document_id, graph_layer, metadata) \
+                 VALUES ($1, $2, 'document', $3, 'document', $4) RETURNING id"
+            )
+            .bind(workspace_id.to_string())
+            .bind(title)
+            .bind(doc_id)
+            .bind(metadata.to_string())
+            .fetch_one(pool)
+            .await?;
+            entity_count += 1;
+            row.0
+        };
+
+        doc_entity_ids.insert(doc_id.clone(), entity_id);
+    }
+
+    let mut folder_groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for (doc_id, _, folder) in &docs {
+        let folder_key = folder.as_deref().unwrap_or("__root__").to_string();
+        folder_groups.entry(folder_key).or_default().push(doc_id.clone());
+    }
+
+    for (_folder, doc_ids_in_folder) in &folder_groups {
+        if doc_ids_in_folder.len() < 2 { continue; }
+        for i in 0..doc_ids_in_folder.len() {
+            for j in (i+1)..doc_ids_in_folder.len() {
+                let src_eid = doc_entity_ids.get(&doc_ids_in_folder[i]);
+                let tgt_eid = doc_entity_ids.get(&doc_ids_in_folder[j]);
+                if let (Some(src), Some(tgt)) = (src_eid, tgt_eid) {
+                    let existing: Option<(String,)> = sqlx::query_as(
+                        "SELECT id FROM entity_relations \
+                         WHERE workspace_id = $1 AND source_entity_id = $2 AND target_entity_id = $3 AND graph_layer = 'document'"
+                    )
+                    .bind(workspace_id.to_string())
+                    .bind(src)
+                    .bind(tgt)
+                    .fetch_optional(pool)
+                    .await?;
+
+                    if existing.is_none() {
+                        sqlx::query(
+                            "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, graph_layer, metadata) \
+                             VALUES ($1, $2, $3, 'co_located', 0.5, 'document', '{}')"
+                        )
+                        .bind(workspace_id.to_string())
+                        .bind(src)
+                        .bind(tgt)
+                        .execute(pool)
+                        .await?;
+                        relation_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        workspace_id = %workspace_id,
+        entities = entity_count,
+        relations = relation_count,
+        "Document network layer built"
+    );
+
+    Ok((entity_count, relation_count))
+}
+
+/// Build the semantic layer: links documents/entities that share chunk-level embedding similarity.
+/// Uses a lightweight approach: finds entities that appear in overlapping chunks across documents.
+pub async fn build_semantic_layer(
+    pool: &DbPool,
+    workspace_id: Uuid,
+) -> Result<(usize, usize)> {
+    let mut entity_count = 0usize;
+    let mut relation_count = 0usize;
+
+    // Find pairs of knowledge-layer entities that co-occur in the same document
+    let cooccurrence_rows = sqlx::query_as::<_, (String, String, String, String, i32)>(
+        "SELECT e1.id, e1.name, e2.id, e2.name, COUNT(*) as shared_docs \
+         FROM entities e1 \
+         JOIN entities e2 ON e1.workspace_id = e2.workspace_id AND e1.id < e2.id \
+         WHERE e1.workspace_id = $1 \
+           AND e1.graph_layer = 'knowledge' AND e2.graph_layer = 'knowledge' \
+           AND e1.document_id IS NOT NULL AND e2.document_id IS NOT NULL \
+           AND e1.document_id = e2.document_id \
+         GROUP BY e1.id, e2.id \
+         HAVING COUNT(*) >= 1 \
+         LIMIT 200"
+    )
+    .bind(workspace_id.to_string())
+    .fetch_all(pool)
+    .await?;
+
+    for (e1_id, _e1_name, e2_id, _e2_name, shared_count) in &cooccurrence_rows {
+        let existing: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM entity_relations \
+             WHERE workspace_id = $1 AND source_entity_id = $2 AND target_entity_id = $3 AND graph_layer = 'semantic'"
+        )
+        .bind(workspace_id.to_string())
+        .bind(e1_id)
+        .bind(e2_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if existing.is_none() {
+            let weight = (*shared_count as f64 / 5.0).clamp(0.3, 1.0);
+            let metadata = serde_json::json!({
+                "shared_documents": shared_count,
+                "created_by": "auto_semantic_layer",
+            });
+            sqlx::query(
+                "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, graph_layer, metadata) \
+                 VALUES ($1, $2, $3, 'semantically_similar', $4, 'semantic', $5)"
+            )
+            .bind(workspace_id.to_string())
+            .bind(e1_id)
+            .bind(e2_id)
+            .bind(weight)
+            .bind(metadata.to_string())
+            .execute(pool)
+            .await?;
+            relation_count += 1;
+        }
+    }
+
+    // Also create cross-document semantic links between documents that share entities
+    let cross_doc_rows = sqlx::query_as::<_, (String, String, i32)>(
+        "SELECT DISTINCT e1.document_id, e2.document_id, COUNT(DISTINCT e1.name) as shared_entities \
+         FROM entities e1 \
+         JOIN entities e2 ON e1.workspace_id = e2.workspace_id \
+            AND LOWER(e1.name) = LOWER(e2.name) AND e1.document_id < e2.document_id \
+         WHERE e1.workspace_id = $1 \
+           AND e1.graph_layer = 'knowledge' AND e2.graph_layer = 'knowledge' \
+           AND e1.document_id IS NOT NULL AND e2.document_id IS NOT NULL \
+         GROUP BY e1.document_id, e2.document_id \
+         HAVING COUNT(DISTINCT e1.name) >= 2 \
+         LIMIT 100"
+    )
+    .bind(workspace_id.to_string())
+    .fetch_all(pool)
+    .await?;
+
+    for (doc1_id, doc2_id, shared_entities) in &cross_doc_rows {
+        // Find document-layer entity IDs for these docs
+        let doc1_eid: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM entities WHERE workspace_id = $1 AND document_id = $2 AND graph_layer = 'document' AND entity_type = 'document'"
+        )
+        .bind(workspace_id.to_string())
+        .bind(doc1_id)
+        .fetch_optional(pool)
+        .await?;
+
+        let doc2_eid: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM entities WHERE workspace_id = $1 AND document_id = $2 AND graph_layer = 'document' AND entity_type = 'document'"
+        )
+        .bind(workspace_id.to_string())
+        .bind(doc2_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if let (Some((src,)), Some((tgt,))) = (doc1_eid, doc2_eid) {
+            let existing: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM entity_relations \
+                 WHERE workspace_id = $1 AND source_entity_id = $2 AND target_entity_id = $3 AND graph_layer = 'semantic'"
+            )
+            .bind(workspace_id.to_string())
+            .bind(&src)
+            .bind(&tgt)
+            .fetch_optional(pool)
+            .await?;
+
+            if existing.is_none() {
+                let weight = (*shared_entities as f64 / 10.0).clamp(0.3, 1.0);
+                let metadata = serde_json::json!({
+                    "shared_entities": shared_entities,
+                    "created_by": "auto_semantic_layer",
+                });
+                sqlx::query(
+                    "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, graph_layer, metadata) \
+                     VALUES ($1, $2, $3, 'related_to', $4, 'semantic', $5)"
+                )
+                .bind(workspace_id.to_string())
+                .bind(&src)
+                .bind(&tgt)
+                .bind(weight)
+                .bind(metadata.to_string())
+                .execute(pool)
+                .await?;
+                relation_count += 1;
+            }
+        }
+    }
+
+    tracing::info!(
+        workspace_id = %workspace_id,
+        entities = entity_count,
+        relations = relation_count,
+        "Semantic graph layer built"
+    );
+
+    Ok((entity_count, relation_count))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

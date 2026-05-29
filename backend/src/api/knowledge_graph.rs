@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::{get, post, delete, put},
     Json, Router,
 };
@@ -86,6 +86,50 @@ pub fn router() -> Router<AppState> {
             "/workspaces/{ws_id}/knowledge-graph/entities/merge",
             post(merge_entities),
         )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/build-document-layer",
+            post(build_document_layer),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/build-semantic-layer",
+            post(build_semantic_layer_api),
+        )
+}
+
+async fn build_document_layer(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(ws_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let (entities, relations) = knowledge_extraction::build_document_layer(&state.pool, ws_id).await
+        .map_err(AppError::Internal)?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "entities_created": entities,
+        "relations_created": relations,
+        "layer": "document",
+    })))
+}
+
+async fn build_semantic_layer_api(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(ws_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let (entities, relations) = knowledge_extraction::build_semantic_layer(&state.pool, ws_id).await
+        .map_err(AppError::Internal)?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "entities_created": entities,
+        "relations_created": relations,
+        "layer": "semantic",
+    })))
 }
 
 #[derive(Serialize)]
@@ -119,6 +163,8 @@ struct GraphNode {
     label: String,
     entity_type: String,
     document_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph_layer: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -132,6 +178,8 @@ struct GraphEdge {
     description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_document_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph_layer: Option<String>,
 }
 
 async fn check_workspace_access(
@@ -159,23 +207,57 @@ async fn check_workspace_access(
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct GraphQuery {
+    #[serde(default)]
+    layers: Option<String>,
+}
+
 async fn get_graph(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(ws_id): Path<Uuid>,
+    Query(params): Query<GraphQuery>,
 ) -> Result<Json<GraphResponse>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
-    tracing::info!(workspace_id = %ws_id, "Fetching knowledge graph");
 
-    let entity_rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String)>(
-        "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT)
-         FROM entities WHERE workspace_id = $1 ORDER BY name",
-    )
-    .bind(ws_id.to_string())
-    .fetch_all(&state.pool)
-    .await?;
+    let layer_filter: Option<Vec<String>> = params.layers.map(|l| {
+        l.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    });
 
+    tracing::info!(workspace_id = %ws_id, layers = ?layer_filter, "Fetching knowledge graph");
+
+    type EntityTuple = (String, String, String, Option<String>, Option<String>, String, String);
+    type RelationTuple = (String, String, String, String, f64, Option<String>, String);
+
+    let entity_rows: Vec<EntityTuple> = if let Some(ref layers) = layer_filter {
+        let placeholders: Vec<String> = layers.iter().enumerate()
+            .map(|(i, _)| format!("${}", i + 2))
+            .collect();
+        let sql = format!(
+            "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT), graph_layer \
+             FROM entities WHERE workspace_id = $1 AND graph_layer IN ({}) ORDER BY name",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query_as::<_, EntityTuple>(&sql)
+            .bind(ws_id.to_string());
+        for layer in layers {
+            query = query.bind(layer.clone());
+        }
+        query.fetch_all(&state.pool).await?
+    } else {
+        sqlx::query_as::<_, EntityTuple>(
+            "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT), graph_layer
+             FROM entities WHERE workspace_id = $1 ORDER BY name",
+        )
+        .bind(ws_id.to_string())
+        .fetch_all(&state.pool)
+        .await?
+    };
+
+    let mut entity_layer_map: HashMap<String, String> = HashMap::new();
     let entities: Vec<EntityRow> = entity_rows.into_iter().map(|r| {
+        entity_layer_map.insert(r.0.clone(), r.6.clone());
         let metadata: serde_json::Value = r.4.as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(serde_json::json!({}));
@@ -189,15 +271,34 @@ async fn get_graph(
         }
     }).collect();
 
-    let relation_rows = sqlx::query_as::<_, (String, String, String, String, f64, Option<String>)>(
-        "SELECT id, source_entity_id, target_entity_id, relation_type, weight, CAST(metadata AS TEXT)
-         FROM entity_relations WHERE workspace_id = $1",
-    )
-    .bind(ws_id.to_string())
-    .fetch_all(&state.pool)
-    .await?;
+    let relation_rows: Vec<RelationTuple> = if let Some(ref layers) = layer_filter {
+        let placeholders: Vec<String> = layers.iter().enumerate()
+            .map(|(i, _)| format!("${}", i + 2))
+            .collect();
+        let sql = format!(
+            "SELECT id, source_entity_id, target_entity_id, relation_type, weight, CAST(metadata AS TEXT), graph_layer \
+             FROM entity_relations WHERE workspace_id = $1 AND graph_layer IN ({})",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query_as::<_, RelationTuple>(&sql)
+            .bind(ws_id.to_string());
+        for layer in layers {
+            query = query.bind(layer.clone());
+        }
+        query.fetch_all(&state.pool).await?
+    } else {
+        sqlx::query_as::<_, RelationTuple>(
+            "SELECT id, source_entity_id, target_entity_id, relation_type, weight, CAST(metadata AS TEXT), graph_layer
+             FROM entity_relations WHERE workspace_id = $1",
+        )
+        .bind(ws_id.to_string())
+        .fetch_all(&state.pool)
+        .await?
+    };
 
+    let mut relation_layer_map: HashMap<String, String> = HashMap::new();
     let relations: Vec<RelationRow> = relation_rows.into_iter().map(|r| {
+        relation_layer_map.insert(r.0.clone(), r.6.clone());
         let metadata: serde_json::Value = r.5.as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(serde_json::json!({}));
@@ -213,11 +314,15 @@ async fn get_graph(
 
     let nodes: Vec<GraphNode> = entities
         .iter()
-        .map(|e| GraphNode {
-            id: e.id.to_string(),
-            label: e.name.clone(),
-            entity_type: e.entity_type.clone(),
-            document_id: e.document_id,
+        .map(|e| {
+            let layer = entity_layer_map.get(&e.id.to_string()).cloned();
+            GraphNode {
+                id: e.id.to_string(),
+                label: e.name.clone(),
+                entity_type: e.entity_type.clone(),
+                document_id: e.document_id,
+                graph_layer: layer,
+            }
         })
         .collect();
 
@@ -232,6 +337,7 @@ async fn get_graph(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
+            let layer = relation_layer_map.get(&r.id.to_string()).cloned();
             GraphEdge {
                 id: r.id.to_string(),
                 source: r.source_entity_id.to_string(),
@@ -240,6 +346,7 @@ async fn get_graph(
                 weight: r.weight,
                 description,
                 source_document_id,
+                graph_layer: layer,
             }
         })
         .collect();
@@ -294,6 +401,15 @@ struct GraphStatsResponse {
     relation_count: i64,
     entity_types: Vec<TypeCount>,
     relation_types: Vec<TypeCount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layer_stats: Option<Vec<LayerStats>>,
+}
+
+#[derive(Serialize)]
+struct LayerStats {
+    layer: String,
+    entity_count: i64,
+    relation_count: i64,
 }
 
 #[derive(Serialize)]
@@ -570,11 +686,40 @@ async fn graph_stats(
     .fetch_all(&state.pool)
     .await?;
 
+    let entity_layer_rows = sqlx::query_as::<_, (String, i32)>(
+        "SELECT graph_layer, COUNT(*) FROM entities WHERE workspace_id = $1 GROUP BY graph_layer"
+    )
+    .bind(ws_id.to_string())
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let relation_layer_rows = sqlx::query_as::<_, (String, i32)>(
+        "SELECT graph_layer, COUNT(*) FROM entity_relations WHERE workspace_id = $1 GROUP BY graph_layer"
+    )
+    .bind(ws_id.to_string())
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let mut layer_map: HashMap<String, (i64, i64)> = HashMap::new();
+    for (layer, count) in &entity_layer_rows {
+        layer_map.entry(layer.clone()).or_default().0 = *count as i64;
+    }
+    for (layer, count) in &relation_layer_rows {
+        layer_map.entry(layer.clone()).or_default().1 = *count as i64;
+    }
+
+    let layer_stats: Vec<LayerStats> = layer_map.into_iter()
+        .map(|(layer, (ec, rc))| LayerStats { layer, entity_count: ec, relation_count: rc })
+        .collect();
+
     Ok(Json(GraphStatsResponse {
         entity_count: entity_count as i64,
         relation_count: relation_count as i64,
         entity_types: et_rows.into_iter().map(|(name, count)| TypeCount { name, count: count as i64 }).collect(),
         relation_types: rt_rows.into_iter().map(|(name, count)| TypeCount { name, count: count as i64 }).collect(),
+        layer_stats: if layer_stats.is_empty() { None } else { Some(layer_stats) },
     }))
 }
 
@@ -636,6 +781,12 @@ struct CreateEntityRequest {
     document_id: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default = "default_knowledge_layer")]
+    graph_layer: String,
+}
+
+fn default_knowledge_layer() -> String {
+    "knowledge".to_string()
 }
 
 #[derive(Deserialize)]
@@ -660,13 +811,14 @@ async fn create_entity(
     });
 
     let row: (String,) = sqlx::query_as(
-        "INSERT INTO entities (workspace_id, name, entity_type, document_id, metadata) \
-         VALUES ($1, $2, $3, $4, $5) RETURNING id"
+        "INSERT INTO entities (workspace_id, name, entity_type, document_id, graph_layer, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
     )
     .bind(ws_id.to_string())
     .bind(&body.name)
     .bind(&body.entity_type)
     .bind(body.document_id.as_deref())
+    .bind(&body.graph_layer)
     .bind(metadata.to_string())
     .fetch_one(&state.pool)
     .await?;
@@ -763,6 +915,8 @@ struct CreateRelationRequest {
     weight: f64,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default = "default_knowledge_layer")]
+    graph_layer: String,
 }
 
 fn default_weight() -> f64 { 1.0 }
@@ -811,14 +965,15 @@ async fn create_relation(
     });
 
     let row: (String,) = sqlx::query_as(
-        "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, metadata) \
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
+        "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, graph_layer, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"
     )
     .bind(ws_id.to_string())
     .bind(&body.source_entity_id)
     .bind(&body.target_entity_id)
     .bind(&body.relation_type)
     .bind(body.weight.clamp(0.0, 1.0))
+    .bind(&body.graph_layer)
     .bind(metadata.to_string())
     .fetch_one(&state.pool)
     .await?;
@@ -1011,24 +1166,27 @@ mod tests {
             label: "Test Entity".into(),
             entity_type: "person".into(),
             document_id: Some(doc_id),
+            graph_layer: Some("knowledge".into()),
         };
         let json = serde_json::to_value(&node).unwrap();
         assert_eq!(json["id"], "n1");
         assert_eq!(json["label"], "Test Entity");
         assert_eq!(json["entity_type"], "person");
         assert_eq!(json["document_id"], doc_id.to_string());
+        assert_eq!(json["graph_layer"], "knowledge");
     }
 
     #[test]
-    fn graph_node_without_document_id_is_null() {
+    fn graph_node_without_optional_fields() {
         let node = GraphNode {
             id: "n2".into(),
             label: "No Doc".into(),
             entity_type: "concept".into(),
             document_id: None,
+            graph_layer: None,
         };
         let json = serde_json::to_value(&node).unwrap();
-        assert!(json["document_id"].is_null());
+        assert!(json.get("graph_layer").is_none());
     }
 
     #[test]
@@ -1041,6 +1199,7 @@ mod tests {
             weight: 0.85,
             description: Some("Employment".into()),
             source_document_id: Some("doc-xyz".into()),
+            graph_layer: Some("knowledge".into()),
         };
         let json = serde_json::to_value(&edge).unwrap();
         assert_eq!(json["id"], "rel-001");
@@ -1062,6 +1221,7 @@ mod tests {
             weight: 1.0,
             description: None,
             source_document_id: None,
+            graph_layer: None,
         };
         let json = serde_json::to_value(&edge).unwrap();
         assert!(json.get("description").is_none());
@@ -1126,11 +1286,11 @@ mod tests {
     fn graph_response_structure() {
         let data = GraphResponse {
             nodes: vec![
-                GraphNode { id: "n1".into(), label: "A".into(), entity_type: "person".into(), document_id: None },
-                GraphNode { id: "n2".into(), label: "B".into(), entity_type: "concept".into(), document_id: None },
+                GraphNode { id: "n1".into(), label: "A".into(), entity_type: "person".into(), document_id: None, graph_layer: Some("knowledge".into()) },
+                GraphNode { id: "n2".into(), label: "B".into(), entity_type: "concept".into(), document_id: None, graph_layer: Some("document".into()) },
             ],
             edges: vec![
-                GraphEdge { id: "r1".into(), source: "n1".into(), target: "n2".into(), relation: "related".into(), weight: 0.5, description: None, source_document_id: None },
+                GraphEdge { id: "r1".into(), source: "n1".into(), target: "n2".into(), relation: "related".into(), weight: 0.5, description: None, source_document_id: None, graph_layer: Some("semantic".into()) },
             ],
         };
         let json = serde_json::to_value(&data).unwrap();
