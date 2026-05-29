@@ -180,28 +180,33 @@ async fn ocr_status(
         ("tesseract", vec!["tesseract", "--version"]),
         ("paddleocr", vec!["python3", "-c", "import paddleocr; print(paddleocr.VERSION)"]),
     ] {
-        let result = tokio::process::Command::new(&commands[0])
-            .args(&commands[1..])
-            .output()
-            .await;
+        let try_commands = build_ocr_check_commands(name, &commands);
+        let mut found = false;
+        let mut found_ver = None;
+        let mut found_path = None;
 
-        let (available, version, path) = match result {
-            Ok(output) if output.status.success() => {
-                let ver = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                let bin_path = which::which(commands[0])
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string());
-                (true, Some(ver), bin_path)
+        for (prog, args) in &try_commands {
+            let result = tokio::process::Command::new(prog)
+                .args(args)
+                .output()
+                .await;
+            if let Ok(output) = result {
+                if output.status.success() {
+                    let ver = String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    found = true;
+                    found_ver = Some(ver);
+                    found_path = Some(prog.to_string());
+                    break;
+                }
             }
-            _ => (false, None, None),
-        };
+        }
 
-        tools.push(OcrToolStatus { name: name.into(), available, version, path });
+        tools.push(OcrToolStatus { name: name.into(), available: found, version: found_ver, path: found_path });
     }
 
     let any = tools.iter().any(|t| t.available);
@@ -216,6 +221,30 @@ async fn ocr_status(
     };
 
     Ok(Json(OcrStatus { any_available: any, tools, recommendation }))
+}
+
+fn build_ocr_check_commands(_name: &str, default_commands: &[&str]) -> Vec<(String, Vec<String>)> {
+    let attempts = vec![(
+        default_commands[0].to_string(),
+        default_commands[1..].iter().map(|s| s.to_string()).collect(),
+    )];
+
+    #[cfg(target_os = "windows")]
+    let attempts = {
+        let mut a = attempts;
+        if _name == "tesseract" {
+            for dir in &[
+                r"C:\Program Files\Tesseract-OCR",
+                r"C:\Program Files (x86)\Tesseract-OCR",
+            ] {
+                let exe = format!(r"{}\tesseract.exe", dir);
+                a.push((exe, vec!["--version".to_string()]));
+            }
+        }
+        a
+    };
+
+    attempts
 }
 
 // ---------------------------------------------------------------------------
