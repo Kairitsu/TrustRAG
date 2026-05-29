@@ -526,3 +526,23 @@ CREATE TABLE IF NOT EXISTS rerank_configs (
 
 CREATE INDEX IF NOT EXISTS idx_rerank_configs_user ON rerank_configs (user_id);
 CREATE INDEX IF NOT EXISTS idx_rerank_configs_workspace ON rerank_configs (workspace_id);
+
+-- ============================================================
+-- Graph generation logs (for tracking generation history)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS graph_generation_logs (
+    id                  TEXT PRIMARY KEY,
+    workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id             TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'running',
+    total_documents     INTEGER NOT NULL DEFAULT 0,
+    processed_documents INTEGER NOT NULL DEFAULT 0,
+    entities_created    INTEGER NOT NULL DEFAULT 0,
+    relations_created   INTEGER NOT NULL DEFAULT 0,
+    errors              TEXT NOT NULL DEFAULT '[]',
+    started_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    completed_at        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_gen_logs_workspace ON graph_generation_logs (workspace_id, started_at);

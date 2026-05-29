@@ -3,7 +3,7 @@ use sqlx::{Executor, Row, SqlitePool};
 use std::str::FromStr;
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 6;
+pub const CURRENT_SCHEMA_VERSION: i32 = 7;
 
 pub async fn create_pool(database_url: &str) -> anyhow::Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(database_url)?
@@ -66,6 +66,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
                 3 => migrate_v3_to_v4(pool).await?,
                 4 => migrate_v4_to_v5(pool).await?,
                 5 => migrate_v5_to_v6(pool).await?,
+                6 => migrate_v6_to_v7(pool).await?,
                 _ => tracing::warn!(version = v, "No migration handler for this version step"),
             }
         }
@@ -206,6 +207,41 @@ async fn migrate_v5_to_v6(pool: &SqlitePool) -> anyhow::Result<()> {
                 tracing::debug!(stmt = stmt, "Column already exists, skipping");
             } else {
                 tracing::warn!(stmt = stmt, error = %e, "Migration statement failed (non-fatal)");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn migrate_v6_to_v7(pool: &SqlitePool) -> anyhow::Result<()> {
+    tracing::info!("Running migration v6 -> v7: add graph_generation_logs table");
+
+    let sql = r#"
+        CREATE TABLE IF NOT EXISTS graph_generation_logs (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            total_documents INTEGER NOT NULL DEFAULT 0,
+            processed_documents INTEGER NOT NULL DEFAULT 0,
+            entities_created INTEGER NOT NULL DEFAULT 0,
+            relations_created INTEGER NOT NULL DEFAULT 0,
+            errors TEXT NOT NULL DEFAULT '[]',
+            started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            completed_at TEXT,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    "#;
+
+    match pool.execute(sqlx::raw_sql(sql)).await {
+        Ok(_) => tracing::debug!("graph_generation_logs table created"),
+        Err(e) => {
+            let err_str = e.to_string();
+            if err_str.contains("already exists") {
+                tracing::debug!("graph_generation_logs table already exists, skipping");
+            } else {
+                tracing::warn!(error = %e, "Failed to create graph_generation_logs table (non-fatal)");
             }
         }
     }

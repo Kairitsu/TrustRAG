@@ -62,6 +62,10 @@ pub fn router() -> Router<AppState> {
             "/workspaces/{ws_id}/knowledge-graph/stats",
             get(graph_stats),
         )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/generation-history",
+            get(generation_history),
+        )
 }
 
 #[derive(Serialize)]
@@ -352,7 +356,7 @@ async fn generate_for_all_documents(
         entities_created: 0,
         relations_created: 0,
         errors: Vec::new(),
-        started_at: now,
+        started_at: now.clone(),
         completed_at: None,
     };
 
@@ -360,6 +364,18 @@ async fn generate_for_all_documents(
         let mut tasks = generation_tasks().write().await;
         tasks.insert(task_id.clone(), task);
     }
+
+    let _ = sqlx::query(
+        "INSERT INTO graph_generation_logs (id, workspace_id, user_id, status, total_documents, started_at) \
+         VALUES ($1, $2, $3, 'running', $4, $5)"
+    )
+    .bind(&task_id)
+    .bind(ws_id.to_string())
+    .bind(auth.id.to_string())
+    .bind(total as i32)
+    .bind(&now)
+    .execute(&state.pool)
+    .await;
 
     let pool = state.pool.clone();
     let bg_task_id = task_id.clone();
@@ -394,11 +410,29 @@ async fn generate_for_all_documents(
             }
         }
 
+        let completed_at = chrono::Utc::now().to_rfc3339();
+        let errors_json = serde_json::to_string(&errors).unwrap_or_else(|_| "[]".to_string());
+
         let mut tasks = generation_tasks().write().await;
         if let Some(t) = tasks.get_mut(&bg_task_id) {
             t.status = "completed".into();
-            t.completed_at = Some(chrono::Utc::now().to_rfc3339());
+            t.completed_at = Some(completed_at.clone());
         }
+
+        let _ = sqlx::query(
+            "UPDATE graph_generation_logs SET \
+             status = 'completed', processed_documents = $1, entities_created = $2, \
+             relations_created = $3, errors = $4, completed_at = $5 \
+             WHERE id = $6"
+        )
+        .bind(processed as i32)
+        .bind(total_entities as i32)
+        .bind(total_relations as i32)
+        .bind(&errors_json)
+        .bind(&completed_at)
+        .bind(&bg_task_id)
+        .execute(&pool)
+        .await;
 
         tracing::info!(
             task_id = %bg_task_id,
@@ -499,4 +533,52 @@ async fn graph_stats(
         entity_types: et_rows.into_iter().map(|(name, count)| TypeCount { name, count: count as i64 }).collect(),
         relation_types: rt_rows.into_iter().map(|(name, count)| TypeCount { name, count: count as i64 }).collect(),
     }))
+}
+
+#[derive(Serialize)]
+struct GenerationLogEntry {
+    id: String,
+    status: String,
+    total_documents: i32,
+    processed_documents: i32,
+    entities_created: i32,
+    relations_created: i32,
+    errors: Vec<String>,
+    started_at: String,
+    completed_at: Option<String>,
+}
+
+async fn generation_history(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(ws_id): Path<Uuid>,
+) -> Result<Json<Vec<GenerationLogEntry>>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let rows = sqlx::query_as::<_, (String, String, i32, i32, i32, i32, String, String, Option<String>)>(
+        "SELECT id, status, total_documents, processed_documents, entities_created, \
+         relations_created, errors, CAST(started_at AS TEXT), CAST(completed_at AS TEXT) \
+         FROM graph_generation_logs WHERE workspace_id = $1 \
+         ORDER BY started_at DESC LIMIT 20"
+    )
+    .bind(ws_id.to_string())
+    .fetch_all(&state.pool)
+    .await?;
+
+    let entries: Vec<GenerationLogEntry> = rows.into_iter().map(|r| {
+        let errors: Vec<String> = serde_json::from_str(&r.6).unwrap_or_default();
+        GenerationLogEntry {
+            id: r.0,
+            status: r.1,
+            total_documents: r.2,
+            processed_documents: r.3,
+            entities_created: r.4,
+            relations_created: r.5,
+            errors,
+            started_at: r.7,
+            completed_at: r.8,
+        }
+    }).collect();
+
+    Ok(Json(entries))
 }

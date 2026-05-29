@@ -374,11 +374,25 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
   String? _hoveredNodeId;
   GraphEdge? _selectedEdge;
   final Set<String> _hiddenTypes = {};
+  String? _draggingNodeId;
 
   @override
   void dispose() {
     _transformCtrl.dispose();
     super.dispose();
+  }
+
+  Offset _screenToGraph(Offset screenPos) {
+    final matrix = _transformCtrl.value;
+    final inverted = Matrix4.inverted(matrix);
+    return MatrixUtils.transformPoint(inverted, screenPos);
+  }
+
+  GraphNode? _hitTestNode(Offset graphPos, List<GraphNode> nodes) {
+    for (final node in nodes) {
+      if ((node.position - graphPos).distance < 20) return node;
+    }
+    return null;
   }
 
   @override
@@ -406,8 +420,34 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
           minScale: 0.1,
           maxScale: 4.0,
           boundaryMargin: const EdgeInsets.all(500),
+          panEnabled: _draggingNodeId == null,
           child: GestureDetector(
             onTapUp: (details) => _handleTap(details.localPosition, visibleNodes),
+            onPanStart: (details) {
+              final graphPos = _screenToGraph(details.localPosition);
+              final node = _hitTestNode(graphPos, visibleNodes);
+              if (node != null) {
+                setState(() {
+                  _draggingNodeId = node.id;
+                  _selectedNodeId = node.id;
+                  _selectedEdge = null;
+                });
+              }
+            },
+            onPanUpdate: (details) {
+              if (_draggingNodeId == null) return;
+              final graphPos = _screenToGraph(details.localPosition);
+              final node = visibleNodes.where((n) => n.id == _draggingNodeId).firstOrNull;
+              if (node != null) {
+                setState(() {
+                  node.position = graphPos;
+                  node.velocity = Offset.zero;
+                });
+              }
+            },
+            onPanEnd: (_) {
+              setState(() => _draggingNodeId = null);
+            },
             child: CustomPaint(
               size: const Size(800, 600),
               painter: _GraphPainter(
