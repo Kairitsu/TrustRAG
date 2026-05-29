@@ -18,7 +18,6 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
   late TabController _tabController;
   String _entityFilter = '';
   bool _isGenerating = false;
-  String? _generationTaskId;
   int _generationProcessed = 0;
   int _generationTotal = 0;
 
@@ -41,7 +40,6 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
       _isGenerating = true;
       _generationProcessed = 0;
       _generationTotal = 0;
-      _generationTaskId = null;
     });
     try {
       final service = ref.read(knowledgeGraphServiceProvider);
@@ -59,7 +57,6 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
       }
 
       setState(() {
-        _generationTaskId = taskId;
         _generationTotal = total;
       });
 
@@ -73,7 +70,6 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
     } finally {
       if (mounted) setState(() {
         _isGenerating = false;
-        _generationTaskId = null;
       });
     }
   }
