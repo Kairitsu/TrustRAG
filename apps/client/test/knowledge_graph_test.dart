@@ -42,18 +42,24 @@ void main() {
   });
 
   group('GraphEdge model', () {
-    test('fromJson parses all fields', () {
+    test('fromJson parses all fields including new CRUD fields', () {
       final json = {
+        'id': 'rel-001',
         'source': 's1',
         'target': 't1',
         'relation': 'works_at',
         'weight': 0.85,
+        'description': 'Employment relationship',
+        'source_document_id': 'doc-xyz',
       };
       final edge = GraphEdge.fromJson(json);
+      expect(edge.id, 'rel-001');
       expect(edge.source, 's1');
       expect(edge.target, 't1');
       expect(edge.relation, 'works_at');
       expect(edge.weight, 0.85);
+      expect(edge.description, 'Employment relationship');
+      expect(edge.sourceDocumentId, 'doc-xyz');
     });
 
     test('fromJson defaults weight to 1.0', () {
@@ -64,6 +70,62 @@ void main() {
       };
       final edge = GraphEdge.fromJson(json);
       expect(edge.weight, 1.0);
+    });
+
+    test('fromJson handles missing optional fields', () {
+      final json = {
+        'source': 's1',
+        'target': 't1',
+        'relation': 'related',
+        'weight': 0.5,
+      };
+      final edge = GraphEdge.fromJson(json);
+      expect(edge.id, '');
+      expect(edge.description, isNull);
+      expect(edge.sourceDocumentId, isNull);
+    });
+
+    test('fromJson with null description and source_document_id', () {
+      final json = {
+        'id': 'rel-002',
+        'source': 'a',
+        'target': 'b',
+        'relation': 'test',
+        'weight': 0.7,
+        'description': null,
+        'source_document_id': null,
+      };
+      final edge = GraphEdge.fromJson(json);
+      expect(edge.description, isNull);
+      expect(edge.sourceDocumentId, isNull);
+    });
+  });
+
+  group('GraphEdge CRUD data integrity', () {
+    test('edge id is preserved for update/delete operations', () {
+      final json = {
+        'id': 'uuid-edge-123',
+        'source': 'entity-a',
+        'target': 'entity-b',
+        'relation': 'related_to',
+        'weight': 0.9,
+      };
+      final edge = GraphEdge.fromJson(json);
+      expect(edge.id, 'uuid-edge-123');
+      expect(edge.id.isNotEmpty, true);
+    });
+
+    test('edge with description from metadata', () {
+      final json = {
+        'id': 'rel-meta',
+        'source': 's1',
+        'target': 't1',
+        'relation': 'mentions',
+        'weight': 0.6,
+        'description': 'Entity A is mentioned in context of Entity B',
+      };
+      final edge = GraphEdge.fromJson(json);
+      expect(edge.description, contains('mentioned'));
     });
   });
 

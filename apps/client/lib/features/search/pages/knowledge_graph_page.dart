@@ -360,15 +360,15 @@ class _GraphViewTab extends ConsumerWidget {
   }
 }
 
-class _InteractiveGraph extends StatefulWidget {
+class _InteractiveGraph extends ConsumerStatefulWidget {
   final GraphData data;
   const _InteractiveGraph({required this.data});
 
   @override
-  State<_InteractiveGraph> createState() => _InteractiveGraphState();
+  ConsumerState<_InteractiveGraph> createState() => _InteractiveGraphState();
 }
 
-class _InteractiveGraphState extends State<_InteractiveGraph> {
+class _InteractiveGraphState extends ConsumerState<_InteractiveGraph> {
   final TransformationController _transformCtrl = TransformationController();
   String? _selectedNodeId;
   String? _hoveredNodeId;
@@ -486,6 +486,8 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
               edges: visibleEdges,
               allNodes: visibleNodes,
               onClose: () => setState(() => _selectedNodeId = null),
+              onEdit: () => _showEditEntityDialog(selectedNode),
+              onDelete: () => _confirmDeleteEntity(selectedNode),
             ),
           ),
         if (_selectedEdge != null && selectedNode == null)
@@ -496,6 +498,8 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
               edge: _selectedEdge!,
               allNodes: visibleNodes,
               onClose: () => setState(() => _selectedEdge = null),
+              onEdit: () => _showEditRelationDialog(_selectedEdge!),
+              onDelete: () => _confirmDeleteRelation(_selectedEdge!),
             ),
           ),
         Positioned(
@@ -569,6 +573,229 @@ class _InteractiveGraphState extends State<_InteractiveGraph> {
     final clamped = t.clamp(0.0, 1.0);
     final closest = Offset(a.dx + clamped * ab.dx, a.dy + clamped * ab.dy);
     return (p - closest).distance;
+  }
+
+  String? get _currentWorkspaceId {
+    final ws = ref.read(selectedWorkspaceProvider);
+    return ws?.id;
+  }
+
+  void _showEditEntityDialog(GraphNode node) {
+    final nameCtl = TextEditingController(text: node.label);
+    String selectedType = node.entityType;
+    const entityTypes = ['person', 'organization', 'concept', 'technology', 'location', 'event', 'document', 'other'];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('编辑实体'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtl,
+                decoration: const InputDecoration(labelText: '实体名称'),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: entityTypes.contains(selectedType) ? selectedType : 'other',
+                decoration: const InputDecoration(labelText: '实体类型'),
+                items: entityTypes
+                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                    .toList(),
+                onChanged: (v) => setDialogState(() => selectedType = v ?? 'other'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            FilledButton(
+              onPressed: () async {
+                final wsId = _currentWorkspaceId;
+                if (wsId == null) return;
+                Navigator.pop(ctx);
+                try {
+                  final service = ref.read(knowledgeGraphServiceProvider);
+                  await service.updateEntity(wsId, node.id,
+                    name: nameCtl.text,
+                    entityType: selectedType,
+                  );
+                  ref.invalidate(graphDataProvider);
+                  ref.invalidate(entityListProvider);
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('更新失败: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmDeleteEntity(GraphNode node) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除实体'),
+        content: Text('确定删除实体「${node.label}」？\n关联的所有关系也将被删除，此操作不可撤销。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              final wsId = _currentWorkspaceId;
+              if (wsId == null) return;
+              Navigator.pop(ctx);
+              try {
+                final service = ref.read(knowledgeGraphServiceProvider);
+                final result = await service.deleteEntity(wsId, node.id);
+                setState(() {
+                  _selectedNodeId = null;
+                  _selectedEdge = null;
+                });
+                ref.invalidate(graphDataProvider);
+                ref.invalidate(entityListProvider);
+                if (mounted) {
+                  final relCount = result['relations_removed'] ?? 0;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('已删除实体「${node.label}」及 $relCount 条关系')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text('确认删除'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditRelationDialog(GraphEdge edge) {
+    final typeCtl = TextEditingController(text: edge.relation);
+    double weightValue = edge.weight;
+    final descCtl = TextEditingController(text: edge.description ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('编辑关系'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: typeCtl,
+                decoration: const InputDecoration(labelText: '关系类型'),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Text('置信度: ${(weightValue * 100).toStringAsFixed(0)}%',
+                      style: const TextStyle(fontSize: 13)),
+                  Expanded(
+                    child: Slider(
+                      value: weightValue,
+                      min: 0.0,
+                      max: 1.0,
+                      divisions: 20,
+                      onChanged: (v) => setDialogState(() => weightValue = v),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: descCtl,
+                decoration: const InputDecoration(
+                  labelText: '描述（可选）',
+                  hintText: '关系的简短描述',
+                ),
+                maxLines: 2,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            FilledButton(
+              onPressed: () async {
+                final wsId = _currentWorkspaceId;
+                if (wsId == null) return;
+                Navigator.pop(ctx);
+                try {
+                  final service = ref.read(knowledgeGraphServiceProvider);
+                  await service.updateRelation(wsId, edge.id,
+                    relationType: typeCtl.text,
+                    weight: weightValue,
+                    description: descCtl.text.isEmpty ? null : descCtl.text,
+                  );
+                  setState(() => _selectedEdge = null);
+                  ref.invalidate(graphDataProvider);
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('更新失败: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmDeleteRelation(GraphEdge edge) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除关系'),
+        content: Text('确定删除关系「${edge.relation}」？此操作不可撤销。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              final wsId = _currentWorkspaceId;
+              if (wsId == null) return;
+              Navigator.pop(ctx);
+              try {
+                final service = ref.read(knowledgeGraphServiceProvider);
+                await service.deleteRelation(wsId, edge.id);
+                setState(() => _selectedEdge = null);
+                ref.invalidate(graphDataProvider);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('关系已删除')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text('确认删除'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -788,12 +1015,16 @@ class _NodeInfoCard extends StatelessWidget {
   final List<GraphEdge> edges;
   final List<GraphNode> allNodes;
   final VoidCallback onClose;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   const _NodeInfoCard({
     required this.node,
     required this.edges,
     required this.allNodes,
     required this.onClose,
+    this.onEdit,
+    this.onDelete,
   });
 
   @override
@@ -839,6 +1070,25 @@ class _NodeInfoCard extends StatelessWidget {
                     style: const TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 14)),
               ),
+              if (onEdit != null)
+                InkWell(
+                  onTap: onEdit,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.edit_outlined, size: 16, color: theme.colorScheme.primary),
+                  ),
+                ),
+              if (onDelete != null)
+                InkWell(
+                  onTap: onDelete,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.delete_outline, size: 16, color: Colors.red.shade400),
+                  ),
+                ),
+              const SizedBox(width: 4),
               InkWell(onTap: onClose, child: const Icon(Icons.close, size: 18)),
             ],
           ),
@@ -958,11 +1208,15 @@ class _EdgeInfoCard extends StatelessWidget {
   final GraphEdge edge;
   final List<GraphNode> allNodes;
   final VoidCallback onClose;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   const _EdgeInfoCard({
     required this.edge,
     required this.allNodes,
     required this.onClose,
+    this.onEdit,
+    this.onDelete,
   });
 
   @override
@@ -995,6 +1249,25 @@ class _EdgeInfoCard extends StatelessWidget {
                 child: Text('关系详情',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
               ),
+              if (onEdit != null)
+                InkWell(
+                  onTap: onEdit,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.edit_outlined, size: 16, color: theme.colorScheme.primary),
+                  ),
+                ),
+              if (onDelete != null)
+                InkWell(
+                  onTap: onDelete,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.delete_outline, size: 16, color: Colors.red.shade400),
+                  ),
+                ),
+              const SizedBox(width: 4),
               InkWell(onTap: onClose, child: const Icon(Icons.close, size: 18)),
             ],
           ),
@@ -1200,7 +1473,9 @@ class _EntityListTab extends ConsumerWidget {
           typeGroups.putIfAbsent(e.entityType, () => []).add(e);
         }
 
-        return Column(
+        return Stack(
+          children: [
+            Column(
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
@@ -1312,8 +1587,86 @@ class _EntityListTab extends ConsumerWidget {
               ),
             ),
           ],
+        ),
+            Positioned(
+              right: 16,
+              bottom: 16,
+              child: FloatingActionButton.small(
+                heroTag: 'addEntity',
+                onPressed: () => _showCreateEntityDialog(context, ref),
+                tooltip: '新增实体',
+                child: const Icon(Icons.add),
+              ),
+            ),
+          ],
         );
       },
+    );
+  }
+
+  void _showCreateEntityDialog(BuildContext context, WidgetRef ref) {
+    final nameCtl = TextEditingController();
+    String selectedType = 'concept';
+    const entityTypes = ['person', 'organization', 'concept', 'technology', 'location', 'event', 'document', 'other'];
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('新增实体'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtl,
+                decoration: const InputDecoration(labelText: '实体名称'),
+                autofocus: true,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedType,
+                decoration: const InputDecoration(labelText: '实体类型'),
+                items: entityTypes
+                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                    .toList(),
+                onChanged: (v) => setDialogState(() => selectedType = v ?? 'concept'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            FilledButton(
+              onPressed: () async {
+                if (nameCtl.text.trim().isEmpty) return;
+                final ws = ref.read(selectedWorkspaceProvider);
+                if (ws == null) return;
+                Navigator.pop(ctx);
+                try {
+                  final service = ref.read(knowledgeGraphServiceProvider);
+                  await service.createEntity(ws.id,
+                    name: nameCtl.text.trim(),
+                    entityType: selectedType,
+                  );
+                  ref.invalidate(entityListProvider);
+                  ref.invalidate(graphDataProvider);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('实体「${nameCtl.text.trim()}」创建成功')),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('创建失败: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              child: const Text('创建'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

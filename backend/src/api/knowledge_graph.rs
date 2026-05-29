@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    routing::{get, post, delete},
+    routing::{get, post, delete, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -66,6 +66,26 @@ pub fn router() -> Router<AppState> {
             "/workspaces/{ws_id}/knowledge-graph/generation-history",
             get(generation_history),
         )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/entities/new",
+            post(create_entity),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/entities/{entity_id}",
+            put(update_entity).delete(delete_entity),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/relations/new",
+            post(create_relation),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/relations/{relation_id}",
+            put(update_relation).delete(delete_relation),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/entities/merge",
+            post(merge_entities),
+        )
 }
 
 #[derive(Serialize)]
@@ -103,6 +123,7 @@ struct GraphNode {
 
 #[derive(Serialize)]
 struct GraphEdge {
+    id: String,
     source: String,
     target: String,
     relation: String,
@@ -212,6 +233,7 @@ async fn get_graph(
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
             GraphEdge {
+                id: r.id.to_string(),
                 source: r.source_entity_id.to_string(),
                 target: r.target_entity_id.to_string(),
                 relation: r.relation_type.clone(),
@@ -602,4 +624,517 @@ async fn generation_history(
     }).collect();
 
     Ok(Json(entries))
+}
+
+// ── Entity CRUD ──
+
+#[derive(Deserialize)]
+struct CreateEntityRequest {
+    name: String,
+    entity_type: String,
+    #[serde(default)]
+    document_id: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdateEntityRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    entity_type: Option<String>,
+}
+
+async fn create_entity(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(ws_id): Path<Uuid>,
+    Json(body): Json<CreateEntityRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let metadata = serde_json::json!({
+        "description": body.description.unwrap_or_default(),
+        "created_by": "manual",
+    });
+
+    let row: (String,) = sqlx::query_as(
+        "INSERT INTO entities (workspace_id, name, entity_type, document_id, metadata) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id"
+    )
+    .bind(ws_id.to_string())
+    .bind(&body.name)
+    .bind(&body.entity_type)
+    .bind(body.document_id.as_deref())
+    .bind(metadata.to_string())
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "id": row.0,
+        "name": body.name,
+        "entity_type": body.entity_type,
+    })))
+}
+
+async fn update_entity(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((ws_id, entity_id)): Path<(Uuid, String)>,
+    Json(body): Json<UpdateEntityRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM entities WHERE id = $1 AND workspace_id = $2"
+    )
+    .bind(&entity_id)
+    .bind(ws_id.to_string())
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if existing.is_none() {
+        return Err(AppError::NotFound("Entity not found".into()));
+    }
+
+    if let Some(name) = &body.name {
+        sqlx::query("UPDATE entities SET name = $1 WHERE id = $2")
+            .bind(name)
+            .bind(&entity_id)
+            .execute(&state.pool)
+            .await?;
+    }
+
+    if let Some(entity_type) = &body.entity_type {
+        sqlx::query("UPDATE entities SET entity_type = $1 WHERE id = $2")
+            .bind(entity_type)
+            .bind(&entity_id)
+            .execute(&state.pool)
+            .await?;
+    }
+
+    Ok(Json(serde_json::json!({ "updated": true, "id": entity_id })))
+}
+
+async fn delete_entity(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((ws_id, entity_id)): Path<(Uuid, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let relations_deleted = sqlx::query(
+        "DELETE FROM entity_relations WHERE (source_entity_id = $1 OR target_entity_id = $1) AND workspace_id = $2"
+    )
+    .bind(&entity_id)
+    .bind(ws_id.to_string())
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+
+    let entity_deleted = sqlx::query(
+        "DELETE FROM entities WHERE id = $1 AND workspace_id = $2"
+    )
+    .bind(&entity_id)
+    .bind(ws_id.to_string())
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+
+    if entity_deleted == 0 {
+        return Err(AppError::NotFound("Entity not found".into()));
+    }
+
+    Ok(Json(serde_json::json!({
+        "deleted": true,
+        "relations_removed": relations_deleted,
+    })))
+}
+
+// ── Relation CRUD ──
+
+#[derive(Deserialize)]
+struct CreateRelationRequest {
+    source_entity_id: String,
+    target_entity_id: String,
+    relation_type: String,
+    #[serde(default = "default_weight")]
+    weight: f64,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+fn default_weight() -> f64 { 1.0 }
+
+#[derive(Deserialize)]
+struct UpdateRelationRequest {
+    #[serde(default)]
+    relation_type: Option<String>,
+    #[serde(default)]
+    weight: Option<f64>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+async fn create_relation(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(ws_id): Path<Uuid>,
+    Json(body): Json<CreateRelationRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let src_exists: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM entities WHERE id = $1 AND workspace_id = $2"
+    )
+    .bind(&body.source_entity_id)
+    .bind(ws_id.to_string())
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let tgt_exists: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM entities WHERE id = $1 AND workspace_id = $2"
+    )
+    .bind(&body.target_entity_id)
+    .bind(ws_id.to_string())
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if src_exists.is_none() || tgt_exists.is_none() {
+        return Err(AppError::BadRequest("Source or target entity not found in this workspace".into()));
+    }
+
+    let metadata = serde_json::json!({
+        "description": body.description.unwrap_or_default(),
+        "created_by": "manual",
+    });
+
+    let row: (String,) = sqlx::query_as(
+        "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
+    )
+    .bind(ws_id.to_string())
+    .bind(&body.source_entity_id)
+    .bind(&body.target_entity_id)
+    .bind(&body.relation_type)
+    .bind(body.weight.clamp(0.0, 1.0))
+    .bind(metadata.to_string())
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "id": row.0,
+        "relation_type": body.relation_type,
+    })))
+}
+
+async fn update_relation(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((ws_id, relation_id)): Path<(Uuid, String)>,
+    Json(body): Json<UpdateRelationRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM entity_relations WHERE id = $1 AND workspace_id = $2"
+    )
+    .bind(&relation_id)
+    .bind(ws_id.to_string())
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if existing.is_none() {
+        return Err(AppError::NotFound("Relation not found".into()));
+    }
+
+    if let Some(relation_type) = &body.relation_type {
+        sqlx::query("UPDATE entity_relations SET relation_type = $1 WHERE id = $2")
+            .bind(relation_type)
+            .bind(&relation_id)
+            .execute(&state.pool)
+            .await?;
+    }
+
+    if let Some(weight) = body.weight {
+        sqlx::query("UPDATE entity_relations SET weight = $1 WHERE id = $2")
+            .bind(weight.clamp(0.0, 1.0))
+            .bind(&relation_id)
+            .execute(&state.pool)
+            .await?;
+    }
+
+    if let Some(description) = &body.description {
+        let current_meta: Option<(String,)> = sqlx::query_as(
+            "SELECT CAST(metadata AS TEXT) FROM entity_relations WHERE id = $1"
+        )
+        .bind(&relation_id)
+        .fetch_optional(&state.pool)
+        .await?;
+
+        let mut meta: serde_json::Value = current_meta
+            .and_then(|m| serde_json::from_str(&m.0).ok())
+            .unwrap_or(serde_json::json!({}));
+
+        if let Some(obj) = meta.as_object_mut() {
+            obj.insert("description".to_string(), serde_json::json!(description));
+        }
+
+        sqlx::query("UPDATE entity_relations SET metadata = $1 WHERE id = $2")
+            .bind(meta.to_string())
+            .bind(&relation_id)
+            .execute(&state.pool)
+            .await?;
+    }
+
+    Ok(Json(serde_json::json!({ "updated": true, "id": relation_id })))
+}
+
+async fn delete_relation(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((ws_id, relation_id)): Path<(Uuid, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let deleted = sqlx::query(
+        "DELETE FROM entity_relations WHERE id = $1 AND workspace_id = $2"
+    )
+    .bind(&relation_id)
+    .bind(ws_id.to_string())
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+
+    if deleted == 0 {
+        return Err(AppError::NotFound("Relation not found".into()));
+    }
+
+    Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+// ── Entity Merge ──
+
+#[derive(Deserialize)]
+struct MergeEntitiesRequest {
+    keep_entity_id: String,
+    merge_entity_ids: Vec<String>,
+}
+
+async fn merge_entities(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(ws_id): Path<Uuid>,
+    Json(body): Json<MergeEntitiesRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let keep_exists: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM entities WHERE id = $1 AND workspace_id = $2"
+    )
+    .bind(&body.keep_entity_id)
+    .bind(ws_id.to_string())
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if keep_exists.is_none() {
+        return Err(AppError::BadRequest("Keep entity not found".into()));
+    }
+
+    let mut relations_transferred: u64 = 0;
+    let mut entities_merged: u64 = 0;
+
+    for merge_id in &body.merge_entity_ids {
+        if merge_id == &body.keep_entity_id {
+            continue;
+        }
+
+        let transferred = sqlx::query(
+            "UPDATE entity_relations SET source_entity_id = $1 WHERE source_entity_id = $2 AND workspace_id = $3"
+        )
+        .bind(&body.keep_entity_id)
+        .bind(merge_id)
+        .bind(ws_id.to_string())
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+        relations_transferred += transferred;
+
+        let transferred2 = sqlx::query(
+            "UPDATE entity_relations SET target_entity_id = $1 WHERE target_entity_id = $2 AND workspace_id = $3"
+        )
+        .bind(&body.keep_entity_id)
+        .bind(merge_id)
+        .bind(ws_id.to_string())
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+        relations_transferred += transferred2;
+
+        // Remove self-referencing relations after merge
+        sqlx::query(
+            "DELETE FROM entity_relations WHERE source_entity_id = $1 AND target_entity_id = $1"
+        )
+        .bind(&body.keep_entity_id)
+        .execute(&state.pool)
+        .await?;
+
+        let deleted = sqlx::query(
+            "DELETE FROM entities WHERE id = $1 AND workspace_id = $2"
+        )
+        .bind(merge_id)
+        .bind(ws_id.to_string())
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+        entities_merged += deleted;
+    }
+
+    Ok(Json(serde_json::json!({
+        "merged": true,
+        "keep_entity_id": body.keep_entity_id,
+        "entities_merged": entities_merged,
+        "relations_transferred": relations_transferred,
+    })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_node_serialization() {
+        let doc_id = Uuid::new_v4();
+        let node = GraphNode {
+            id: "n1".into(),
+            label: "Test Entity".into(),
+            entity_type: "person".into(),
+            document_id: Some(doc_id),
+        };
+        let json = serde_json::to_value(&node).unwrap();
+        assert_eq!(json["id"], "n1");
+        assert_eq!(json["label"], "Test Entity");
+        assert_eq!(json["entity_type"], "person");
+        assert_eq!(json["document_id"], doc_id.to_string());
+    }
+
+    #[test]
+    fn graph_node_without_document_id_is_null() {
+        let node = GraphNode {
+            id: "n2".into(),
+            label: "No Doc".into(),
+            entity_type: "concept".into(),
+            document_id: None,
+        };
+        let json = serde_json::to_value(&node).unwrap();
+        assert!(json["document_id"].is_null());
+    }
+
+    #[test]
+    fn graph_edge_serialization_with_all_fields() {
+        let edge = GraphEdge {
+            id: "rel-001".into(),
+            source: "n1".into(),
+            target: "n2".into(),
+            relation: "works_at".into(),
+            weight: 0.85,
+            description: Some("Employment".into()),
+            source_document_id: Some("doc-xyz".into()),
+        };
+        let json = serde_json::to_value(&edge).unwrap();
+        assert_eq!(json["id"], "rel-001");
+        assert_eq!(json["source"], "n1");
+        assert_eq!(json["target"], "n2");
+        assert_eq!(json["relation"], "works_at");
+        assert!((json["weight"].as_f64().unwrap() - 0.85).abs() < 0.001);
+        assert_eq!(json["description"], "Employment");
+        assert_eq!(json["source_document_id"], "doc-xyz");
+    }
+
+    #[test]
+    fn graph_edge_without_optional_fields() {
+        let edge = GraphEdge {
+            id: "rel-002".into(),
+            source: "a".into(),
+            target: "b".into(),
+            relation: "related".into(),
+            weight: 1.0,
+            description: None,
+            source_document_id: None,
+        };
+        let json = serde_json::to_value(&edge).unwrap();
+        assert!(json.get("description").is_none());
+        assert!(json.get("source_document_id").is_none());
+    }
+
+    #[test]
+    fn create_entity_request_deserialization() {
+        let json_str = r#"{"name":"TestEntity","entity_type":"person"}"#;
+        let req: CreateEntityRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.name, "TestEntity");
+        assert_eq!(req.entity_type, "person");
+        assert!(req.document_id.is_none());
+        assert!(req.description.is_none());
+    }
+
+    #[test]
+    fn create_entity_request_with_optional_fields() {
+        let json_str = r#"{"name":"Test","entity_type":"concept","document_id":"doc-1","description":"A concept"}"#;
+        let req: CreateEntityRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.document_id.unwrap(), "doc-1");
+        assert_eq!(req.description.unwrap(), "A concept");
+    }
+
+    #[test]
+    fn update_entity_request_partial_update() {
+        let json_str = r#"{"name":"NewName"}"#;
+        let req: UpdateEntityRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.name.unwrap(), "NewName");
+        assert!(req.entity_type.is_none());
+    }
+
+    #[test]
+    fn create_relation_request_deserialization() {
+        let json_str = r#"{"source_entity_id":"e1","target_entity_id":"e2","relation_type":"mentions","weight":0.75}"#;
+        let req: CreateRelationRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.source_entity_id, "e1");
+        assert_eq!(req.target_entity_id, "e2");
+        assert_eq!(req.relation_type, "mentions");
+        assert!((req.weight - 0.75).abs() < 0.001);
+        assert!(req.description.is_none());
+    }
+
+    #[test]
+    fn update_relation_request_deserialization() {
+        let json_str = r#"{"relation_type":"related_to","weight":0.9,"description":"Updated desc"}"#;
+        let req: UpdateRelationRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.relation_type.unwrap(), "related_to");
+        assert!((req.weight.unwrap() - 0.9).abs() < 0.001);
+        assert_eq!(req.description.unwrap(), "Updated desc");
+    }
+
+    #[test]
+    fn merge_entities_request_deserialization() {
+        let json_str = r#"{"keep_entity_id":"e1","merge_entity_ids":["e2","e3"]}"#;
+        let req: MergeEntitiesRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.keep_entity_id, "e1");
+        assert_eq!(req.merge_entity_ids, vec!["e2", "e3"]);
+    }
+
+    #[test]
+    fn graph_response_structure() {
+        let data = GraphResponse {
+            nodes: vec![
+                GraphNode { id: "n1".into(), label: "A".into(), entity_type: "person".into(), document_id: None },
+                GraphNode { id: "n2".into(), label: "B".into(), entity_type: "concept".into(), document_id: None },
+            ],
+            edges: vec![
+                GraphEdge { id: "r1".into(), source: "n1".into(), target: "n2".into(), relation: "related".into(), weight: 0.5, description: None, source_document_id: None },
+            ],
+        };
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["nodes"].as_array().unwrap().len(), 2);
+        assert_eq!(json["edges"].as_array().unwrap().len(), 1);
+    }
 }

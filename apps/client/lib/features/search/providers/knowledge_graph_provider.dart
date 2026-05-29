@@ -46,6 +46,7 @@ class GraphNode {
 }
 
 class GraphEdge {
+  final String id;
   final String source;
   final String target;
   final String relation;
@@ -54,6 +55,7 @@ class GraphEdge {
   final String? sourceDocumentId;
 
   GraphEdge({
+    required this.id,
     required this.source,
     required this.target,
     required this.relation,
@@ -64,6 +66,7 @@ class GraphEdge {
 
   factory GraphEdge.fromJson(Map<String, dynamic> json) {
     return GraphEdge(
+      id: json['id'] ?? '',
       source: json['source'] ?? '',
       target: json['target'] ?? '',
       relation: json['relation'] ?? '',
@@ -171,6 +174,115 @@ class KnowledgeGraphService {
     final api = ref.read(apiClientProvider);
     final resp = await api.dio.get('/workspaces/$workspaceId/knowledge-graph/stats');
     return GraphStats.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  // ── Entity CRUD ──
+
+  Future<Map<String, dynamic>> createEntity(String workspaceId, {
+    required String name,
+    required String entityType,
+    String? documentId,
+    String? description,
+  }) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.post(
+      '/workspaces/$workspaceId/knowledge-graph/entities/new',
+      data: {
+        'name': name,
+        'entity_type': entityType,
+        if (documentId != null) 'document_id': documentId,
+        if (description != null) 'description': description,
+      },
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateEntity(String workspaceId, String entityId, {
+    String? name,
+    String? entityType,
+  }) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.put(
+      '/workspaces/$workspaceId/knowledge-graph/entities/$entityId',
+      data: {
+        if (name != null) 'name': name,
+        if (entityType != null) 'entity_type': entityType,
+      },
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> deleteEntity(String workspaceId, String entityId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.delete(
+      '/workspaces/$workspaceId/knowledge-graph/entities/$entityId',
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
+  // ── Relation CRUD ──
+
+  Future<Map<String, dynamic>> createRelation(String workspaceId, {
+    required String sourceEntityId,
+    required String targetEntityId,
+    required String relationType,
+    double weight = 1.0,
+    String? description,
+  }) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.post(
+      '/workspaces/$workspaceId/knowledge-graph/relations/new',
+      data: {
+        'source_entity_id': sourceEntityId,
+        'target_entity_id': targetEntityId,
+        'relation_type': relationType,
+        'weight': weight,
+        if (description != null) 'description': description,
+      },
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateRelation(String workspaceId, String relationId, {
+    String? relationType,
+    double? weight,
+    String? description,
+  }) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.put(
+      '/workspaces/$workspaceId/knowledge-graph/relations/$relationId',
+      data: {
+        if (relationType != null) 'relation_type': relationType,
+        if (weight != null) 'weight': weight,
+        if (description != null) 'description': description,
+      },
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> deleteRelation(String workspaceId, String relationId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.delete(
+      '/workspaces/$workspaceId/knowledge-graph/relations/$relationId',
+    );
+    return resp.data as Map<String, dynamic>;
+  }
+
+  // ── Merge ──
+
+  Future<Map<String, dynamic>> mergeEntities(String workspaceId, {
+    required String keepEntityId,
+    required List<String> mergeEntityIds,
+  }) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.post(
+      '/workspaces/$workspaceId/knowledge-graph/entities/merge',
+      data: {
+        'keep_entity_id': keepEntityId,
+        'merge_entity_ids': mergeEntityIds,
+      },
+    );
+    return resp.data as Map<String, dynamic>;
   }
 }
 
