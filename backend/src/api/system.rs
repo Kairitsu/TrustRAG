@@ -191,7 +191,9 @@ async fn ocr_status(
                     .unwrap_or("")
                     .trim()
                     .to_string();
-                let bin_path = None;
+                let bin_path = which::which(commands[0])
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string());
                 (true, Some(ver), bin_path)
             }
             _ => (false, None, None),

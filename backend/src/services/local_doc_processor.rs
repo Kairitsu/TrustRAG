@@ -105,9 +105,12 @@ fn parse_pdf_with_lopdf(data: &[u8], filename: &str) -> anyhow::Result<LocalPars
     if raw_text.trim().is_empty() {
         return Ok(LocalParseResult {
             markdown: format!(
-                "# {}\n\n*This PDF contains no extractable text (may be scanned/image-based). \
-                 {} pages detected.*\n",
+                "# {}\n\n**此 PDF 无法提取文本内容**（可能是扫描版或纯图片 PDF）。\n\n\
+                 - 检测到 {} 页\n\
+                 - 如需解析此类文件，请在「设置 → OCR 组件管理」中安装并启用本地 OCR 工具\n\n\
+                 *This PDF contains no extractable text (may be scanned/image-based). {} pages detected.*\n",
                 strip_extension(filename),
+                page_count,
                 page_count
             ),
             metadata: LocalDocMetadata {
@@ -229,7 +232,8 @@ fn parse_docx_fallback(data: &[u8], filename: &str) -> anyhow::Result<LocalParse
     if text.trim().is_empty() {
         return Ok(LocalParseResult {
             markdown: format!(
-                "# {}\n\n*This DOCX file contains no extractable text.*\n",
+                "# {}\n\n**此 DOCX 文件无法提取文本内容。**\n\n\
+                 *This DOCX file contains no extractable text.*\n",
                 strip_extension(filename),
             ),
             metadata: LocalDocMetadata {

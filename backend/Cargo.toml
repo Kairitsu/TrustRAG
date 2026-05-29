@@ -56,3 +56,4 @@ directories = "5"
 lopdf = { version = "0.40", optional = true }
 serde_yaml = "0.9.34"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+which = "7"

@@ -694,13 +694,7 @@ async fn send_message(
             }
         }
 
-        let trace_ref = result.trace.as_ref();
         let citations: Vec<CitationEvent> = result.sources.iter().map(|s| {
-                let (emb_rank, rr_score) = trace_ref
-                    .and_then(|t| t.reranked_results.iter()
-                        .find(|r| r.chunk_id == s.chunk_id)
-                        .map(|r| (r.embedding_rank, r.rerank_score)))
-                    .unwrap_or((None, None));
                 CitationEvent {
                     index: s.index,
                     chunk_id: s.chunk_id,
@@ -709,8 +703,8 @@ async fn send_message(
                     page: s.page_start,
                     score: s.score,
                     text: s.content.chars().take(200).collect(),
-                    embedding_rank: emb_rank,
-                    rerank_score: rr_score,
+                    embedding_rank: None,
+                    rerank_score: None,
                 }
             })
             .collect();
