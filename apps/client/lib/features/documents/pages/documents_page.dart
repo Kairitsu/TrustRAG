@@ -420,7 +420,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                           } else if (value == 'move_folder') {
                             _showMoveFolderDialog(doc, ws);
                           } else if (value == 'generate_graph') {
-                            _generateGraphForDoc(ws.id, doc.id, doc.filename);
+                            _generateGraphForDoc(ws.id, doc.id, doc.originalFilename);
                           }
                         },
                       ),
