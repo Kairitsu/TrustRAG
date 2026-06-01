@@ -4,14 +4,13 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/api/api_client.dart';
+import 'core/providers/app_version_provider.dart';
 import 'core/router/app_router.dart';
 import 'core/services/backend_manager.dart';
 import 'core/services/update_checker.dart';
 import 'core/theme/app_theme.dart';
 import 'features/settings/widgets/update_dialog.dart';
 import 'l10n/app_localizations.dart';
-
-const appVersion = '0.2.2';
 
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
@@ -71,11 +70,14 @@ class _TrustRAGAppState extends ConsumerState<TrustRAGApp> {
 
   void _scheduleUpdateCheck() {
     Future.delayed(const Duration(seconds: 3), () async {
-      final release = await UpdateChecker().checkForUpdate(appVersion);
+      final versionAsync = ref.read(appVersionProvider);
+      final version = versionAsync.valueOrNull;
+      if (version == null) return;
+      final release = await UpdateChecker().checkForUpdate(version);
       if (release != null) {
         final ctx = rootNavigatorKey.currentContext;
         if (ctx != null && ctx.mounted) {
-          UpdateDialog.show(ctx, release: release, currentVersion: appVersion);
+          UpdateDialog.show(ctx, release: release, currentVersion: version);
         }
       }
     });

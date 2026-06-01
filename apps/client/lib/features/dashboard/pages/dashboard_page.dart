@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/providers/app_version_provider.dart';
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../../core/services/backend_manager.dart';
 import '../../../core/services/update_checker.dart';
@@ -660,7 +661,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                         )
                       : const Icon(Icons.system_update_alt_rounded),
                   title: Text(S.of(context).checkUpdate),
-                  subtitle: Text(S.of(context).currentVersion(appVersion)),
+                  subtitle: Text(S.of(context).currentVersion(
+                    ref.watch(appVersionProvider).valueOrNull ?? '...',
+                  )),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _checkingUpdate ? null : () => _manualCheckUpdate(),
                 ),
@@ -670,7 +673,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 child: ListTile(
                   leading: const Icon(Icons.info_outline),
                   title: Text(S.of(context).about),
-                  subtitle: Text('TrustRAG v$appVersion'),
+                  subtitle: Text('TrustRAG v${ref.watch(appVersionProvider).valueOrNull ?? '...'}'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _showAboutDialog(),
                 ),
@@ -828,10 +831,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   Future<void> _manualCheckUpdate() async {
     setState(() => _checkingUpdate = true);
     try {
-      final release = await UpdateChecker().checkForUpdate(appVersion, force: true);
+      final version = ref.read(appVersionProvider).valueOrNull ?? '0.0.0';
+      final release = await UpdateChecker().checkForUpdate(version, force: true);
       if (!mounted) return;
       if (release != null) {
-        UpdateDialog.show(context, release: release, currentVersion: appVersion);
+        UpdateDialog.show(context, release: release, currentVersion: version);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1484,7 +1488,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             Text(S.of(context).trustragDescription,
                 style: const TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
-            _infoRow(S.of(context).version, 'v$appVersion'),
+            _infoRow(S.of(context).version, 'v${ref.read(appVersionProvider).valueOrNull ?? '...'}'),
             const SizedBox(height: 4),
             _infoRow(S.of(context).backend, 'Rust (Axum)'),
             const SizedBox(height: 4),
