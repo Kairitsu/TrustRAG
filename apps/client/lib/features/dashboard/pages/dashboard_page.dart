@@ -1062,15 +1062,29 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         },
         onSwitchAccount: (email) async {
           Navigator.pop(ctx);
-          final restored = await ApiClient.switchToAccount(email);
-          if (restored) {
-            ref.read(selectedWorkspaceProvider.notifier).state = null;
-            ref.invalidate(workspaceProvider);
-            ref.invalidate(authProvider);
-            ref.read(authProvider.notifier).checkAuthStatus();
-          } else {
-            ref.read(authProvider.notifier).logout();
-            if (context.mounted) context.go('/login');
+          final result = await ApiClient.switchToAccount(email);
+          if (!context.mounted) return;
+          switch (result) {
+            case ApiClient.switchOk:
+              ref.read(selectedWorkspaceProvider.notifier).state = null;
+              ref.invalidate(workspaceProvider);
+              ref.invalidate(authProvider);
+              ref.read(authProvider.notifier).checkAuthStatus();
+            case ApiClient.switchNeedLogin:
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('请重新登录 $email'),
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+              context.go('/login');
+            case ApiClient.switchFailed:
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('切换账号失败，已回滚到原账号'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
           }
         },
       ),
@@ -1584,6 +1598,9 @@ class _AccountMenuSheet extends StatefulWidget {
 
 class _AccountMenuSheetState extends State<_AccountMenuSheet> {
   List<String> _savedAccounts = [];
+  Set<String> _accountsWithToken = {};
+
+  static const _localEmail = 'local@trustrag.desktop';
 
   @override
   void initState() {
@@ -1593,8 +1610,67 @@ class _AccountMenuSheetState extends State<_AccountMenuSheet> {
 
   Future<void> _loadAccounts() async {
     final accounts = await ApiClient.getSavedAccounts();
+    final withToken = <String>{};
+    for (final email in accounts) {
+      if (await ApiClient.hasTokenForAccount(email)) {
+        withToken.add(email);
+      }
+    }
     if (mounted) {
-      setState(() => _savedAccounts = accounts);
+      setState(() {
+        _savedAccounts = accounts;
+        _accountsWithToken = withToken;
+      });
+    }
+  }
+
+  bool _isLocalAccount(String email) => email == _localEmail;
+
+  String _displayName(String email) {
+    if (_isLocalAccount(email)) return '本地模式';
+    return email;
+  }
+
+  String _statusLabel(String email) {
+    if (email == widget.currentEmail) return '当前活跃';
+    if (_accountsWithToken.contains(email)) return '可切换';
+    return '需重新登录';
+  }
+
+  Color _statusColor(String email) {
+    if (email == widget.currentEmail) return Colors.green;
+    if (_accountsWithToken.contains(email)) return Colors.blue;
+    return Colors.orange;
+  }
+
+  IconData _statusIcon(String email) {
+    if (email == widget.currentEmail) return Icons.check_circle;
+    if (_accountsWithToken.contains(email)) return Icons.swap_horiz;
+    return Icons.key;
+  }
+
+  Future<void> _confirmDeleteAccount(String email) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('移除账号'),
+        content: Text('确定要从列表中移除 $email 吗？\n这不会删除远程账号，只会清除本地保存的登录状态。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('移除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ApiClient.removeAccount(email);
+      if (BackendManager.shouldRunEmbedded) {
+        await BackendManager().deleteAccountData(email);
+      }
+      _loadAccounts();
     }
   }
 
@@ -1649,29 +1725,37 @@ class _AccountMenuSheetState extends State<_AccountMenuSheet> {
                 children: [
                   CircleAvatar(
                     radius: 22,
-                    backgroundColor: _colorForEmail(widget.currentEmail),
-                    child: Text(
-                      widget.currentEmail[0].toUpperCase(),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                        color: Colors.white,
-                      ),
-                    ),
+                    backgroundColor: _isLocalAccount(widget.currentEmail)
+                        ? Colors.grey
+                        : _colorForEmail(widget.currentEmail),
+                    child: _isLocalAccount(widget.currentEmail)
+                        ? const Icon(Icons.computer, color: Colors.white, size: 20)
+                        : Text(
+                            widget.currentEmail[0].toUpperCase(),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              color: Colors.white,
+                            ),
+                          ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(widget.currentEmail,
+                        Text(_displayName(widget.currentEmail),
                           style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                           overflow: TextOverflow.ellipsis,
                         ),
+                        if (_isLocalAccount(widget.currentEmail))
+                          Text(widget.currentEmail,
+                            style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
+                          ),
                         const SizedBox(height: 2),
                         Row(
                           children: [
-                            Icon(Icons.check_circle, color: Colors.green, size: 14),
+                            const Icon(Icons.check_circle, color: Colors.green, size: 14),
                             const SizedBox(width: 4),
                             Text('当前活跃', style: TextStyle(
                               fontSize: 12, color: Colors.green.shade600,
@@ -1692,30 +1776,55 @@ class _AccountMenuSheetState extends State<_AccountMenuSheet> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('切换到其他账号',
+                child: Text('其他账号',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500,
                         color: cs.onSurfaceVariant)),
               ),
             ),
-            ...otherAccounts.map((email) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: ListTile(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                leading: CircleAvatar(
-                  radius: 18,
-                  backgroundColor: _colorForEmail(email).withAlpha(40),
-                  child: Text(email[0].toUpperCase(),
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: _colorForEmail(email),
-                      )),
+            ...otherAccounts.map((email) {
+              final color = _statusColor(email);
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: ListTile(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  leading: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: _isLocalAccount(email)
+                        ? Colors.grey.withAlpha(40)
+                        : _colorForEmail(email).withAlpha(40),
+                    child: _isLocalAccount(email)
+                        ? Icon(Icons.computer, size: 18, color: Colors.grey.shade600)
+                        : Text(email[0].toUpperCase(),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: _colorForEmail(email),
+                            )),
+                  ),
+                  title: Text(_displayName(email), style: const TextStyle(fontSize: 14),
+                      overflow: TextOverflow.ellipsis),
+                  subtitle: Row(
+                    children: [
+                      Icon(_statusIcon(email), size: 12, color: color),
+                      const SizedBox(width: 3),
+                      Text(_statusLabel(email),
+                          style: TextStyle(fontSize: 11, color: color)),
+                    ],
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.delete_outline, size: 18, color: Colors.red.shade300),
+                        tooltip: '移除账号',
+                        onPressed: () => _confirmDeleteAccount(email),
+                      ),
+                      Icon(Icons.swap_horiz, size: 18, color: cs.onSurfaceVariant),
+                    ],
+                  ),
+                  onTap: () => widget.onSwitchAccount(email),
                 ),
-                title: Text(email, style: const TextStyle(fontSize: 14),
-                    overflow: TextOverflow.ellipsis),
-                trailing: Icon(Icons.swap_horiz, size: 18, color: cs.onSurfaceVariant),
-                onTap: () => widget.onSwitchAccount(email),
-              ),
-            )),
+              );
+            }),
             const SizedBox(height: 4),
           ],
           const Divider(indent: 16, endIndent: 16),

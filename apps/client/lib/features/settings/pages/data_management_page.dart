@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../core/api/api_client.dart';
+import '../../../core/services/backend_manager.dart';
 import '../../auth/providers/auth_provider.dart';
 
 class DataManagementPage extends ConsumerStatefulWidget {
@@ -114,6 +117,103 @@ class _DataManagementPageState extends ConsumerState<DataManagementPage> {
       setState(() {
         _loading = false;
         _lastMessage = '重置失败: $e';
+      });
+    }
+  }
+
+  Future<void> _resetLoginState() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重置登录状态'),
+        content: const Text('将清除所有账号的登录状态（Token），您需要重新登录。\n账号数据目录不受影响。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.deepOrange),
+            child: const Text('确认重置'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    await ApiClient.clearAllAccountData();
+    final accounts = await ApiClient.getSavedAccounts();
+    for (final email in accounts) {
+      await ApiClient.removeAccount(email);
+    }
+    if (mounted) {
+      ref.read(authProvider.notifier).logout();
+      context.go('/login');
+    }
+  }
+
+  Future<void> _clearAllAccounts() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber, color: Colors.red.shade900, size: 24),
+            const SizedBox(width: 8),
+            const Text('清除所有账号数据'),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('此操作将：', style: TextStyle(fontWeight: FontWeight.w600)),
+            SizedBox(height: 8),
+            Text('1. 停止本地后端'),
+            Text('2. 删除所有账号的本地数据目录'),
+            Text('3. 清除所有登录状态和账号记录'),
+            SizedBox(height: 12),
+            Text(
+              '所有账号的文档、对话记录、数据库都将被删除，且无法恢复。',
+              style: TextStyle(color: Colors.red, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade900),
+            child: const Text('确认清除全部'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _loading = true);
+    try {
+      if (BackendManager.shouldRunEmbedded) {
+        await BackendManager().stop();
+      }
+      final accounts = await ApiClient.getSavedAccounts();
+      for (final email in accounts) {
+        if (BackendManager.shouldRunEmbedded) {
+          await BackendManager().deleteAccountData(email);
+        }
+        await ApiClient.removeAccount(email);
+      }
+      await ApiClient.clearAllAccountData();
+      setState(() {
+        _loading = false;
+        _lastMessage = '所有账号数据已清除。';
+      });
+      if (mounted) {
+        ref.read(authProvider.notifier).logout();
+        context.go('/login');
+      }
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _lastMessage = '清除失败: $e';
       });
     }
   }
@@ -273,6 +373,25 @@ class _DataManagementPageState extends ConsumerState<DataManagementPage> {
                     onTap: _resetDb,
                     color: Colors.red,
                   ),
+
+                  if (BackendManager.shouldRunEmbedded) ...[
+                    const SizedBox(height: 8),
+                    _actionCard(
+                      icon: Icons.restart_alt,
+                      title: '重置登录状态',
+                      subtitle: '清除所有账号登录状态，重新开始',
+                      onTap: _resetLoginState,
+                      color: Colors.deepOrange,
+                    ),
+                    const SizedBox(height: 8),
+                    _actionCard(
+                      icon: Icons.cleaning_services,
+                      title: '清除所有账号数据',
+                      subtitle: '删除所有账号的本地数据目录和登录信息',
+                      onTap: _clearAllAccounts,
+                      color: Colors.red.shade900,
+                    ),
+                  ],
 
                   if (_loading)
                     const Padding(

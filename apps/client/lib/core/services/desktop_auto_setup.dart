@@ -20,9 +20,26 @@ class DesktopAutoSetup {
     if (!shouldAutoSetup) return;
 
     final prefs = await SharedPreferences.getInstance();
+    final activeAccount = await ApiClient.getActiveAccount();
     final token = await ApiClient.getToken();
 
-    if (token != null) {
+    // If user has an active non-local account with a token, respect it
+    if (token != null && activeAccount != null && activeAccount != _defaultEmail) {
+      try {
+        await api.dio.get('/auth/me');
+        debugPrint('[AutoSetup] User has active session ($activeAccount), skipping auto-login');
+        return;
+      } on DioException catch (e) {
+        if (e.response?.statusCode == 401) {
+          await ApiClient.clearToken();
+        } else {
+          return;
+        }
+      }
+    }
+
+    // If active account is local and token is valid, skip
+    if (token != null && (activeAccount == null || activeAccount == _defaultEmail)) {
       try {
         await api.dio.get('/auth/me');
         return;
@@ -30,10 +47,15 @@ class DesktopAutoSetup {
         if (e.response?.statusCode == 401) {
           await ApiClient.clearToken();
         } else {
-          // Network error — keep token and skip re-login
           return;
         }
       }
+    }
+
+    // No valid session — only auto-login to local if no other account is active
+    if (activeAccount != null && activeAccount != _defaultEmail) {
+      debugPrint('[AutoSetup] Previous account ($activeAccount) token expired, not forcing local login');
+      return;
     }
 
     final isDone = prefs.getBool(_setupDoneKey) ?? false;
@@ -72,14 +94,15 @@ class DesktopAutoSetup {
         'password': _defaultPassword,
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
-      await ApiClient.saveToken(token);
       await ApiClient.setActiveAccount(_defaultEmail);
+      await ApiClient.saveToken(token);
 
       if (BackendManager.shouldRunEmbedded &&
           previousAccount != null &&
           previousAccount != _defaultEmail &&
           BackendManager().isRunning) {
         await BackendManager().restart(accountId: _defaultEmail);
+        await BackendManager().ready;
       }
 
       debugPrint('[AutoSetup] Auto-login successful');

@@ -127,17 +127,32 @@ class ApiClient {
     return prefs.getStringList(_accountListKey) ?? [];
   }
 
-  /// Switch to a previously saved account, restoring its token
-  /// and restarting the embedded backend with the new account's data.
-  /// Returns true if the account had a saved token.
-  static Future<bool> switchToAccount(String email) async {
+  static Future<bool> hasTokenForAccount(String email) async {
     final prefs = await SharedPreferences.getInstance();
-    final currentEmail = prefs.getString(_activeAccountKey);
-    final currentToken = prefs.getString(_tokenKey);
-    if (currentEmail != null && currentEmail.isNotEmpty && currentToken != null) {
-      await prefs.setString(_accountTokenKey(currentEmail), currentToken);
+    final token = prefs.getString(_accountTokenKey(email));
+    return token != null && token.isNotEmpty;
+  }
+
+  /// Result of an account switch attempt.
+  static const switchOk = 'ok';
+  static const switchNeedLogin = 'need_login';
+  static const switchFailed = 'failed';
+
+  /// Switch to a previously saved account with rollback on failure.
+  /// Returns [switchOk] if token was restored and backend started,
+  /// [switchNeedLogin] if the account has no saved token (needs re-auth),
+  /// or [switchFailed] if the backend restart failed (rolled back).
+  static Future<String> switchToAccount(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    final previousEmail = prefs.getString(_activeAccountKey);
+    final previousToken = prefs.getString(_tokenKey);
+
+    // Save current account token before switching
+    if (previousEmail != null && previousEmail.isNotEmpty && previousToken != null) {
+      await prefs.setString(_accountTokenKey(previousEmail), previousToken);
     }
 
+    // Switch active account
     await prefs.setString(_activeAccountKey, email);
     final savedToken = prefs.getString(_accountTokenKey(email));
     if (savedToken != null && savedToken.isNotEmpty) {
@@ -146,11 +161,44 @@ class ApiClient {
       await prefs.remove(_tokenKey);
     }
 
+    // Restart backend for new account data directory
     if (BackendManager.shouldRunEmbedded) {
-      await BackendManager().restart(accountId: email);
+      try {
+        await BackendManager().restart(accountId: email);
+        await BackendManager().ready;
+        if (BackendManager().hasFailed) {
+          throw Exception(BackendManager().startupError ?? 'Backend start failed');
+        }
+      } catch (e) {
+        debugPrint('[ApiClient] switchToAccount backend restart failed: $e');
+        // Rollback to previous account
+        await _rollbackAccount(prefs, previousEmail, previousToken);
+        return switchFailed;
+      }
     }
 
-    return savedToken != null && savedToken.isNotEmpty;
+    return savedToken != null && savedToken.isNotEmpty ? switchOk : switchNeedLogin;
+  }
+
+  static Future<void> _rollbackAccount(
+    SharedPreferences prefs,
+    String? previousEmail,
+    String? previousToken,
+  ) async {
+    if (previousEmail != null && previousEmail.isNotEmpty) {
+      await prefs.setString(_activeAccountKey, previousEmail);
+      if (previousToken != null) {
+        await prefs.setString(_tokenKey, previousToken);
+      }
+      if (BackendManager.shouldRunEmbedded) {
+        try {
+          await BackendManager().restart(accountId: previousEmail);
+          await BackendManager().ready;
+        } catch (_) {
+          debugPrint('[ApiClient] rollback backend restart also failed');
+        }
+      }
+    }
   }
 
   static Future<void> removeAccount(String email) async {

@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/services/backend_manager.dart';
+import '../../../core/services/desktop_auto_setup.dart';
 import '../providers/auth_provider.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
@@ -20,6 +22,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _obscurePassword = true;
   bool _rememberLogin = true;
   List<String> _savedAccounts = [];
+  bool _enteringLocalMode = false;
+
+  static const _localEmail = 'local@trustrag.desktop';
 
   @override
   void initState() {
@@ -31,6 +36,19 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     final accounts = await ApiClient.getSavedAccounts();
     if (mounted) {
       setState(() => _savedAccounts = accounts);
+    }
+  }
+
+  Future<void> _enterLocalMode() async {
+    setState(() => _enteringLocalMode = true);
+    try {
+      if (DesktopAutoSetup.shouldAutoSetup || BackendManager.shouldRunEmbedded) {
+        await DesktopAutoSetup.ensureSetup(ref.read(apiClientProvider));
+        ref.invalidate(authProvider);
+        ref.read(authProvider.notifier).checkAuthStatus();
+      }
+    } finally {
+      if (mounted) setState(() => _enteringLocalMode = false);
     }
   }
 
@@ -111,8 +129,28 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   ),
                   textAlign: TextAlign.center,
                 ),
-                if (_savedAccounts.isNotEmpty) ...[
-                  const SizedBox(height: 24),
+                if (BackendManager.shouldRunEmbedded) ...[
+                  const SizedBox(height: 20),
+                  OutlinedButton.icon(
+                    onPressed: _enteringLocalMode ? null : _enterLocalMode,
+                    icon: _enteringLocalMode
+                        ? const SizedBox(width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.computer),
+                    label: const Text('进入本地模式'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(44),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('无需登录，数据保存在本地',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    textAlign: TextAlign.center,
+                  ),
+                  const Divider(height: 32),
+                ],
+                if (_savedAccounts.where((e) => e != _localEmail).isNotEmpty) ...[
+                  const SizedBox(height: 8),
                   Text(
                     '已有账号',
                     style: theme.textTheme.labelMedium?.copyWith(
@@ -123,7 +161,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   Wrap(
                     spacing: 8,
                     runSpacing: 4,
-                    children: _savedAccounts.map((email) => ActionChip(
+                    children: _savedAccounts
+                        .where((e) => e != _localEmail)
+                        .map((email) => ActionChip(
                       avatar: const Icon(Icons.person, size: 18),
                       label: Text(email, style: const TextStyle(fontSize: 13)),
                       onPressed: () {

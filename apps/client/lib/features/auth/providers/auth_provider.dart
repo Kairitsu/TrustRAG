@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
@@ -97,22 +98,30 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
     try {
       state = state.copyWith(error: null);
+
+      // Each account has its own data directory and database.
+      // Restart the backend to point at the target account's directory
+      // BEFORE sending the login request, otherwise the credentials will
+      // be verified against the wrong database.
+      final previousAccount = await ApiClient.getActiveAccount();
+      if (BackendManager.shouldRunEmbedded && previousAccount != email) {
+        await BackendManager().restart(accountId: email);
+        await BackendManager().ready;
+        _api.dio.options.baseUrl = BackendManager().baseUrl;
+      }
+
       final resp = await _api.dio.post('/auth/login', data: {
         'email': email,
         'password': password,
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
+
+      await ApiClient.setActiveAccount(email);
+
       if (rememberLogin) {
         await ApiClient.saveToken(token);
       } else {
         await ApiClient.clearToken();
-      }
-
-      final previousAccount = await ApiClient.getActiveAccount();
-      await ApiClient.setActiveAccount(email);
-
-      if (BackendManager.shouldRunEmbedded && previousAccount != email) {
-        await BackendManager().restart(accountId: email);
       }
 
       state = AuthState(
@@ -126,7 +135,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
         msg = BackendManager.shouldRunEmbedded && !backend.isRunning
-            ? 'Cannot connect to backend. The embedded server may have failed to start.'
+            ? 'Local backend failed to start. Please check application logs.'
             : 'Cannot connect to server. Please check your network connection.';
       } else {
         msg = (e.response?.data?['error'] ?? 'Login failed').toString();
@@ -150,20 +159,25 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
     try {
       state = state.copyWith(error: null);
+
+      // Switch backend to target account's data directory before registration,
+      // so the new user is created in the correct isolated database.
+      final previousAccount = await ApiClient.getActiveAccount();
+      if (BackendManager.shouldRunEmbedded && previousAccount != email) {
+        await BackendManager().restart(accountId: email);
+        await BackendManager().ready;
+        _api.dio.options.baseUrl = BackendManager().baseUrl;
+      }
+
       final resp = await _api.dio.post('/auth/register', data: {
         'display_name': name,
         'email': email,
         'password': password,
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
-      await ApiClient.saveToken(token);
 
-      final previousAccount = await ApiClient.getActiveAccount();
       await ApiClient.setActiveAccount(email);
-
-      if (BackendManager.shouldRunEmbedded && previousAccount != email) {
-        await BackendManager().restart(accountId: email);
-      }
+      await ApiClient.saveToken(token);
 
       state = AuthState(
         status: AuthStatus.authenticated,
@@ -176,7 +190,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
         msg = BackendManager.shouldRunEmbedded && !backend.isRunning
-            ? 'Cannot connect to backend. The embedded server may have failed to start.'
+            ? 'Local backend failed to start. Please check application logs.'
             : 'Cannot connect to server. Please check your network connection.';
       } else {
         msg = (e.response?.data?['error'] ?? 'Registration failed').toString();
@@ -191,7 +205,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (clearData) {
       if (email != null) {
         if (BackendManager.shouldRunEmbedded) {
-          await BackendManager().deleteAccountData(email);
+          try {
+            await BackendManager().stop();
+            await BackendManager().deleteAccountData(email);
+          } catch (e) {
+            debugPrint('[Auth] Failed to delete account data: $e');
+          }
         }
         await ApiClient.removeAccount(email);
       }
