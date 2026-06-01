@@ -14,6 +14,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.7-beta.1] - 2026-06-01
+
+### Fixed / 修复
+- 🏷️ **客户端版本号动态化** — 移除 `main.dart` 中硬编码的 `appVersion = '0.2.2'`，改用 `package_info_plus` 从 `pubspec.yaml` 动态读取版本号。关于页面、更新检查、版本显示现在始终与发布版本一致。（Issue #18）
+- 🔄 **多账号切换架构修复** — `switchToAccount` 重构为事务式操作：切换前保存当前账号状态，切换失败时自动回滚。返回 `ok`/`need_login`/`failed` 三种结果，UI 针对性提示。（Issue #19）
+- 🔐 **登录/注册时后端数据目录同步** — 修复关键架构缺陷：登录或注册新账号时，嵌入式后端现在会先切换到目标账号的数据目录再处理请求，避免跨账号数据库导致的"Invalid email or password"误判。（Issue #19）
+- 🛡️ **Token-账号绑定时序修正** — `setActiveAccount` 现在在 `saveToken` 之前调用，确保 token 正确关联到对应账号。（Issue #19）
+- 🏠 **本地模式优化** — `local@trustrag.desktop` 不再强制覆盖已登录的远程账号会话，登录页新增"进入本地模式"按钮和说明文字。（Issue #19）
+
+### Added / 新增
+- ✨ **`appVersionProvider`** — 新增 Riverpod FutureProvider，全局提供运行时版本号。
+- 🗑️ **账号管理增强** — 支持删除已保存的失效账号，新增"重置登录状态"和"清除所有账号数据"危险操作入口。
+- 📊 **账号状态可视化** — 账号列表区分显示活跃、可切换、需重新登录等状态。
+
+### Infrastructure / 基础设施
+- 新增 `app_version_test.dart`、`account_management_test.dart` 单元测试
+- 更新 `account_isolation_test.dart` 适配新的 `switchToAccount` 返回类型
+
+---
+
 ## [0.2.5-beta.6] - 2026-05-27
 
 ### Fixed / 修复
