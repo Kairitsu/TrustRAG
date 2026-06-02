@@ -30,6 +30,10 @@ pub struct DocumentResponse {
     pub tags: Option<serde_json::Value>,
     pub processing_status: String,
     pub processing_error: Option<String>,
+    pub chunks_total: Option<i32>,
+    pub chunks_done: Option<i32>,
+    pub embedding_batches_total: Option<i32>,
+    pub embedding_batches_done: Option<i32>,
     pub uploaded_by: Uuid,
     pub created_at: String,
     pub updated_at: String,
@@ -126,29 +130,53 @@ async fn check_workspace_access(
     Ok(())
 }
 
-fn parse_doc_row(r: (String, String, String, String, String, Option<i64>, Option<i32>, Option<String>, Option<String>, String, Option<String>, String, String, String)) -> Result<DocumentResponse, AppError> {
-    let tags_val: Option<serde_json::Value> = r.8.as_ref().and_then(|s| serde_json::from_str(s).ok());
+#[derive(sqlx::FromRow)]
+struct DocRow {
+    id: String,
+    workspace_id: String,
+    title: String,
+    original_filename: String,
+    file_type: String,
+    file_size_bytes: Option<i64>,
+    page_count: Option<i32>,
+    language: Option<String>,
+    tags_text: Option<String>,
+    processing_status: String,
+    processing_error: Option<String>,
+    chunks_total: Option<i32>,
+    chunks_done: Option<i32>,
+    embedding_batches_total: Option<i32>,
+    embedding_batches_done: Option<i32>,
+    uploaded_by: String,
+    created_at: String,
+    updated_at: String,
+}
+
+fn parse_doc_row(r: DocRow) -> Result<DocumentResponse, AppError> {
+    let tags_val: Option<serde_json::Value> = r.tags_text.as_ref().and_then(|s| serde_json::from_str(s).ok());
     Ok(DocumentResponse {
-        id: compat::parse_uuid(&r.0).map_err(|e| AppError::Internal(e.into()))?,
-        workspace_id: compat::parse_uuid(&r.1).map_err(|e| AppError::Internal(e.into()))?,
-        title: r.2,
-        original_filename: r.3,
-        file_type: r.4,
-        file_size_bytes: r.5,
-        page_count: r.6,
-        language: r.7,
+        id: compat::parse_uuid(&r.id).map_err(|e| AppError::Internal(e.into()))?,
+        workspace_id: compat::parse_uuid(&r.workspace_id).map_err(|e| AppError::Internal(e.into()))?,
+        title: r.title,
+        original_filename: r.original_filename,
+        file_type: r.file_type,
+        file_size_bytes: r.file_size_bytes,
+        page_count: r.page_count,
+        language: r.language,
         tags: tags_val,
-        processing_status: r.9,
-        processing_error: r.10,
-        uploaded_by: compat::parse_uuid(&r.11).map_err(|e| AppError::Internal(e.into()))?,
-        created_at: r.12,
-        updated_at: r.13,
+        processing_status: r.processing_status,
+        processing_error: r.processing_error,
+        chunks_total: r.chunks_total,
+        chunks_done: r.chunks_done,
+        embedding_batches_total: r.embedding_batches_total,
+        embedding_batches_done: r.embedding_batches_done,
+        uploaded_by: compat::parse_uuid(&r.uploaded_by).map_err(|e| AppError::Internal(e.into()))?,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
     })
 }
 
-type DocRow = (String, String, String, String, String, Option<i64>, Option<i32>, Option<String>, Option<String>, String, Option<String>, String, String, String);
-
-const DOC_SELECT: &str = "id, workspace_id, title, original_filename, file_type, file_size_bytes, page_count, language, CAST(tags AS TEXT), processing_status, processing_error, uploaded_by, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
+const DOC_SELECT: &str = "id, workspace_id, title, original_filename, file_type, file_size_bytes, page_count, language, CAST(tags AS TEXT) AS tags_text, processing_status, processing_error, chunks_total, chunks_done, embedding_batches_total, embedding_batches_done, uploaded_by, CAST(created_at AS TEXT) AS created_at, CAST(updated_at AS TEXT) AS updated_at";
 
 async fn list_documents(
     auth: AuthUser,
@@ -413,7 +441,7 @@ async fn reprocess_document(
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
 
     let q = format!(
-        "UPDATE documents SET processing_status = 'pending', processing_error = NULL WHERE id = $1 AND workspace_id = $2 RETURNING {}",
+        "UPDATE documents SET processing_status = 'pending', processing_error = NULL, chunks_total = NULL, chunks_done = NULL, embedding_batches_total = NULL, embedding_batches_done = NULL WHERE id = $1 AND workspace_id = $2 RETURNING {}",
         DOC_SELECT
     );
 

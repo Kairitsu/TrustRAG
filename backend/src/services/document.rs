@@ -46,6 +46,31 @@ async fn update_status(
     Ok(())
 }
 
+/// Update chunk/embedding progress counters without changing status.
+async fn update_progress(
+    pool: &DbPool,
+    doc_id: Uuid,
+    chunks_total: Option<i32>,
+    chunks_done: Option<i32>,
+    emb_total: Option<i32>,
+    emb_done: Option<i32>,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        &format!(
+            "UPDATE documents SET chunks_total = COALESCE($1, chunks_total), chunks_done = COALESCE($2, chunks_done), embedding_batches_total = COALESCE($3, embedding_batches_total), embedding_batches_done = COALESCE($4, embedding_batches_done), updated_at = {} WHERE id = $5",
+            crate::db::compat::current_timestamp_sql()
+        ),
+    )
+    .bind(chunks_total)
+    .bind(chunks_done)
+    .bind(emb_total)
+    .bind(emb_done)
+    .bind(doc_id.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Full document processing pipeline (async task).
 ///
 /// Steps:
@@ -216,7 +241,10 @@ async fn process_document_inner(
 
     let chunk_config = ChunkConfig::default();
     let chunks = chunk_markdown(&markdown, &chunk_config);
-    tracing::info!(doc_id = %doc_id, chunk_count = chunks.len(), "Chunking completed");
+    let chunks_total = chunks.len() as i32;
+    tracing::info!(doc_id = %doc_id, chunk_count = chunks_total, "Chunking completed");
+
+    update_progress(pool, doc_id, Some(chunks_total), Some(0), None, None).await?;
 
     sqlx::query("DELETE FROM document_chunks WHERE document_id = $1")
         .bind(doc_id.to_string())
@@ -226,7 +254,7 @@ async fn process_document_inner(
     let mut chunk_ids = Vec::with_capacity(chunks.len());
     let mut chunk_texts = Vec::with_capacity(chunks.len());
 
-    for chunk in &chunks {
+    for (ci, chunk) in chunks.iter().enumerate() {
         let chunk_id = Uuid::new_v4();
         chunk_ids.push(chunk_id);
         chunk_texts.push(chunk.content.clone());
@@ -249,6 +277,10 @@ async fn process_document_inner(
         .bind(&chunk.content_hash)
         .execute(pool)
         .await?;
+
+        if (ci + 1) % 50 == 0 || ci + 1 == chunks.len() {
+            update_progress(pool, doc_id, None, Some((ci + 1) as i32), None, None).await?;
+        }
     }
 
     if let Some(provider) = embedding_provider {
@@ -262,6 +294,8 @@ async fn process_document_inner(
 
         let embed_batch = 32;
         let total_batches = (chunk_texts.len() + embed_batch - 1) / embed_batch;
+        update_progress(pool, doc_id, None, None, Some(total_batches as i32), Some(0)).await?;
+
         let mut all_embeddings = Vec::with_capacity(chunk_texts.len());
 
         for (batch_idx, text_batch) in chunk_texts.chunks(embed_batch).enumerate() {
@@ -277,6 +311,8 @@ async fn process_document_inner(
                 .await
                 .map_err(|e| anyhow::anyhow!("[embedding] batch {} failed: {}", batch_idx + 1, e))?;
             all_embeddings.extend(batch_result);
+
+            update_progress(pool, doc_id, None, None, None, Some((batch_idx + 1) as i32)).await?;
         }
 
         store_chunk_embeddings(pool, &chunk_ids, &all_embeddings)

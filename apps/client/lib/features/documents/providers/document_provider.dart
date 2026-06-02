@@ -15,6 +15,10 @@ class Document {
   final String processingStatus;
   final String? processingError;
   final int? chunkCount;
+  final int? chunksTotal;
+  final int? chunksDone;
+  final int? embeddingBatchesTotal;
+  final int? embeddingBatchesDone;
   final List<String> tags;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -28,6 +32,10 @@ class Document {
     required this.processingStatus,
     this.processingError,
     this.chunkCount,
+    this.chunksTotal,
+    this.chunksDone,
+    this.embeddingBatchesTotal,
+    this.embeddingBatchesDone,
     this.tags = const [],
     required this.createdAt,
     required this.updatedAt,
@@ -42,6 +50,37 @@ class Document {
   bool get isStale =>
       isProcessing &&
       DateTime.now().difference(updatedAt).inMinutes > 5;
+
+  double? get progressPercent {
+    if (processingStatus == 'chunking' && chunksTotal != null && chunksTotal! > 0) {
+      return (chunksDone ?? 0) / chunksTotal!;
+    }
+    if (processingStatus == 'embedding' && embeddingBatchesTotal != null && embeddingBatchesTotal! > 0) {
+      return (embeddingBatchesDone ?? 0) / embeddingBatchesTotal!;
+    }
+    return null;
+  }
+
+  String get progressDescription {
+    if (processingStatus == 'pending') return '等待处理';
+    if (processingStatus == 'processing') return '正在解析文档...';
+    if (processingStatus == 'chunking') {
+      if (chunksTotal != null && chunksTotal! > 0) {
+        return '分块中 ${chunksDone ?? 0}/$chunksTotal';
+      }
+      return '正在分块...';
+    }
+    if (processingStatus == 'embedding') {
+      if (embeddingBatchesTotal != null && embeddingBatchesTotal! > 0) {
+        return '向量化 ${embeddingBatchesDone ?? 0}/$embeddingBatchesTotal';
+      }
+      return '正在生成向量...';
+    }
+    if (processingStatus == 'ready') return '已就绪';
+    if (processingStatus == 'failed') return '处理失败';
+    if (processingStatus == 'embedding_failed') return '向量化失败';
+    return processingStatus;
+  }
 
   factory Document.fromJson(Map<String, dynamic> json) {
     final rawTags = json['tags'];
@@ -58,6 +97,10 @@ class Document {
       processingStatus: json['processing_status'] ?? 'pending',
       processingError: json['processing_error'],
       chunkCount: json['chunk_count'],
+      chunksTotal: json['chunks_total'],
+      chunksDone: json['chunks_done'],
+      embeddingBatchesTotal: json['embedding_batches_total'],
+      embeddingBatchesDone: json['embedding_batches_done'],
       tags: parsedTags,
       createdAt: DateTime.parse(json['created_at']),
       updatedAt: DateTime.tryParse(json['updated_at'] ?? '') ?? DateTime.parse(json['created_at']),
@@ -78,6 +121,10 @@ class Document {
       processingStatus: processingStatus ?? this.processingStatus,
       processingError: processingError == _sentinel ? this.processingError : processingError as String?,
       chunkCount: chunkCount,
+      chunksTotal: chunksTotal,
+      chunksDone: chunksDone,
+      embeddingBatchesTotal: embeddingBatchesTotal,
+      embeddingBatchesDone: embeddingBatchesDone,
       tags: tags ?? this.tags,
       createdAt: createdAt,
       updatedAt: updatedAt,

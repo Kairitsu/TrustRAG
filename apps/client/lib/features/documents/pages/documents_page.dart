@@ -350,7 +350,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                             children: [
                               Text(doc.fileSizeFormatted),
                               const SizedBox(width: 12),
-                              _statusChip(doc.processingStatus),
+                              _statusChip(doc),
                               if (doc.chunkCount != null) ...[
                                 const SizedBox(width: 12),
                                 Text('${doc.chunkCount} 分块',
@@ -750,41 +750,31 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
     await ref.read(documentProvider.notifier).updateTags(ws.id, doc.id, newTags);
   }
 
-  Widget _statusChip(String status) {
+  Widget _statusChip(Document doc) {
     Color color;
-    String label;
-    bool isLoading = false;
-    switch (status) {
+    final label = doc.progressDescription;
+    final isLoading = doc.isProcessing;
+    final progress = doc.progressPercent;
+
+    switch (doc.processingStatus) {
       case 'ready':
         color = Colors.green;
-        label = '就绪';
         break;
       case 'processing':
-        color = Colors.orange;
-        label = '解析中';
-        isLoading = true;
-        break;
       case 'chunking':
         color = Colors.orange;
-        label = '分块中';
-        isLoading = true;
         break;
       case 'embedding':
         color = Colors.blue;
-        label = '向量化中';
-        isLoading = true;
         break;
       case 'failed':
         color = Colors.red;
-        label = '失败';
         break;
       case 'embedding_failed':
         color = Colors.orange;
-        label = '向量化失败';
         break;
       default:
         color = Colors.grey;
-        label = '等待';
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -795,7 +785,18 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (isLoading) ...[
+          if (isLoading && progress != null) ...[
+            SizedBox(
+              width: 10,
+              height: 10,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: color,
+                value: progress,
+              ),
+            ),
+            const SizedBox(width: 4),
+          ] else if (isLoading) ...[
             SizedBox(
               width: 10,
               height: 10,
