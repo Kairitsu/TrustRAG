@@ -23,6 +23,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _rememberLogin = true;
   List<String> _savedAccounts = [];
   bool _enteringLocalMode = false;
+  bool _switchingAccount = false;
 
   static const _localEmail = 'local@trustrag.desktop';
 
@@ -39,16 +40,89 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
   }
 
+  Future<void> _ensureBackendRunning({String? accountId}) async {
+    if (!BackendManager.shouldRunEmbedded) return;
+    final bm = BackendManager();
+    if (bm.isRunning) return;
+
+    await bm.start(accountId: accountId ?? _localEmail);
+    await bm.ready;
+
+    if (bm.hasFailed) {
+      throw Exception(bm.startupError ?? '本地后端启动失败');
+    }
+  }
+
   Future<void> _enterLocalMode() async {
     setState(() => _enteringLocalMode = true);
     try {
-      if (DesktopAutoSetup.shouldAutoSetup || BackendManager.shouldRunEmbedded) {
-        await DesktopAutoSetup.ensureSetup(ref.read(apiClientProvider));
+      if (BackendManager.shouldRunEmbedded) {
+        await _ensureBackendRunning(accountId: _localEmail);
+
+        final api = ref.read(apiClientProvider);
+        api.dio.options.baseUrl = BackendManager().baseUrl;
+
+        await DesktopAutoSetup.ensureSetup(api);
         ref.invalidate(authProvider);
         ref.read(authProvider.notifier).checkAuthStatus();
       }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('本地模式启动失败: $e'), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => _enteringLocalMode = false);
+    }
+  }
+
+  Future<void> _handleAccountSwitch(String email) async {
+    setState(() => _switchingAccount = true);
+    try {
+      if (BackendManager.shouldRunEmbedded) {
+        await _ensureBackendRunning(accountId: email);
+      }
+
+      final result = await ApiClient.switchToAccount(email);
+      if (!mounted) return;
+
+      switch (result) {
+        case ApiClient.switchOk:
+          final api = ref.read(apiClientProvider);
+          if (BackendManager.shouldRunEmbedded) {
+            api.dio.options.baseUrl = BackendManager().baseUrl;
+          }
+          ref.invalidate(authProvider);
+          ref.read(authProvider.notifier).checkAuthStatus();
+          break;
+        case ApiClient.switchNeedLogin:
+          _emailController.text = email;
+          _passwordController.clear();
+          FocusScope.of(context).nextFocus();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('该账号需要重新输入密码')),
+          );
+          break;
+        case ApiClient.switchFailed:
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '切换账号失败: ${BackendManager().startupError ?? "本地后端启动失败"}',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+          break;
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('切换账号失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _switchingAccount = false);
     }
   }
 
@@ -158,21 +232,31 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: _savedAccounts
-                        .where((e) => e != _localEmail)
-                        .map((email) => ActionChip(
-                      avatar: const Icon(Icons.person, size: 18),
-                      label: Text(email, style: const TextStyle(fontSize: 13)),
-                      onPressed: () {
-                        _emailController.text = email;
-                        _passwordController.clear();
-                        FocusScope.of(context).nextFocus();
-                      },
-                    )).toList(),
-                  ),
+                  if (_switchingAccount)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                          SizedBox(width: 8),
+                          Text('正在切换账号...', style: TextStyle(fontSize: 13)),
+                        ],
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: _savedAccounts
+                          .where((e) => e != _localEmail)
+                          .map((email) => ActionChip(
+                        avatar: const Icon(Icons.person, size: 18),
+                        label: Text(email, style: const TextStyle(fontSize: 13)),
+                        onPressed: () => _handleAccountSwitch(email),
+                      )).toList(),
+                    ),
                 ],
                 const SizedBox(height: 24),
                 Form(

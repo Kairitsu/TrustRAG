@@ -88,26 +88,30 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<bool> login(String email, String password, {bool rememberLogin = true}) async {
     final backend = BackendManager();
-    if (BackendManager.shouldRunEmbedded && backend.hasFailed) {
-      state = state.copyWith(
-        status: AuthStatus.unauthenticated,
-        error: 'Backend not available: ${backend.startupError}',
-      );
-      return false;
-    }
 
     try {
       state = state.copyWith(error: null);
 
-      // Each account has its own data directory and database.
-      // Restart the backend to point at the target account's directory
-      // BEFORE sending the login request, otherwise the credentials will
-      // be verified against the wrong database.
-      final previousAccount = await ApiClient.getActiveAccount();
-      if (BackendManager.shouldRunEmbedded && previousAccount != email) {
-        await BackendManager().restart(accountId: email);
-        await BackendManager().ready;
-        _api.dio.options.baseUrl = BackendManager().baseUrl;
+      if (BackendManager.shouldRunEmbedded) {
+        final previousAccount = await ApiClient.getActiveAccount();
+        final needRestart = previousAccount != email || !backend.isRunning;
+
+        if (needRestart) {
+          if (backend.isRunning && previousAccount != email) {
+            await backend.restart(accountId: email);
+          } else if (!backend.isRunning) {
+            await backend.start(accountId: email);
+          }
+          await backend.ready;
+          if (backend.hasFailed) {
+            state = state.copyWith(
+              status: AuthStatus.unauthenticated,
+              error: '本地后端启动失败: ${backend.startupError ?? "未知错误"}',
+            );
+            return false;
+          }
+        }
+        _api.dio.options.baseUrl = backend.baseUrl;
       }
 
       final resp = await _api.dio.post('/auth/login', data: {
@@ -134,11 +138,19 @@ class AuthNotifier extends StateNotifier<AuthState> {
       String msg;
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
-        msg = BackendManager.shouldRunEmbedded && !backend.isRunning
-            ? 'Local backend failed to start. Please check application logs.'
-            : 'Cannot connect to server. Please check your network connection.';
+        if (BackendManager.shouldRunEmbedded) {
+          if (!backend.isRunning) {
+            msg = '本地后端未启动，请先点击"进入本地模式"启动后端服务';
+          } else if (backend.hasFailed) {
+            msg = '本地后端启动失败: ${backend.startupError ?? "请查看应用日志"}';
+          } else {
+            msg = '本地后端健康检查失败 (${backend.baseUrl})，请稍后重试';
+          }
+        } else {
+          msg = '无法连接服务器，请检查网络连接';
+        }
       } else {
-        msg = (e.response?.data?['error'] ?? 'Login failed').toString();
+        msg = (e.response?.data?['error'] ?? '登录失败').toString();
       }
       state = state.copyWith(
         status: AuthStatus.unauthenticated,
@@ -150,23 +162,29 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<bool> register(String name, String email, String password) async {
     final backend = BackendManager();
-    if (BackendManager.shouldRunEmbedded && backend.hasFailed) {
-      state = state.copyWith(
-        error: 'Backend not available: ${backend.startupError}',
-      );
-      return false;
-    }
 
     try {
       state = state.copyWith(error: null);
 
-      // Switch backend to target account's data directory before registration,
-      // so the new user is created in the correct isolated database.
-      final previousAccount = await ApiClient.getActiveAccount();
-      if (BackendManager.shouldRunEmbedded && previousAccount != email) {
-        await BackendManager().restart(accountId: email);
-        await BackendManager().ready;
-        _api.dio.options.baseUrl = BackendManager().baseUrl;
+      if (BackendManager.shouldRunEmbedded) {
+        final previousAccount = await ApiClient.getActiveAccount();
+        final needRestart = previousAccount != email || !backend.isRunning;
+
+        if (needRestart) {
+          if (backend.isRunning && previousAccount != email) {
+            await backend.restart(accountId: email);
+          } else if (!backend.isRunning) {
+            await backend.start(accountId: email);
+          }
+          await backend.ready;
+          if (backend.hasFailed) {
+            state = state.copyWith(
+              error: '本地后端启动失败: ${backend.startupError ?? "未知错误"}',
+            );
+            return false;
+          }
+        }
+        _api.dio.options.baseUrl = backend.baseUrl;
       }
 
       final resp = await _api.dio.post('/auth/register', data: {
@@ -189,11 +207,19 @@ class AuthNotifier extends StateNotifier<AuthState> {
       String msg;
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
-        msg = BackendManager.shouldRunEmbedded && !backend.isRunning
-            ? 'Local backend failed to start. Please check application logs.'
-            : 'Cannot connect to server. Please check your network connection.';
+        if (BackendManager.shouldRunEmbedded) {
+          if (!backend.isRunning) {
+            msg = '本地后端未启动，请先点击"进入本地模式"启动后端服务';
+          } else if (backend.hasFailed) {
+            msg = '本地后端启动失败: ${backend.startupError ?? "请查看应用日志"}';
+          } else {
+            msg = '本地后端健康检查失败 (${backend.baseUrl})，请稍后重试';
+          }
+        } else {
+          msg = '无法连接服务器，请检查网络连接';
+        }
       } else {
-        msg = (e.response?.data?['error'] ?? 'Registration failed').toString();
+        msg = (e.response?.data?['error'] ?? '注册失败').toString();
       }
       state = state.copyWith(error: msg);
       return false;
