@@ -154,9 +154,9 @@ async fn create_config(
     .bind(&req.model_name)
     .bind(req.top_n)
     .bind(req.initial_recall_k)
-    .bind(req.fallback_enabled)
+    .bind(req.fallback_enabled as i32)
     .bind(req.timeout_secs)
-    .bind(req.is_default)
+    .bind(req.is_default as i32)
     .execute(&state.pool)
     .await?;
 
@@ -197,75 +197,54 @@ async fn update_config(
             .await?;
     }
 
-    let mut sets = Vec::new();
-    let mut binds: Vec<String> = Vec::new();
-    let mut idx = 1;
+    let mut set_clauses = Vec::new();
 
-    macro_rules! maybe_set {
-        ($field:ident, $col:expr) => {
-            if let Some(ref val) = req.$field {
-                sets.push(format!("{} = ${}", $col, idx));
-                binds.push(val.to_string());
-                idx += 1;
-            }
-        };
-    }
+    if req.name.is_some() { set_clauses.push("name"); }
+    if req.provider.is_some() { set_clauses.push("provider"); }
+    if req.api_base_url.is_some() { set_clauses.push("api_base_url"); }
+    if req.api_key.is_some() { set_clauses.push("api_key_enc"); }
+    if req.model_name.is_some() { set_clauses.push("model_name"); }
+    if req.top_n.is_some() { set_clauses.push("top_n"); }
+    if req.initial_recall_k.is_some() { set_clauses.push("initial_recall_k"); }
+    if req.fallback_enabled.is_some() { set_clauses.push("fallback_enabled"); }
+    if req.timeout_secs.is_some() { set_clauses.push("timeout_secs"); }
+    if req.is_default.is_some() { set_clauses.push("is_default"); }
 
-    maybe_set!(name, "name");
-    maybe_set!(provider, "provider");
-    maybe_set!(api_base_url, "api_base_url");
-    maybe_set!(api_key, "api_key_enc");
-    maybe_set!(model_name, "model_name");
-
-    if let Some(top_n) = req.top_n {
-        sets.push(format!("top_n = ${}", idx));
-        binds.push(top_n.to_string());
-        idx += 1;
-    }
-
-    if let Some(initial_recall_k) = req.initial_recall_k {
-        sets.push(format!("initial_recall_k = ${}", idx));
-        binds.push(initial_recall_k.to_string());
-        idx += 1;
-    }
-
-    if let Some(fallback_enabled) = req.fallback_enabled {
-        sets.push(format!("fallback_enabled = ${}", idx));
-        binds.push(fallback_enabled.to_string());
-        idx += 1;
-    }
-
-    if let Some(timeout_secs) = req.timeout_secs {
-        sets.push(format!("timeout_secs = ${}", idx));
-        binds.push(timeout_secs.to_string());
-        idx += 1;
-    }
-
-    if let Some(is_default) = req.is_default {
-        sets.push(format!("is_default = ${}", idx));
-        binds.push(is_default.to_string());
-        idx += 1;
-    }
-
-    if sets.is_empty() {
+    if set_clauses.is_empty() {
         return Err(AppError::BadRequest("No fields to update".into()));
     }
 
-    #[cfg(sqlite_mode)]
-    sets.push(format!("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"));
-    #[cfg(feature = "postgres")]
-    sets.push("updated_at = now()".to_string());
+    let mut sets: Vec<String> = set_clauses.iter().enumerate()
+        .map(|(i, col)| format!("{} = ${}", col, i + 1))
+        .collect();
 
+    sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')".to_string());
+
+    let param_idx = set_clauses.len() + 1;
     let sql = format!(
         "UPDATE rerank_configs SET {} WHERE id = ${}",
         sets.join(", "),
-        idx,
+        param_idx,
     );
 
     let mut query = sqlx::query(&sql);
-    for b in &binds {
-        query = query.bind(b);
+
+    for col in &set_clauses {
+        match *col {
+            "name" => { query = query.bind(req.name.as_deref().unwrap_or_default()); }
+            "provider" => { query = query.bind(req.provider.as_deref().unwrap_or_default()); }
+            "api_base_url" => { query = query.bind(req.api_base_url.as_deref().unwrap_or_default()); }
+            "api_key_enc" => { query = query.bind(req.api_key.as_deref().unwrap_or_default()); }
+            "model_name" => { query = query.bind(req.model_name.as_deref().unwrap_or_default()); }
+            "top_n" => { query = query.bind(req.top_n.unwrap_or(5)); }
+            "initial_recall_k" => { query = query.bind(req.initial_recall_k.unwrap_or(30)); }
+            "fallback_enabled" => { query = query.bind(req.fallback_enabled.unwrap_or(true) as i32); }
+            "timeout_secs" => { query = query.bind(req.timeout_secs.unwrap_or(30)); }
+            "is_default" => { query = query.bind(req.is_default.unwrap_or(false) as i32); }
+            _ => {}
+        }
     }
+
     query = query.bind(id.to_string());
     query.execute(&state.pool).await?;
 
@@ -371,4 +350,154 @@ async fn set_default(
         "success": true,
         "message": "已设为默认重排模型"
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_request_deserialization() {
+        let json_str = r#"{
+            "name": "Test Reranker",
+            "provider": "jina",
+            "api_base_url": "https://api.jina.ai/v1",
+            "model_name": "jina-reranker-v2-base-multilingual",
+            "api_key": "test-key"
+        }"#;
+        let req: CreateRerankConfigRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.name, "Test Reranker");
+        assert_eq!(req.provider, "jina");
+        assert_eq!(req.top_n, 5);
+        assert_eq!(req.initial_recall_k, 30);
+        assert!(req.fallback_enabled);
+        assert_eq!(req.timeout_secs, 30);
+        assert!(!req.is_default);
+    }
+
+    #[test]
+    fn create_request_with_all_fields() {
+        let json_str = r#"{
+            "name": "Full Config",
+            "provider": "cohere",
+            "api_base_url": "https://api.cohere.ai",
+            "model_name": "rerank-v3.5",
+            "top_n": 10,
+            "initial_recall_k": 50,
+            "fallback_enabled": false,
+            "timeout_secs": 60,
+            "is_default": true
+        }"#;
+        let req: CreateRerankConfigRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.top_n, 10);
+        assert_eq!(req.initial_recall_k, 50);
+        assert!(!req.fallback_enabled);
+        assert_eq!(req.timeout_secs, 60);
+        assert!(req.is_default);
+    }
+
+    #[test]
+    fn update_request_partial() {
+        let json_str = r#"{"name": "Updated Name"}"#;
+        let req: UpdateRerankConfigRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.name, Some("Updated Name".to_string()));
+        assert!(req.provider.is_none());
+        assert!(req.top_n.is_none());
+        assert!(req.fallback_enabled.is_none());
+        assert!(req.is_default.is_none());
+    }
+
+    #[test]
+    fn update_request_with_bool_fields() {
+        let json_str = r#"{
+            "fallback_enabled": false,
+            "is_default": true,
+            "top_n": 8,
+            "timeout_secs": 45
+        }"#;
+        let req: UpdateRerankConfigRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.fallback_enabled, Some(false));
+        assert_eq!(req.is_default, Some(true));
+        assert_eq!(req.top_n, Some(8));
+        assert_eq!(req.timeout_secs, Some(45));
+    }
+
+    #[test]
+    fn response_serialization() {
+        let resp = RerankConfigResponse {
+            id: "test-id".into(),
+            workspace_id: None,
+            user_id: "user-1".into(),
+            name: "Test".into(),
+            provider: "jina".into(),
+            api_base_url: "https://api.jina.ai".into(),
+            has_api_key: true,
+            model_name: "reranker-v2".into(),
+            top_n: 5,
+            initial_recall_k: 30,
+            fallback_enabled: true,
+            timeout_secs: 30,
+            is_default: false,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["id"], "test-id");
+        assert_eq!(json["has_api_key"], true);
+        assert_eq!(json["fallback_enabled"], true);
+        assert_eq!(json["top_n"], 5);
+    }
+
+    #[test]
+    fn row_to_response_conversion() {
+        let row: RerankRow = (
+            "id-1".into(),
+            Some("ws-1".into()),
+            "user-1".into(),
+            "Test Config".into(),
+            "jina".into(),
+            "https://api.jina.ai".into(),
+            Some("encrypted-key".into()),
+            "reranker-v2".into(),
+            5,
+            30,
+            true,
+            30,
+            false,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+        );
+        let resp = row_to_response(row);
+        assert_eq!(resp.id, "id-1");
+        assert_eq!(resp.workspace_id, Some("ws-1".into()));
+        assert!(resp.has_api_key);
+        assert_eq!(resp.top_n, 5);
+        assert!(resp.fallback_enabled);
+    }
+
+    #[test]
+    fn row_to_response_no_api_key() {
+        let row: RerankRow = (
+            "id-2".into(),
+            None,
+            "user-1".into(),
+            "No Key".into(),
+            "custom".into(),
+            "http://localhost:8080".into(),
+            None,
+            "model-x".into(),
+            3,
+            20,
+            false,
+            15,
+            true,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+        );
+        let resp = row_to_response(row);
+        assert!(!resp.has_api_key);
+        assert_eq!(resp.workspace_id, None);
+        assert!(!resp.fallback_enabled);
+        assert!(resp.is_default);
+    }
 }

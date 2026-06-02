@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/providers/auth_provider.dart';
@@ -66,37 +67,58 @@ class RerankConfigNotifier
     }
   }
 
+  String? lastError;
+
   Future<bool> create(Map<String, dynamic> data) async {
+    lastError = null;
     try {
       final api = ref.read(apiClientProvider);
       await api.dio.post('/rerank-configs', data: data);
       await load();
       return true;
-    } catch (_) {
+    } catch (e) {
+      lastError = _extractError(e);
       return false;
     }
   }
 
   Future<bool> update(String id, Map<String, dynamic> data) async {
+    lastError = null;
     try {
       final api = ref.read(apiClientProvider);
       await api.dio.put('/rerank-configs/$id', data: data);
       await load();
       return true;
-    } catch (_) {
+    } catch (e) {
+      lastError = _extractError(e);
       return false;
     }
   }
 
   Future<bool> delete(String id) async {
+    lastError = null;
     try {
       final api = ref.read(apiClientProvider);
       await api.dio.delete('/rerank-configs/$id');
       await load();
       return true;
-    } catch (_) {
+    } catch (e) {
+      lastError = _extractError(e);
       return false;
     }
+  }
+
+  String _extractError(dynamic e) {
+    if (e is DioException) {
+      final data = e.response?.data;
+      if (data is Map && data.containsKey('message')) {
+        return data['message'].toString();
+      }
+      if (e.response?.statusCode != null) {
+        return 'Server error (${e.response!.statusCode})';
+      }
+    }
+    return e.toString();
   }
 
   Future<Map<String, dynamic>> testConnection(String id) async {

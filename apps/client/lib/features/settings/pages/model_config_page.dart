@@ -989,17 +989,27 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                 if (apiKeyCtl.text.isNotEmpty) {
                   data['api_key'] = apiKeyCtl.text;
                 }
+                final notifier = ref.read(rerankConfigProvider.notifier);
                 bool ok;
                 if (config == null) {
-                  ok = await ref
-                      .read(rerankConfigProvider.notifier)
-                      .create(data);
+                  ok = await notifier.create(data);
                 } else {
-                  ok = await ref
-                      .read(rerankConfigProvider.notifier)
-                      .update(config.id, data);
+                  ok = await notifier.update(config.id, data);
                 }
-                if (ok && ctx.mounted) Navigator.pop(ctx);
+                if (ctx.mounted) {
+                  if (ok) {
+                    Navigator.pop(ctx);
+                  } else {
+                    final err = notifier.lastError ?? '保存失败';
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Rerank 配置保存失败: $err'),
+                        backgroundColor: Colors.red,
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                }
               },
               child: Text(config == null ? '创建' : '保存'),
             ),
