@@ -487,7 +487,7 @@ async fn generate_for_all_documents(
     let llm = load_default_llm(&state.pool, auth.id, &state.jwt_secret).await?;
 
     let doc_ids = sqlx::query_as::<_, (String,)>(
-        "SELECT id FROM documents WHERE workspace_id = $1 AND processing_status = 'completed'"
+        "SELECT id FROM documents WHERE workspace_id = $1 AND processing_status IN ('ready', 'completed')"
     )
     .bind(ws_id.to_string())
     .fetch_all(&state.pool)
@@ -498,7 +498,7 @@ async fn generate_for_all_documents(
             task_id: String::new(),
             status: "completed".into(),
             total_documents: 0,
-            message: "No completed documents found in this workspace".into(),
+            message: "No ready documents found in this workspace".into(),
         }));
     }
 

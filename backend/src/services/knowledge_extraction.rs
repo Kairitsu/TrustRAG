@@ -128,8 +128,8 @@ pub async fn store_extraction(
             });
 
             let row: (String,) = sqlx::query_as(
-                "INSERT INTO entities (workspace_id, name, entity_type, document_id, chunk_id, metadata) \
-                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"
+                "INSERT INTO entities (workspace_id, name, entity_type, document_id, chunk_id, graph_layer, metadata) \
+                 VALUES ($1, $2, $3, $4, $5, 'knowledge', $6) RETURNING id"
             )
             .bind(workspace_id.to_string())
             .bind(&entity.name)
@@ -171,8 +171,8 @@ pub async fn store_extraction(
 
                 let weight = relation.confidence.clamp(0.0, 1.0);
                 sqlx::query(
-                    "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, metadata) \
-                     VALUES ($1, $2, $3, $4, $5, $6)"
+                    "INSERT INTO entity_relations (workspace_id, source_entity_id, target_entity_id, relation_type, weight, graph_layer, metadata) \
+                     VALUES ($1, $2, $3, $4, $5, 'knowledge', $6)"
                 )
                 .bind(workspace_id.to_string())
                 .bind(src)
@@ -292,7 +292,7 @@ pub async fn build_document_layer(
     let mut relation_count = 0usize;
 
     let docs = sqlx::query_as::<_, (String, String, Option<String>)>(
-        "SELECT id, title, folder FROM documents WHERE workspace_id = $1 AND status = 'completed'"
+        "SELECT id, title, folder FROM documents WHERE workspace_id = $1 AND processing_status IN ('ready', 'completed')"
     )
     .bind(workspace_id.to_string())
     .fetch_all(pool)
