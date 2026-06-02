@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart' show MarkdownBody, MarkdownStyleSheet;
@@ -10,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:streaming_markdown/streaming_markdown.dart' hide MarkdownStyleSheet;
 
+import '../../../core/providers/app_version_provider.dart';
 import '../../../core/utils/ai_icon_helper.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -17,6 +19,7 @@ import '../../../core/providers/dev_mode_provider.dart';
 import '../../dashboard/providers/workspace_provider.dart';
 import '../../reader/pages/pdf_viewer_page.dart';
 import '../../settings/providers/model_config_provider.dart';
+import '../../settings/providers/rerank_config_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/review_provider.dart';
 
@@ -874,6 +877,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             _actionBtn(Icons.refresh_rounded, '重试', iconColor, iconSize, btnPadding, () {
               _retryMessage(msg);
             }),
+            const SizedBox(width: 2),
+            _actionBtn(Icons.bug_report_outlined, '复制诊断信息', iconColor, iconSize, btnPadding, () {
+              _copyDiagnostics(msg);
+            }),
           ],
           const SizedBox(width: 2),
           _actionBtn(Icons.edit_rounded, '编辑', iconColor, iconSize, btnPadding, () {
@@ -956,6 +963,51 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             ),
         ],
       ),
+    );
+  }
+
+  void _copyDiagnostics(ChatMessage msg) {
+    final ws = ref.read(selectedWorkspaceProvider);
+    final conv = ref.read(selectedConversationProvider);
+
+    final llmConfigs = ref.read(modelConfigProvider).valueOrNull ?? [];
+    final defaultLlm = llmConfigs.where((c) => c.isDefault).firstOrNull ?? llmConfigs.firstOrNull;
+
+    final rerankConfigs = ref.read(rerankConfigProvider).valueOrNull ?? [];
+    final defaultRerank = rerankConfigs.where((c) => c.isDefault).firstOrNull ?? rerankConfigs.firstOrNull;
+
+    final appVersion = ref.read(appVersionProvider).valueOrNull ?? 'unknown';
+
+    String platform;
+    if (kIsWeb) {
+      platform = 'web';
+    } else {
+      switch (defaultTargetPlatform) {
+        case TargetPlatform.android: platform = 'android'; break;
+        case TargetPlatform.iOS: platform = 'ios'; break;
+        case TargetPlatform.macOS: platform = 'macos'; break;
+        case TargetPlatform.windows: platform = 'windows'; break;
+        case TargetPlatform.linux: platform = 'linux'; break;
+        case TargetPlatform.fuchsia: platform = 'fuchsia'; break;
+      }
+    }
+
+    final buf = StringBuffer()
+      ..writeln('=== TrustRAG Diagnostics ===')
+      ..writeln('Workspace: ${ws?.id ?? "N/A"} (${ws?.name ?? "N/A"})')
+      ..writeln('Conversation: ${conv?.id ?? "N/A"}')
+      ..writeln('Message: ${msg.id}')
+      ..writeln('LLM: ${defaultLlm != null ? "${defaultLlm.provider}/${defaultLlm.modelName}" : "N/A"}')
+      ..writeln('Rerank: ${defaultRerank != null ? "${defaultRerank.provider}/${defaultRerank.modelName} (top${defaultRerank.topN})" : "disabled"}')
+      ..writeln('Sources: ${msg.citations.length}')
+      ..writeln('Version: $appVersion')
+      ..writeln('Platform: $platform')
+      ..writeln('Time: ${msg.createdAt.toIso8601String()}')
+      ..writeln('============================');
+
+    Clipboard.setData(ClipboardData(text: buf.toString()));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('诊断信息已复制'), duration: Duration(seconds: 2)),
     );
   }
 
