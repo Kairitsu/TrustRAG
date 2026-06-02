@@ -15,6 +15,7 @@ class Document {
   final int? chunkCount;
   final List<String> tags;
   final DateTime createdAt;
+  final DateTime updatedAt;
 
   Document({
     required this.id,
@@ -27,7 +28,18 @@ class Document {
     this.chunkCount,
     this.tags = const [],
     required this.createdAt,
+    required this.updatedAt,
   });
+
+  bool get isProcessing =>
+      processingStatus == 'processing' ||
+      processingStatus == 'chunking' ||
+      processingStatus == 'embedding' ||
+      processingStatus == 'pending';
+
+  bool get isStale =>
+      isProcessing &&
+      DateTime.now().difference(updatedAt).inMinutes > 5;
 
   factory Document.fromJson(Map<String, dynamic> json) {
     final rawTags = json['tags'];
@@ -46,6 +58,7 @@ class Document {
       chunkCount: json['chunk_count'],
       tags: parsedTags,
       createdAt: DateTime.parse(json['created_at']),
+      updatedAt: DateTime.tryParse(json['updated_at'] ?? '') ?? DateTime.parse(json['created_at']),
     );
   }
 
@@ -61,6 +74,7 @@ class Document {
       chunkCount: chunkCount,
       tags: tags ?? this.tags,
       createdAt: createdAt,
+      updatedAt: updatedAt,
     );
   }
 

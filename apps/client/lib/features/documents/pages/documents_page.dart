@@ -400,6 +400,17 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(fontSize: 11, color: Colors.red.shade400),
                               ),
+                            )
+                          else if (doc.isStale)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '处理时间较长，文件可能过大或后端任务已中断。'
+                                '如长时间无变化，建议删除后重新上传。',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 11, color: Colors.orange.shade700),
+                              ),
                             ),
                         ],
                       ),

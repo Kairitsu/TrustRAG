@@ -25,7 +25,7 @@ pub struct DocProcessorMetadata {
     pub language: Option<String>,
 }
 
-/// Update document processing status.
+/// Update document processing status with optional progress info.
 async fn update_status(
     pool: &DbPool,
     doc_id: Uuid,
@@ -33,7 +33,10 @@ async fn update_status(
     error: Option<&str>,
 ) -> anyhow::Result<()> {
     sqlx::query(
-        "UPDATE documents SET processing_status = $1, processing_error = $2 WHERE id = $3",
+        &format!(
+            "UPDATE documents SET processing_status = $1, processing_error = $2, updated_at = {} WHERE id = $3",
+            crate::db::compat::current_timestamp_sql()
+        ),
     )
     .bind(status)
     .bind(error)
@@ -209,11 +212,12 @@ async fn process_document_inner(
         .await?;
 
     update_status(pool, doc_id, "chunking", None).await?;
+    tracing::info!(doc_id = %doc_id, markdown_len = markdown.len(), "Starting chunking");
 
     let chunk_config = ChunkConfig::default();
     let chunks = chunk_markdown(&markdown, &chunk_config);
+    tracing::info!(doc_id = %doc_id, chunk_count = chunks.len(), "Chunking completed");
 
-    // Step 6: Insert chunks into DB
     sqlx::query("DELETE FROM document_chunks WHERE document_id = $1")
         .bind(doc_id.to_string())
         .execute(pool)
@@ -247,29 +251,43 @@ async fn process_document_inner(
         .await?;
     }
 
-    // Step 7: Generate and store embeddings
     if let Some(provider) = embedding_provider {
         update_status(pool, doc_id, "embedding", None).await?;
         tracing::info!(
-            "Generating embeddings for {} ({} chunks, model: {})",
-            doc_id,
-            chunk_texts.len(),
-            provider.model_name()
+            doc_id = %doc_id,
+            chunks = chunk_texts.len(),
+            model = %provider.model_name(),
+            "Starting embedding generation"
         );
 
-        let embeddings = provider
-            .embed_texts(&chunk_texts)
-            .await
-            .map_err(|e| anyhow::anyhow!("[embedding] failed to generate embeddings: {}", e))?;
+        let embed_batch = 32;
+        let total_batches = (chunk_texts.len() + embed_batch - 1) / embed_batch;
+        let mut all_embeddings = Vec::with_capacity(chunk_texts.len());
 
-        store_chunk_embeddings(pool, &chunk_ids, &embeddings)
+        for (batch_idx, text_batch) in chunk_texts.chunks(embed_batch).enumerate() {
+            tracing::debug!(
+                doc_id = %doc_id,
+                batch = batch_idx + 1,
+                total = total_batches,
+                "Embedding batch"
+            );
+
+            let batch_result = provider
+                .embed_texts(text_batch)
+                .await
+                .map_err(|e| anyhow::anyhow!("[embedding] batch {} failed: {}", batch_idx + 1, e))?;
+            all_embeddings.extend(batch_result);
+        }
+
+        store_chunk_embeddings(pool, &chunk_ids, &all_embeddings)
             .await
             .map_err(|e| anyhow::anyhow!("[embedding] failed to store embeddings: {}", e))?;
+
+        tracing::info!(doc_id = %doc_id, embeddings = all_embeddings.len(), "Embeddings stored");
     }
 
-    // Step 8: Mark as ready
     update_status(pool, doc_id, "ready", None).await?;
-    tracing::info!("Document {} processed: {} chunks", doc_id, chunks.len());
+    tracing::info!(doc_id = %doc_id, chunks = chunks.len(), "Document processing complete");
 
     Ok(())
 }
