@@ -4278,6 +4278,7 @@ dependencies = [
  "futures-util",
  "hex",
  "jsonwebtoken",
+ "libc",
  "lopdf",
  "moka",
  "opendal",

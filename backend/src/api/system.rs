@@ -1,14 +1,24 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use axum::{
-    extract::State,
+    extract::{Path, Query, State},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
 
 use super::AppState;
+
+pub type OcrTaskStore = Arc<Mutex<HashMap<String, OcrInstallTask>>>;
+
+pub fn new_ocr_task_store() -> OcrTaskStore {
+    Arc::new(Mutex::new(HashMap::new()))
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -19,6 +29,9 @@ pub fn router() -> Router<AppState> {
         .route("/system/ocr-status", get(ocr_status))
         .route("/system/ocr-install-options", get(ocr_install_options))
         .route("/system/ocr-install", post(ocr_install))
+        .route("/system/ocr-install/start", post(ocr_install_start))
+        .route("/system/ocr-install/status/:task_id", get(ocr_install_status))
+        .route("/system/ocr-install/cancel/:task_id", post(ocr_install_cancel))
 }
 
 #[derive(Serialize)]
@@ -636,6 +649,330 @@ async fn ocr_install(
             }))
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 17.9.3  Async OCR install (task-based with polling)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OcrInstallTask {
+    pub task_id: String,
+    pub engine: String,
+    pub package_manager: String,
+    pub status: OcrTaskStatus,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub exit_code: Option<i32>,
+    pub log_lines: Vec<String>,
+    pub message: Option<String>,
+    pub pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OcrTaskStatus {
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Serialize)]
+struct OcrInstallStartResponse {
+    task_id: String,
+    status: OcrTaskStatus,
+}
+
+async fn ocr_install_start(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Json(req): Json<OcrInstallRequest>,
+) -> Result<Json<OcrInstallStartResponse>, AppError> {
+    let platform = detect_platform();
+    let pm = req.package_manager.as_str();
+    let engine = req.engine.as_str();
+
+    let (program, args): (&str, Vec<&str>) = match (engine, pm, platform) {
+        ("tesseract", "apt", OsPlatform::Linux) => (
+            "sudo",
+            vec!["apt", "install", "-y", "tesseract-ocr", "tesseract-ocr-chi-sim", "tesseract-ocr-eng", "poppler-utils"],
+        ),
+        ("tesseract", "brew", _) => (
+            "brew",
+            vec!["install", "tesseract", "tesseract-lang", "poppler"],
+        ),
+        ("tesseract", "choco", OsPlatform::Windows) => (
+            "choco",
+            vec!["install", "tesseract", "poppler", "-y", "--no-progress"],
+        ),
+        ("tesseract", "winget", OsPlatform::Windows) => (
+            "winget",
+            vec!["install", "--accept-source-agreements", "--accept-package-agreements", "UB-Mannheim.TesseractOCR"],
+        ),
+        ("paddleocr", "pip", _) => (
+            "pip3",
+            vec!["install", "paddleocr", "paddlepaddle"],
+        ),
+        _ => {
+            return Err(AppError::BadRequest(format!(
+                "不支持的安装组合: engine={}, pm={}, platform={}", engine, pm, platform
+            )));
+        }
+    };
+
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let task = OcrInstallTask {
+        task_id: task_id.clone(),
+        engine: engine.to_string(),
+        package_manager: pm.to_string(),
+        status: OcrTaskStatus::Running,
+        started_at: now,
+        finished_at: None,
+        exit_code: None,
+        log_lines: vec![format!("Starting: {} {}", program, args.join(" "))],
+        message: None,
+        pid: None,
+    };
+
+    {
+        let mut tasks = state.ocr_tasks.lock().await;
+        tasks.insert(task_id.clone(), task);
+    }
+
+    let store = state.ocr_tasks.clone();
+    let tid = task_id.clone();
+    let prog = program.to_string();
+    let cmd_args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let eng = engine.to_string();
+
+    tokio::spawn(async move {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        use tokio::process::Command;
+
+        let child = Command::new(&prog)
+            .args(&cmd_args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                let mut tasks = store.lock().await;
+                if let Some(t) = tasks.get_mut(&tid) {
+                    t.status = OcrTaskStatus::Failed;
+                    t.finished_at = Some(chrono::Utc::now().to_rfc3339());
+                    t.log_lines.push(format!("Failed to start process: {}", e));
+                    t.message = Some(format!("执行安装命令失败: {}", e));
+                }
+                return;
+            }
+        };
+
+        let pid = child.id();
+        {
+            let mut tasks = store.lock().await;
+            if let Some(t) = tasks.get_mut(&tid) {
+                t.pid = pid;
+            }
+        }
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let store2 = store.clone();
+        let tid2 = tid.clone();
+
+        let stdout_handle = tokio::spawn(async move {
+            if let Some(out) = stdout {
+                let mut reader = BufReader::new(out).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    let mut tasks = store2.lock().await;
+                    if let Some(t) = tasks.get_mut(&tid2) {
+                        if t.status == OcrTaskStatus::Cancelled {
+                            break;
+                        }
+                        t.log_lines.push(line);
+                    }
+                }
+            }
+        });
+
+        let store3 = store.clone();
+        let tid3 = tid.clone();
+        let stderr_handle = tokio::spawn(async move {
+            if let Some(err) = stderr {
+                let mut reader = BufReader::new(err).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    let mut tasks = store3.lock().await;
+                    if let Some(t) = tasks.get_mut(&tid3) {
+                        if t.status == OcrTaskStatus::Cancelled {
+                            break;
+                        }
+                        t.log_lines.push(format!("[stderr] {}", line));
+                    }
+                }
+            }
+        });
+
+        let timeout_result = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            child.wait(),
+        ).await;
+
+        let _ = stdout_handle.await;
+        let _ = stderr_handle.await;
+
+        let mut tasks = store.lock().await;
+        if let Some(t) = tasks.get_mut(&tid) {
+            if t.status == OcrTaskStatus::Cancelled {
+                return;
+            }
+            t.finished_at = Some(chrono::Utc::now().to_rfc3339());
+
+            match timeout_result {
+                Ok(Ok(exit_status)) => {
+                    t.exit_code = exit_status.code();
+                    let log_lower = t.log_lines.join("\n").to_lowercase();
+                    let already_installed = log_lower.contains("already installed")
+                        || log_lower.contains("no available upgrade")
+                        || log_lower.contains("已安装");
+                    let success = exit_status.success() || already_installed;
+
+                    if success {
+                        t.status = OcrTaskStatus::Completed;
+                        t.message = if already_installed {
+                            Some(format!("{} 已安装（最新版本），无需更新。", eng))
+                        } else {
+                            Some(format!("{} 安装成功！请刷新页面确认状态。", eng))
+                        };
+                    } else {
+                        t.status = OcrTaskStatus::Failed;
+                        t.message = Some(format!(
+                            "{} 安装失败 (退出码: {:?})，请查看日志或手动安装。",
+                            eng, exit_status.code()
+                        ));
+                    }
+                }
+                Ok(Err(e)) => {
+                    t.status = OcrTaskStatus::Failed;
+                    t.log_lines.push(format!("Process error: {}", e));
+                    t.message = Some(format!("安装进程异常: {}", e));
+                }
+                Err(_) => {
+                    t.status = OcrTaskStatus::Failed;
+                    t.log_lines.push("Installation timed out after 10 minutes.".to_string());
+                    t.message = Some(format!("{} 安装超时 (10 分钟)。建议手动安装。", eng));
+                }
+            }
+        }
+    });
+
+    Ok(Json(OcrInstallStartResponse {
+        task_id,
+        status: OcrTaskStatus::Running,
+    }))
+}
+
+#[derive(Deserialize)]
+struct OcrStatusQuery {
+    since_line: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct OcrInstallStatusResponse {
+    task_id: String,
+    status: OcrTaskStatus,
+    engine: String,
+    package_manager: String,
+    started_at: String,
+    finished_at: Option<String>,
+    exit_code: Option<i32>,
+    message: Option<String>,
+    new_lines: Vec<String>,
+    total_lines: usize,
+}
+
+async fn ocr_install_status(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(task_id): Path<String>,
+    Query(query): Query<OcrStatusQuery>,
+) -> Result<Json<OcrInstallStatusResponse>, AppError> {
+    let tasks = state.ocr_tasks.lock().await;
+    let task = tasks.get(&task_id).ok_or_else(|| {
+        AppError::NotFound(format!("OCR install task not found: {}", task_id))
+    })?;
+
+    let since = query.since_line.unwrap_or(0);
+    let new_lines = if since < task.log_lines.len() {
+        task.log_lines[since..].to_vec()
+    } else {
+        vec![]
+    };
+
+    Ok(Json(OcrInstallStatusResponse {
+        task_id: task.task_id.clone(),
+        status: task.status.clone(),
+        engine: task.engine.clone(),
+        package_manager: task.package_manager.clone(),
+        started_at: task.started_at.clone(),
+        finished_at: task.finished_at.clone(),
+        exit_code: task.exit_code,
+        message: task.message.clone(),
+        new_lines,
+        total_lines: task.log_lines.len(),
+    }))
+}
+
+#[derive(Serialize)]
+struct OcrCancelResponse {
+    success: bool,
+    message: String,
+}
+
+async fn ocr_install_cancel(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(task_id): Path<String>,
+) -> Result<Json<OcrCancelResponse>, AppError> {
+    let mut tasks = state.ocr_tasks.lock().await;
+    let task = tasks.get_mut(&task_id).ok_or_else(|| {
+        AppError::NotFound(format!("OCR install task not found: {}", task_id))
+    })?;
+
+    if task.status != OcrTaskStatus::Running {
+        return Ok(Json(OcrCancelResponse {
+            success: false,
+            message: format!("任务已不在运行状态 ({})", serde_json::to_string(&task.status).unwrap_or_default()),
+        }));
+    }
+
+    if let Some(pid) = task.pid {
+        #[cfg(unix)]
+        {
+            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+        }
+        #[cfg(windows)]
+        {
+            let _ = tokio::process::Command::new("taskkill")
+                .args(&["/PID", &pid.to_string(), "/F"])
+                .output()
+                .await;
+        }
+    }
+
+    task.status = OcrTaskStatus::Cancelled;
+    task.finished_at = Some(chrono::Utc::now().to_rfc3339());
+    task.log_lines.push("Installation cancelled by user.".to_string());
+    task.message = Some("安装已被用户取消。".to_string());
+
+    Ok(Json(OcrCancelResponse {
+        success: true,
+        message: "安装已取消".to_string(),
+    }))
 }
 
 #[cfg(test)]

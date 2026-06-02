@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,6 +29,9 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
   bool _installing = false;
   String _installLog = '';
   bool? _installSuccess;
+  String? _activeTaskId;
+  Timer? _pollTimer;
+  int _lastLogLine = 0;
 
   bool _verifying = false;
   bool? _verifySuccess;
@@ -35,6 +40,12 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
   void initState() {
     super.initState();
     _loadAll();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadAll() async {
@@ -98,43 +109,46 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
       _installSuccess = null;
       _installMessage = null;
       _installExitCode = null;
+      _activeTaskId = null;
+      _lastLogLine = 0;
     });
     try {
       final api = ref.read(apiClientProvider);
       final resp = await api.dio.post(
-        '/system/ocr-install',
+        '/system/ocr-install/start',
         data: {
           'engine': _selectedMethod!['engine'],
           'package_manager': _selectedMethod!['package_manager'].toString(),
         },
-        options: Options(receiveTimeout: const Duration(minutes: 11)),
       );
+      final data = resp.data as Map<String, dynamic>;
+      final taskId = data['task_id'] as String?;
+
+      if (taskId == null) {
+        if (mounted) {
+          setState(() {
+            _installing = false;
+            _installSuccess = false;
+            _installMessage = '后端未返回 task_id';
+          });
+        }
+        return;
+      }
+
       if (mounted) {
-        final data = resp.data as Map<String, dynamic>;
         setState(() {
-          _installing = false;
-          _installSuccess = data['success'] == true;
-          _installLog = data['output']?.toString() ?? '';
-          _installMessage = data['message']?.toString();
-          _installExitCode = data['exit_code'] as int?;
-          if (_installSuccess == true) {
-            _currentStep = 3;
-          }
+          _activeTaskId = taskId;
         });
       }
+
+      _pollTimer?.cancel();
+      _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollStatus(taskId));
     } on DioException catch (e) {
       if (mounted) {
-        String errMsg;
-        if (e.type == DioExceptionType.receiveTimeout) {
-          errMsg = '安装请求超时（前端等待已超过 11 分钟）。\n'
-              '安装可能仍在后台运行，请稍后点击"重新检测"确认状态。';
-        } else {
-          errMsg = e.message ?? e.toString();
-        }
         setState(() {
           _installing = false;
           _installSuccess = false;
-          _installLog = errMsg;
+          _installLog = e.message ?? e.toString();
           _installMessage = '安装请求异常';
         });
       }
@@ -145,6 +159,68 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
           _installSuccess = false;
           _installLog = e.toString();
         });
+      }
+    }
+  }
+
+  Future<void> _pollStatus(String taskId) async {
+    try {
+      final api = ref.read(apiClientProvider);
+      final resp = await api.dio.get(
+        '/system/ocr-install/status/$taskId',
+        queryParameters: {'since_line': _lastLogLine},
+      );
+      final data = resp.data as Map<String, dynamic>;
+      final status = data['status'] as String? ?? '';
+      final newLines = (data['new_lines'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      final totalLines = data['total_lines'] as int? ?? _lastLogLine;
+
+      if (!mounted) return;
+
+      setState(() {
+        if (newLines.isNotEmpty) {
+          _installLog += ((_installLog.isNotEmpty ? '\n' : '') + newLines.join('\n'));
+        }
+        _lastLogLine = totalLines;
+
+        if (status == 'completed' || status == 'failed' || status == 'cancelled') {
+          _pollTimer?.cancel();
+          _pollTimer = null;
+          _installing = false;
+          _installSuccess = status == 'completed';
+          _installMessage = data['message']?.toString();
+          _installExitCode = data['exit_code'] as int?;
+          if (_installSuccess == true) {
+            _currentStep = 3;
+          }
+        }
+      });
+    } catch (_) {
+      // polling error, will retry on next interval
+    }
+  }
+
+  Future<void> _cancelInstall() async {
+    final taskId = _activeTaskId;
+    if (taskId == null) return;
+    try {
+      final api = ref.read(apiClientProvider);
+      await api.dio.post('/system/ocr-install/cancel/$taskId');
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      if (mounted) {
+        setState(() {
+          _installing = false;
+          _installSuccess = false;
+          _installMessage = '安装已被取消。';
+          _installLog += '\n--- 安装已取消 ---';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('取消失败: $e')),
+        );
       }
     }
   }
@@ -579,10 +655,43 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
             children: [
               const LinearProgressIndicator(),
               const SizedBox(height: 8),
-              const Text('正在安装，请稍候... (最长等待 10 分钟)'),
-              const SizedBox(height: 4),
-              Text('如果长时间无响应，可能是需要管理员权限或网络问题。',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              Row(
+                children: [
+                  const Expanded(child: Text('正在安装，实时日志如下...')),
+                  OutlinedButton.icon(
+                    onPressed: _cancelInstall,
+                    icon: const Icon(Icons.stop_circle_outlined, size: 16, color: Colors.red),
+                    label: const Text('取消安装', style: TextStyle(color: Colors.red)),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: Colors.red.shade200),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    ),
+                  ),
+                ],
+              ),
+              if (_installLog.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  constraints: const BoxConstraints(maxHeight: 250),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade900,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: SingleChildScrollView(
+                    reverse: true,
+                    child: SelectableText(
+                      _installLog,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           )
         else if (_installSuccess == true)

@@ -38,4 +38,6 @@ pub struct AppState {
     pub doc_processor_url: String,
     pub embedding_cache: Cache<String, Vec<f32>>,
     pub domain_profiles: Arc<DomainProfileRegistry>,
+    #[cfg(sqlite_mode)]
+    pub ocr_tasks: crate::api::system::OcrTaskStore,
 }

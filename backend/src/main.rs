@@ -104,6 +104,8 @@ async fn main() -> anyhow::Result<()> {
         doc_processor_url: config.doc_processor_url.clone(),
         embedding_cache,
         domain_profiles,
+        #[cfg(sqlite_mode)]
+        ocr_tasks: api::system::new_ocr_task_store(),
     };
 
     api::embedding_configs::init_embedding_provider(&state).await;

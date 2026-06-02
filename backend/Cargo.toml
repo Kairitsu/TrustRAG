@@ -59,6 +59,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 which = "7"
 tempfile = "3.27.0"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
