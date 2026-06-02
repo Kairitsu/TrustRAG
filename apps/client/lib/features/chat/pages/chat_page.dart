@@ -246,6 +246,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               final event = jsonDecode(jsonStr);
               if (eventType == 'message_start') {
                 assistantId = event['message_id'] ?? '';
+                if (mounted) setState(() => _streamingPhase = '正在分析问题...');
+              } else if (eventType == 'retrieval_started') {
+                if (mounted) setState(() => _streamingPhase = '正在检索资料库...');
+              } else if (eventType == 'retrieval_finished') {
+                final count = event['sources_count'] ?? 0;
+                if (mounted) setState(() => _streamingPhase = '已检索到 $count 条相关资料');
+              } else if (eventType == 'llm_started') {
                 if (mounted) setState(() => _streamingPhase = '正在生成回答...');
               } else if (eventType == 'citation') {
                 setState(() {

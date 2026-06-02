@@ -830,6 +830,14 @@ fn build_sse_stream(
                         rag::build_prompt(&query, &context, &history, &rag_config.language)
                     };
 
+                    yield Ok(Event::default().event("llm_started").data(
+                        serde_json::json!({
+                            "model": llm_provider.model_name(),
+                            "sources_count": sources.len(),
+                            "timestamp_ms": start.elapsed().as_millis() as u64,
+                        }).to_string()
+                    ));
+
                     let (tx, mut rx) = mpsc::channel::<StreamEvent>(32);
                     let llm = llm_provider.clone();
                     let llm_req = crate::traits::llm_provider::LlmRequest {
@@ -950,6 +958,15 @@ fn build_sse_stream(
         } else {
             // Chitchat path
             let messages = rag::build_chitchat_prompt(&query, &history);
+
+            yield Ok(Event::default().event("llm_started").data(
+                serde_json::json!({
+                    "model": llm_provider.model_name(),
+                    "sources_count": 0,
+                    "timestamp_ms": start.elapsed().as_millis() as u64,
+                }).to_string()
+            ));
+
             let (tx, mut rx) = mpsc::channel::<StreamEvent>(32);
             let llm = llm_provider.clone();
             let llm_req = crate::traits::llm_provider::LlmRequest {
