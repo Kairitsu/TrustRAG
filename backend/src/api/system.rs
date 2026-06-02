@@ -395,6 +395,49 @@ pub fn detect_platform() -> OsPlatform {
     }
 }
 
+/// On Windows, wraps choco/winget install commands in a PowerShell script
+/// that requests UAC elevation via `Start-Process -Verb RunAs`.
+/// Output is redirected to a temp log file which the parent reads back.
+/// pip does not need elevation.
+#[cfg(target_os = "windows")]
+fn wrap_windows_elevated(pm: &str, program: String, args: Vec<String>) -> (String, Vec<String>) {
+    if pm == "pip" {
+        return (program, args);
+    }
+
+    let inner_cmd = format!("{} {}", program, args.join(" "));
+    let log_file = format!(
+        "{}\\trustrag_ocr_install_{}.log",
+        std::env::temp_dir().display(),
+        std::process::id()
+    );
+
+    let ps_script = format!(
+        "$logFile = '{}'; \
+         $proc = Start-Process -FilePath '{}' -ArgumentList '{}' \
+         -Verb RunAs -Wait -PassThru \
+         -RedirectStandardOutput $logFile \
+         -RedirectStandardError ($logFile + '.err'); \
+         if (Test-Path $logFile) {{ Get-Content $logFile }}; \
+         if (Test-Path ($logFile + '.err')) {{ Get-Content ($logFile + '.err') }}; \
+         exit $proc.ExitCode",
+        log_file,
+        program,
+        args.join("' '"),
+    );
+
+    (
+        "powershell".into(),
+        vec![
+            "-NoProfile".into(),
+            "-ExecutionPolicy".into(),
+            "Bypass".into(),
+            "-Command".into(),
+            ps_script,
+        ],
+    )
+}
+
 pub async fn detect_package_managers() -> Vec<PackageManager> {
     let mut found = Vec::new();
     let candidates: &[(&str, PackageManager)] = &[
@@ -693,26 +736,31 @@ async fn ocr_install_start(
     let pm = req.package_manager.as_str();
     let engine = req.engine.as_str();
 
-    let (program, args): (&str, Vec<&str>) = match (engine, pm, platform) {
+    let (program, args): (String, Vec<String>) = match (engine, pm, platform) {
         ("tesseract", "apt", OsPlatform::Linux) => (
-            "sudo",
-            vec!["apt", "install", "-y", "tesseract-ocr", "tesseract-ocr-chi-sim", "tesseract-ocr-eng", "poppler-utils"],
+            "sudo".into(),
+            vec!["apt", "install", "-y", "tesseract-ocr", "tesseract-ocr-chi-sim", "tesseract-ocr-eng", "poppler-utils"]
+                .into_iter().map(String::from).collect(),
         ),
         ("tesseract", "brew", _) => (
-            "brew",
-            vec!["install", "tesseract", "tesseract-lang", "poppler"],
+            "brew".into(),
+            vec!["install", "tesseract", "tesseract-lang", "poppler"]
+                .into_iter().map(String::from).collect(),
         ),
         ("tesseract", "choco", OsPlatform::Windows) => (
-            "choco",
-            vec!["install", "tesseract", "poppler", "-y", "--no-progress"],
+            "choco".into(),
+            vec!["install", "tesseract", "poppler", "-y", "--no-progress"]
+                .into_iter().map(String::from).collect(),
         ),
         ("tesseract", "winget", OsPlatform::Windows) => (
-            "winget",
-            vec!["install", "--accept-source-agreements", "--accept-package-agreements", "UB-Mannheim.TesseractOCR"],
+            "winget".into(),
+            vec!["install", "--accept-source-agreements", "--accept-package-agreements", "UB-Mannheim.TesseractOCR"]
+                .into_iter().map(String::from).collect(),
         ),
         ("paddleocr", "pip", _) => (
-            "pip3",
-            vec!["install", "paddleocr", "paddlepaddle"],
+            "pip3".into(),
+            vec!["install", "paddleocr", "paddlepaddle"]
+                .into_iter().map(String::from).collect(),
         ),
         _ => {
             return Err(AppError::BadRequest(format!(
@@ -720,6 +768,9 @@ async fn ocr_install_start(
             )));
         }
     };
+
+    #[cfg(target_os = "windows")]
+    let (program, args) = wrap_windows_elevated(pm, program, args);
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -744,8 +795,8 @@ async fn ocr_install_start(
 
     let store = state.ocr_tasks.clone();
     let tid = task_id.clone();
-    let prog = program.to_string();
-    let cmd_args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    let prog = program;
+    let cmd_args = args;
     let eng = engine.to_string();
 
     tokio::spawn(async move {
@@ -1045,5 +1096,71 @@ mod tests {
         assert_eq!(json["methods"][0]["engine"], "tesseract");
         assert_eq!(json["methods"][0]["needs_sudo"], true);
         assert_eq!(json["recommended"], "tesseract");
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_wrap_windows_elevated_choco() {
+        let (prog, args) = wrap_windows_elevated(
+            "choco",
+            "choco".into(),
+            vec!["install".into(), "tesseract".into(), "-y".into()],
+        );
+        assert_eq!(prog, "powershell");
+        assert!(args.contains(&"-NoProfile".to_string()));
+        assert!(args.contains(&"Bypass".to_string()));
+        let cmd = args.last().unwrap();
+        assert!(cmd.contains("Start-Process"));
+        assert!(cmd.contains("Verb RunAs"));
+        assert!(cmd.contains("choco"));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_wrap_windows_elevated_pip_no_elevation() {
+        let (prog, args) = wrap_windows_elevated(
+            "pip",
+            "pip3".into(),
+            vec!["install".into(), "paddleocr".into()],
+        );
+        assert_eq!(prog, "pip3");
+        assert_eq!(args, vec!["install".to_string(), "paddleocr".to_string()]);
+    }
+
+    #[test]
+    fn test_ocr_task_status_serde() {
+        let status = OcrTaskStatus::Running;
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, "\"running\"");
+
+        let completed: OcrTaskStatus = serde_json::from_str("\"completed\"").unwrap();
+        assert_eq!(completed, OcrTaskStatus::Completed);
+
+        let cancelled: OcrTaskStatus = serde_json::from_str("\"cancelled\"").unwrap();
+        assert_eq!(cancelled, OcrTaskStatus::Cancelled);
+
+        let failed: OcrTaskStatus = serde_json::from_str("\"failed\"").unwrap();
+        assert_eq!(failed, OcrTaskStatus::Failed);
+    }
+
+    #[test]
+    fn test_ocr_install_task_serialization() {
+        let task = OcrInstallTask {
+            task_id: "test-123".into(),
+            engine: "tesseract".into(),
+            package_manager: "choco".into(),
+            status: OcrTaskStatus::Running,
+            started_at: "2026-05-27T10:00:00Z".into(),
+            finished_at: None,
+            exit_code: None,
+            log_lines: vec!["Starting install...".into()],
+            message: None,
+            pid: Some(1234),
+        };
+        let json = serde_json::to_value(&task).unwrap();
+        assert_eq!(json["task_id"], "test-123");
+        assert_eq!(json["status"], "running");
+        assert_eq!(json["pid"], 1234);
+        assert!(json["finished_at"].is_null());
     }
 }
