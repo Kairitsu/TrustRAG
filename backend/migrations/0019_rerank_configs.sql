@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS rerank_configs (
     api_key_enc     TEXT,
     model_name      TEXT NOT NULL,
     top_n           INTEGER NOT NULL DEFAULT 5,
+    initial_recall_k INTEGER NOT NULL DEFAULT 30,
+    fallback_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    timeout_secs    INTEGER NOT NULL DEFAULT 30,
     is_default      BOOLEAN DEFAULT FALSE,
     created_at      TIMESTAMPTZ DEFAULT now(),
     updated_at      TIMESTAMPTZ DEFAULT now()

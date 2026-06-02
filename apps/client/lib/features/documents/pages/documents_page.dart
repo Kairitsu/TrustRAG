@@ -44,11 +44,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
 
   void _startAutoRefresh(List<Document> docs) {
     _refreshTimer?.cancel();
-    final hasProcessing = docs.any((d) =>
-        d.processingStatus == 'processing' ||
-        d.processingStatus == 'chunking' ||
-        d.processingStatus == 'embedding' ||
-        d.processingStatus == 'pending');
+    final hasProcessing = docs.any((d) => d.isProcessing);
     if (hasProcessing) {
       _refreshTimer = Timer(const Duration(seconds: 3), () {
         final ws = ref.read(selectedWorkspaceProvider);

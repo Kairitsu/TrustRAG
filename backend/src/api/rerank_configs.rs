@@ -292,8 +292,10 @@ async fn test_connection(
         None => return Err(AppError::NotFound("Rerank config not found".into())),
     };
 
+    let base = api_base_url.trim_end_matches('/');
+    let url = if base.ends_with("/rerank") { base.to_string() } else { format!("{}/rerank", base) };
     let reranker = crate::services::reranker::HttpRerankerProvider::with_timeout(
-        format!("{}/rerank", api_base_url.trim_end_matches('/')),
+        url,
         api_key.unwrap_or_default(),
         model_name.clone(),
         provider.clone(),
