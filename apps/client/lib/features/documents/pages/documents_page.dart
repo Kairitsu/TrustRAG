@@ -402,7 +402,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
                                 '处理时间较长，文件可能过大或后端任务已中断。'
-                                '如长时间无变化，建议删除后重新上传。',
+                                '可点击右侧菜单「重新处理」重试。',
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(fontSize: 11, color: Colors.orange.shade700),
@@ -412,8 +412,17 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                       ),
                       trailing: PopupMenuButton(
                         itemBuilder: (ctx) => [
-                          const PopupMenuItem(
-                              value: 'generate_graph', child: Text('生成知识图谱')),
+                          if (doc.processingStatus == 'ready')
+                            const PopupMenuItem(
+                                value: 'generate_graph', child: Text('生成知识图谱')),
+                          if (doc.isStale || doc.processingStatus == 'failed' || doc.processingStatus == 'embedding_failed')
+                            const PopupMenuItem(
+                                value: 'reprocess',
+                                child: Text('重新处理')),
+                          if (doc.isProcessing)
+                            const PopupMenuItem(
+                                value: 'cancel',
+                                child: Text('取消处理')),
                           const PopupMenuItem(
                               value: 'move_folder', child: Text('移动到文件夹')),
                           const PopupMenuItem(
@@ -428,6 +437,27 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                             _showMoveFolderDialog(doc, ws);
                           } else if (value == 'generate_graph') {
                             _generateGraphForDoc(ws.id, doc.id, doc.originalFilename);
+                          } else if (value == 'reprocess') {
+                            final ok = await ref
+                                .read(documentProvider.notifier)
+                                .reprocessDocument(ws.id, doc.id);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(ok
+                                    ? '已重新触发文档处理: ${doc.originalFilename}'
+                                    : '重新处理失败，请稍后重试'),
+                                backgroundColor: ok ? null : Colors.red,
+                              ));
+                            }
+                          } else if (value == 'cancel') {
+                            final ok = await ref
+                                .read(documentProvider.notifier)
+                                .reprocessDocument(ws.id, doc.id);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(ok ? '已取消处理' : '取消失败'),
+                              ));
+                            }
                           }
                         },
                       ),

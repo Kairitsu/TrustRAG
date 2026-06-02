@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 
+const _sentinel = Object();
+
 class Document {
   final String id;
   final String workspaceId;
@@ -62,15 +64,19 @@ class Document {
     );
   }
 
-  Document copyWith({List<String>? tags}) {
+  Document copyWith({
+    List<String>? tags,
+    String? processingStatus,
+    Object? processingError = _sentinel,
+  }) {
     return Document(
       id: id,
       workspaceId: workspaceId,
       originalFilename: originalFilename,
       fileType: fileType,
       fileSize: fileSize,
-      processingStatus: processingStatus,
-      processingError: processingError,
+      processingStatus: processingStatus ?? this.processingStatus,
+      processingError: processingError == _sentinel ? this.processingError : processingError as String?,
       chunkCount: chunkCount,
       tags: tags ?? this.tags,
       createdAt: createdAt,
@@ -141,6 +147,23 @@ class DocumentNotifier extends StateNotifier<AsyncValue<List<Document>>> {
       );
       return true;
     } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> reprocessDocument(String workspaceId, String docId) async {
+    try {
+      final api = ref.read(apiClientProvider);
+      await api.dio.post('/workspaces/$workspaceId/documents/$docId/reprocess');
+      final docs = state.value ?? [];
+      state = AsyncValue.data(
+        docs.map((d) => d.id == docId
+            ? d.copyWith(processingStatus: 'pending', processingError: null)
+            : d).toList(),
+      );
+      return true;
+    } catch (e) {
+      DebugLogBuffer().add('ERROR DOC 重新处理失败: $docId — $e');
       return false;
     }
   }

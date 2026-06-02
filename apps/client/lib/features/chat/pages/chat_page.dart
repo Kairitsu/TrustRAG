@@ -53,6 +53,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   String _streamingPhase = '';
   List<Citation> _streamingCitations = [];
   StreamController<String>? _streamingTextController;
+  http.Client? _activeClient;
+  Timer? _firstTokenTimer;
 
   @override
   void initState() {
@@ -87,7 +89,41 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
+    _firstTokenTimer?.cancel();
+    _activeClient?.close();
     super.dispose();
+  }
+
+  void _stopGenerating() {
+    _firstTokenTimer?.cancel();
+    _firstTokenTimer = null;
+    _activeClient?.close();
+    _activeClient = null;
+
+    if (_streamingContent.isNotEmpty) {
+      final truncatedMsg = ChatMessage(
+        id: 'truncated-${DateTime.now().millisecondsSinceEpoch}',
+        role: 'assistant',
+        content: '$_streamingContent\n\n---\n*回答已中断*',
+        citations: List.from(_streamingCitations),
+        createdAt: DateTime.now(),
+      );
+      ref.read(messagesProvider.notifier).state = [
+        ...ref.read(messagesProvider),
+        truncatedMsg,
+      ];
+    }
+
+    _streamingTextController?.close();
+    _streamingTextController = null;
+    if (mounted) {
+      setState(() {
+        _isSending = false;
+        _streamingContent = '';
+        _streamingPhase = '';
+        _streamingCitations = [];
+      });
+    }
   }
 
   Future<void> _sendMessage() async {
@@ -151,6 +187,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       });
 
       final client = http.Client();
+      _activeClient = client;
+
+      _firstTokenTimer?.cancel();
+      _firstTokenTimer = Timer(const Duration(seconds: 30), () {
+        if (_isSending && _streamingContent.isEmpty && mounted) {
+          setState(() {
+            _streamingPhase = '后端响应超时 (30s)，请检查 LLM 配置或重试';
+          });
+        }
+      });
+
       try {
         final response = await client.send(request);
 
@@ -205,6 +252,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   _streamingCitations.add(Citation.fromJson(event));
                 });
               } else if (eventType == 'text_delta') {
+                _firstTokenTimer?.cancel();
+                _firstTokenTimer = null;
                 final delta = event['delta'] ?? event['text'] ?? '';
                 setState(() {
                   _streamingContent += delta;
@@ -296,6 +345,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ));
       }
     } finally {
+      _firstTokenTimer?.cancel();
+      _firstTokenTimer = null;
+      _activeClient = null;
       DebugLogBuffer().add('CHAT 流式响应结束，引用数: ${_streamingCitations.length}');
       if (mounted) {
         setState(() {
@@ -1197,15 +1249,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       ),
                   ),
                   const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _isSending ? null : _sendMessage,
-                    icon: _isSending
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.send),
-                  ),
+                  if (_isSending)
+                    IconButton.filled(
+                      onPressed: _stopGenerating,
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.red.shade400,
+                      ),
+                      icon: const Icon(Icons.stop_rounded, color: Colors.white),
+                      tooltip: '停止生成',
+                    )
+                  else
+                    IconButton.filled(
+                      onPressed: _sendMessage,
+                      icon: const Icon(Icons.send),
+                    ),
                 ],
               ),
               const SizedBox(height: 4),
