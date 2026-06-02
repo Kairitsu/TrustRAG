@@ -554,6 +554,7 @@ async fn ocr_install(
                 engine: engine.into(),
                 package_manager: pm.into(),
                 output: String::new(),
+                exit_code: None,
                 message: format!("不支持的安装组合: engine={}, pm={}, platform={}", engine, pm, platform),
             }));
         }
