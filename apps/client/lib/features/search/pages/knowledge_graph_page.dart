@@ -152,6 +152,14 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
     }
   }
 
+  void _showGenerationHistory() {
+    ref.invalidate(generationHistoryProvider);
+    showDialog(
+      context: context,
+      builder: (ctx) => _GenerationHistoryDialog(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
@@ -210,6 +218,9 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
                         case 'generate':
                           _generateAll();
                           break;
+                        case 'history':
+                          _showGenerationHistory();
+                          break;
                         case 'reset':
                           _resetGraph();
                           break;
@@ -227,6 +238,16 @@ class _KnowledgeGraphPageState extends ConsumerState<KnowledgeGraphPage>
                           leading: Icon(Icons.auto_fix_high),
                           title: Text('生成知识图谱'),
                           subtitle: Text('从所有文档抽取实体和关系', style: TextStyle(fontSize: 11)),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'history',
+                        child: ListTile(
+                          leading: Icon(Icons.history),
+                          title: Text('生成历史'),
+                          subtitle: Text('查看历史生成记录和诊断信息', style: TextStyle(fontSize: 11)),
                           dense: true,
                           contentPadding: EdgeInsets.zero,
                         ),
@@ -1791,5 +1812,190 @@ class _EntityListTab extends ConsumerWidget {
     } catch (_) {
       return '';
     }
+  }
+}
+
+class _GenerationHistoryDialog extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final historyAsync = ref.watch(generationHistoryProvider);
+    final theme = Theme.of(context);
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          const Icon(Icons.history, size: 22),
+          const SizedBox(width: 8),
+          const Text('知识图谱生成历史'),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 20),
+            tooltip: '刷新',
+            onPressed: () => ref.invalidate(generationHistoryProvider),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 680,
+        height: 460,
+        child: historyAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (e, _) => Center(child: Text('加载失败: $e')),
+          data: (entries) {
+            if (entries.isEmpty) {
+              return const Center(
+                child: Text('暂无生成记录', style: TextStyle(color: Colors.grey)),
+              );
+            }
+            return ListView.separated(
+              itemCount: entries.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (ctx, i) {
+                final e = entries[i];
+                return _GenerationHistoryTile(entry: e, theme: theme);
+              },
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+}
+
+class _GenerationHistoryTile extends StatelessWidget {
+  final GenerationLogEntry entry;
+  final ThemeData theme;
+
+  const _GenerationHistoryTile({required this.entry, required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    final statusIcon = switch (entry.status) {
+      'completed' => const Icon(Icons.check_circle, color: Colors.green, size: 18),
+      'failed' => const Icon(Icons.error, color: Colors.red, size: 18),
+      'running' => const SizedBox(
+          width: 18, height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2)),
+      _ => const Icon(Icons.help_outline, size: 18),
+    };
+
+    final triggerLabel = switch (entry.triggerType) {
+      'manual_single' => '单文档',
+      'manual_batch' => '批量',
+      'auto' => '自动',
+      _ => entry.triggerType,
+    };
+
+    String elapsed = '';
+    if (entry.elapsedMs != null) {
+      final sec = entry.elapsedMs! / 1000.0;
+      elapsed = sec < 60
+          ? '${sec.toStringAsFixed(1)}s'
+          : '${(sec / 60).toStringAsFixed(1)}min';
+    }
+
+    String timeStr = '';
+    try {
+      final dt = DateTime.parse(entry.startedAt).toLocal();
+      timeStr = '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {}
+
+    return ExpansionTile(
+      leading: statusIcon,
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(triggerLabel,
+                style: TextStyle(fontSize: 11, color: Colors.blue.shade700)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${entry.entitiesCreated} 实体 / ${entry.relationsCreated} 关系',
+              style: theme.textTheme.bodyMedium,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+      subtitle: Row(
+        children: [
+          Text(timeStr,
+              style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey)),
+          if (elapsed.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Icon(Icons.timer_outlined, size: 12, color: Colors.grey.shade500),
+            const SizedBox(width: 2),
+            Text(elapsed,
+                style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey)),
+          ],
+        ],
+      ),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _detailRow('状态', entry.status),
+              _detailRow('触发方式', triggerLabel),
+              if (entry.documentId != null)
+                _detailRow('文档 ID', entry.documentId!),
+              if (entry.llmProvider != null || entry.llmModel != null)
+                _detailRow('模型',
+                    '${entry.llmProvider ?? ""}/${entry.llmModel ?? ""}'),
+              _detailRow('文档数',
+                  '${entry.processedDocuments}/${entry.totalDocuments}'),
+              _detailRow('实体/关系',
+                  '${entry.entitiesCreated} / ${entry.relationsCreated}'),
+              if (elapsed.isNotEmpty)
+                _detailRow('耗时', elapsed),
+              if (entry.errors.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text('错误:', style: TextStyle(
+                    fontSize: 12, color: Colors.red.shade700,
+                    fontWeight: FontWeight.w600)),
+                for (final err in entry.errors)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, top: 2),
+                    child: Text(err,
+                        style: TextStyle(fontSize: 11, color: Colors.red.shade600)),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(label,
+                style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          ),
+          Expanded(
+            child: Text(value, style: const TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
   }
 }

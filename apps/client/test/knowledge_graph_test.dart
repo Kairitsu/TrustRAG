@@ -216,6 +216,119 @@ void main() {
     });
   });
 
+  group('GenerationLogEntry model', () {
+    test('fromJson parses all fields', () {
+      final json = {
+        'id': 'log-001',
+        'status': 'completed',
+        'trigger_type': 'manual_single',
+        'document_id': 'doc-abc',
+        'llm_provider': 'openai',
+        'llm_model': 'gpt-4',
+        'total_documents': 1,
+        'processed_documents': 1,
+        'entities_created': 10,
+        'relations_created': 5,
+        'errors': [],
+        'started_at': '2026-05-27T10:00:00Z',
+        'completed_at': '2026-05-27T10:00:05Z',
+        'elapsed_ms': 5000,
+      };
+      final entry = GenerationLogEntry.fromJson(json);
+      expect(entry.id, 'log-001');
+      expect(entry.status, 'completed');
+      expect(entry.triggerType, 'manual_single');
+      expect(entry.documentId, 'doc-abc');
+      expect(entry.llmProvider, 'openai');
+      expect(entry.llmModel, 'gpt-4');
+      expect(entry.totalDocuments, 1);
+      expect(entry.processedDocuments, 1);
+      expect(entry.entitiesCreated, 10);
+      expect(entry.relationsCreated, 5);
+      expect(entry.errors, isEmpty);
+      expect(entry.startedAt, '2026-05-27T10:00:00Z');
+      expect(entry.completedAt, '2026-05-27T10:00:05Z');
+      expect(entry.elapsedMs, 5000);
+    });
+
+    test('fromJson handles missing optional fields', () {
+      final json = {
+        'id': 'log-002',
+        'status': 'running',
+        'total_documents': 5,
+        'processed_documents': 2,
+        'entities_created': 3,
+        'relations_created': 1,
+        'errors': [],
+        'started_at': '2026-05-27T10:00:00Z',
+      };
+      final entry = GenerationLogEntry.fromJson(json);
+      expect(entry.triggerType, 'manual_batch');
+      expect(entry.documentId, isNull);
+      expect(entry.llmProvider, isNull);
+      expect(entry.llmModel, isNull);
+      expect(entry.completedAt, isNull);
+      expect(entry.elapsedMs, isNull);
+    });
+
+    test('fromJson handles batch generation with errors', () {
+      final json = {
+        'id': 'log-003',
+        'status': 'completed',
+        'trigger_type': 'manual_batch',
+        'llm_provider': 'ollama',
+        'llm_model': 'llama3',
+        'total_documents': 10,
+        'processed_documents': 10,
+        'entities_created': 50,
+        'relations_created': 30,
+        'errors': ['doc abc: connection timeout', 'doc xyz: parse error'],
+        'started_at': '2026-05-27T10:00:00Z',
+        'completed_at': '2026-05-27T10:05:00Z',
+        'elapsed_ms': 300000,
+      };
+      final entry = GenerationLogEntry.fromJson(json);
+      expect(entry.errors.length, 2);
+      expect(entry.errors[0], contains('connection timeout'));
+      expect(entry.errors[1], contains('parse error'));
+      expect(entry.triggerType, 'manual_batch');
+    });
+
+    test('fromJson handles failed status', () {
+      final json = {
+        'id': 'log-004',
+        'status': 'failed',
+        'trigger_type': 'manual_single',
+        'document_id': 'doc-fail',
+        'total_documents': 1,
+        'processed_documents': 0,
+        'entities_created': 0,
+        'relations_created': 0,
+        'errors': ['LLM API returned 500'],
+        'started_at': '2026-05-27T10:00:00Z',
+        'completed_at': '2026-05-27T10:00:02Z',
+        'elapsed_ms': 2000,
+      };
+      final entry = GenerationLogEntry.fromJson(json);
+      expect(entry.status, 'failed');
+      expect(entry.processedDocuments, 0);
+      expect(entry.errors.length, 1);
+    });
+
+    test('fromJson with completely empty JSON defaults gracefully', () {
+      final entry = GenerationLogEntry.fromJson({});
+      expect(entry.id, '');
+      expect(entry.status, '');
+      expect(entry.triggerType, 'manual_batch');
+      expect(entry.totalDocuments, 0);
+      expect(entry.processedDocuments, 0);
+      expect(entry.entitiesCreated, 0);
+      expect(entry.relationsCreated, 0);
+      expect(entry.errors, isEmpty);
+      expect(entry.startedAt, '');
+    });
+  });
+
   group('Knowledge Graph i18n keys', () {
     testWidgets('Chinese locale has all graph keys', (tester) async {
       await tester.pumpWidget(

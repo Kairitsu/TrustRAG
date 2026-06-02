@@ -418,13 +418,19 @@ struct TypeCount {
     count: i64,
 }
 
+struct LlmWithMeta {
+    provider: OpenAILlmProvider,
+    provider_name: String,
+    model_name: String,
+}
+
 async fn load_default_llm(
     pool: &crate::db::DbPool,
     user_id: Uuid,
     jwt_secret: &str,
-) -> Result<OpenAILlmProvider, AppError> {
-    let (api_base_url, api_key_enc, model_name) = sqlx::query_as::<_, (String, Option<String>, String)>(
-        "SELECT api_base_url, api_key_enc, model_name \
+) -> Result<LlmWithMeta, AppError> {
+    let (provider, api_base_url, api_key_enc, model_name) = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name \
          FROM model_configs WHERE user_id = $1 AND is_default = 1 LIMIT 1",
     )
     .bind(user_id.to_string())
@@ -436,11 +442,15 @@ async fn load_default_llm(
         crate::api::models::decrypt_api_key(&enc, jwt_secret)
     });
 
-    Ok(OpenAILlmProvider::new(
-        &api_base_url,
-        api_key.as_deref(),
-        &model_name,
-    ))
+    Ok(LlmWithMeta {
+        provider: OpenAILlmProvider::new(
+            &api_base_url,
+            api_key.as_deref(),
+            &model_name,
+        ),
+        provider_name: provider,
+        model_name,
+    })
 }
 
 async fn generate_for_document(
@@ -452,14 +462,63 @@ async fn generate_for_document(
 
     let llm = load_default_llm(&state.pool, auth.id, &state.jwt_secret).await?;
 
-    let (entities, relations) = knowledge_extraction::extract_for_document(
+    let log_id = Uuid::new_v4().to_string();
+    let started_at = chrono::Utc::now();
+    let _ = sqlx::query(
+        "INSERT INTO graph_generation_logs (id, workspace_id, user_id, status, trigger_type, document_id, llm_provider, llm_model, total_documents, started_at) \
+         VALUES ($1, $2, $3, 'running', 'manual_single', $4, $5, $6, 1, $7)"
+    )
+    .bind(&log_id)
+    .bind(ws_id.to_string())
+    .bind(auth.id.to_string())
+    .bind(doc_id.to_string())
+    .bind(&llm.provider_name)
+    .bind(&llm.model_name)
+    .bind(started_at.to_rfc3339())
+    .execute(&state.pool)
+    .await;
+
+    let result = knowledge_extraction::extract_for_document(
         &state.pool,
-        &llm,
+        &llm.provider,
         ws_id,
         doc_id,
     )
-    .await
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("Knowledge extraction failed: {}", e)))?;
+    .await;
+
+    let elapsed_ms = (chrono::Utc::now() - started_at).num_milliseconds();
+    let completed_at = chrono::Utc::now().to_rfc3339();
+
+    match &result {
+        Ok((entities, relations)) => {
+            let _ = sqlx::query(
+                "UPDATE graph_generation_logs SET status = 'completed', processed_documents = 1, \
+                 entities_created = $1, relations_created = $2, completed_at = $3, elapsed_ms = $4 WHERE id = $5"
+            )
+            .bind(*entities as i32)
+            .bind(*relations as i32)
+            .bind(&completed_at)
+            .bind(elapsed_ms)
+            .bind(&log_id)
+            .execute(&state.pool)
+            .await;
+        }
+        Err(e) => {
+            let err_json = serde_json::to_string(&vec![e.to_string()]).unwrap_or_default();
+            let _ = sqlx::query(
+                "UPDATE graph_generation_logs SET status = 'failed', errors = $1, completed_at = $2, elapsed_ms = $3 WHERE id = $4"
+            )
+            .bind(&err_json)
+            .bind(&completed_at)
+            .bind(elapsed_ms)
+            .bind(&log_id)
+            .execute(&state.pool)
+            .await;
+        }
+    }
+
+    let (entities, relations) = result
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Knowledge extraction failed: {}", e)))?;
 
     Ok(Json(GenerateResponse {
         success: true,
@@ -525,12 +584,14 @@ async fn generate_for_all_documents(
     }
 
     let _ = sqlx::query(
-        "INSERT INTO graph_generation_logs (id, workspace_id, user_id, status, total_documents, started_at) \
-         VALUES ($1, $2, $3, 'running', $4, $5)"
+        "INSERT INTO graph_generation_logs (id, workspace_id, user_id, status, trigger_type, llm_provider, llm_model, total_documents, started_at) \
+         VALUES ($1, $2, $3, 'running', 'manual_batch', $4, $5, $6, $7)"
     )
     .bind(&task_id)
     .bind(ws_id.to_string())
     .bind(auth.id.to_string())
+    .bind(&llm.provider_name)
+    .bind(&llm.model_name)
     .bind(total as i32)
     .bind(&now)
     .execute(&state.pool)
@@ -538,6 +599,8 @@ async fn generate_for_all_documents(
 
     let pool = state.pool.clone();
     let bg_task_id = task_id.clone();
+    let batch_started_at = chrono::Utc::now();
+    let llm_provider = llm.provider;
 
     tokio::spawn(async move {
         let mut total_entities = 0usize;
@@ -547,7 +610,7 @@ async fn generate_for_all_documents(
 
         for (doc_id_str,) in &doc_ids {
             let doc_id: Uuid = doc_id_str.parse().unwrap_or_default();
-            match knowledge_extraction::extract_for_document(&pool, &llm, ws_id, doc_id).await {
+            match knowledge_extraction::extract_for_document(&pool, &llm_provider, ws_id, doc_id).await {
                 Ok((e, r)) => {
                     total_entities += e;
                     total_relations += r;
@@ -578,17 +641,20 @@ async fn generate_for_all_documents(
             t.completed_at = Some(completed_at.clone());
         }
 
+        let elapsed_ms = (chrono::Utc::now() - batch_started_at).num_milliseconds();
+
         let _ = sqlx::query(
             "UPDATE graph_generation_logs SET \
              status = 'completed', processed_documents = $1, entities_created = $2, \
-             relations_created = $3, errors = $4, completed_at = $5 \
-             WHERE id = $6"
+             relations_created = $3, errors = $4, completed_at = $5, elapsed_ms = $6 \
+             WHERE id = $7"
         )
         .bind(processed as i32)
         .bind(total_entities as i32)
         .bind(total_relations as i32)
         .bind(&errors_json)
         .bind(&completed_at)
+        .bind(elapsed_ms)
         .bind(&bg_task_id)
         .execute(&pool)
         .await;
@@ -727,6 +793,10 @@ async fn graph_stats(
 struct GenerationLogEntry {
     id: String,
     status: String,
+    trigger_type: String,
+    document_id: Option<String>,
+    llm_provider: Option<String>,
+    llm_model: Option<String>,
     total_documents: i32,
     processed_documents: i32,
     entities_created: i32,
@@ -734,6 +804,7 @@ struct GenerationLogEntry {
     errors: Vec<String>,
     started_at: String,
     completed_at: Option<String>,
+    elapsed_ms: Option<i64>,
 }
 
 async fn generation_history(
@@ -743,9 +814,10 @@ async fn generation_history(
 ) -> Result<Json<Vec<GenerationLogEntry>>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
 
-    let rows = sqlx::query_as::<_, (String, String, i32, i32, i32, i32, String, String, Option<String>)>(
-        "SELECT id, status, total_documents, processed_documents, entities_created, \
-         relations_created, errors, CAST(started_at AS TEXT), CAST(completed_at AS TEXT) \
+    let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, Option<String>, i32, i32, i32, i32, String, String, Option<String>, Option<i64>)>(
+        "SELECT id, status, trigger_type, CAST(document_id AS TEXT), llm_provider, llm_model, \
+         total_documents, processed_documents, entities_created, \
+         relations_created, errors, CAST(started_at AS TEXT), CAST(completed_at AS TEXT), elapsed_ms \
          FROM graph_generation_logs WHERE workspace_id = $1 \
          ORDER BY started_at DESC LIMIT 20"
     )
@@ -754,17 +826,22 @@ async fn generation_history(
     .await?;
 
     let entries: Vec<GenerationLogEntry> = rows.into_iter().map(|r| {
-        let errors: Vec<String> = serde_json::from_str(&r.6).unwrap_or_default();
+        let errors: Vec<String> = serde_json::from_str(&r.10).unwrap_or_default();
         GenerationLogEntry {
             id: r.0,
             status: r.1,
-            total_documents: r.2,
-            processed_documents: r.3,
-            entities_created: r.4,
-            relations_created: r.5,
+            trigger_type: r.2,
+            document_id: r.3,
+            llm_provider: r.4,
+            llm_model: r.5,
+            total_documents: r.6,
+            processed_documents: r.7,
+            entities_created: r.8,
+            relations_created: r.9,
             errors,
-            started_at: r.7,
-            completed_at: r.8,
+            started_at: r.11,
+            completed_at: r.12,
+            elapsed_ms: r.13,
         }
     }).collect();
 

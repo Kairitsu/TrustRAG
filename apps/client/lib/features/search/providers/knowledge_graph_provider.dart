@@ -177,6 +177,14 @@ class KnowledgeGraphService {
     return resp.data as Map<String, dynamic>;
   }
 
+  Future<List<GenerationLogEntry>> getGenerationHistory(String workspaceId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get('/workspaces/$workspaceId/knowledge-graph/generation-history');
+    return (resp.data as List)
+        .map((e) => GenerationLogEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<Map<String, dynamic>> resetGraph(String workspaceId) async {
     final api = ref.read(apiClientProvider);
     final resp = await api.dio.delete('/workspaces/$workspaceId/knowledge-graph/reset');
@@ -355,6 +363,67 @@ class TypeCount {
     );
   }
 }
+
+class GenerationLogEntry {
+  final String id;
+  final String status;
+  final String triggerType;
+  final String? documentId;
+  final String? llmProvider;
+  final String? llmModel;
+  final int totalDocuments;
+  final int processedDocuments;
+  final int entitiesCreated;
+  final int relationsCreated;
+  final List<String> errors;
+  final String startedAt;
+  final String? completedAt;
+  final int? elapsedMs;
+
+  GenerationLogEntry({
+    required this.id,
+    required this.status,
+    required this.triggerType,
+    this.documentId,
+    this.llmProvider,
+    this.llmModel,
+    required this.totalDocuments,
+    required this.processedDocuments,
+    required this.entitiesCreated,
+    required this.relationsCreated,
+    required this.errors,
+    required this.startedAt,
+    this.completedAt,
+    this.elapsedMs,
+  });
+
+  factory GenerationLogEntry.fromJson(Map<String, dynamic> json) {
+    return GenerationLogEntry(
+      id: json['id'] ?? '',
+      status: json['status'] ?? '',
+      triggerType: json['trigger_type'] ?? 'manual_batch',
+      documentId: json['document_id'],
+      llmProvider: json['llm_provider'],
+      llmModel: json['llm_model'],
+      totalDocuments: json['total_documents'] ?? 0,
+      processedDocuments: json['processed_documents'] ?? 0,
+      entitiesCreated: json['entities_created'] ?? 0,
+      relationsCreated: json['relations_created'] ?? 0,
+      errors: (json['errors'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      startedAt: json['started_at'] ?? '',
+      completedAt: json['completed_at'],
+      elapsedMs: json['elapsed_ms'],
+    );
+  }
+}
+
+final generationHistoryProvider =
+    FutureProvider.autoDispose<List<GenerationLogEntry>>((ref) async {
+  final ws = ref.watch(selectedWorkspaceProvider);
+  if (ws == null) return [];
+  final service = ref.read(knowledgeGraphServiceProvider);
+  return service.getGenerationHistory(ws.id);
+});
 
 final selectedGraphLayersProvider = StateProvider<Set<String>>((ref) {
   return {'document', 'semantic', 'knowledge'};
