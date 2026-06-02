@@ -403,6 +403,53 @@ class _InteractiveGraphState extends ConsumerState<_InteractiveGraph> {
         .where((e) => visibleNodeIds.contains(e.source) && visibleNodeIds.contains(e.target))
         .toList();
 
+    if (visibleNodes.isEmpty && widget.data.nodes.isNotEmpty) {
+      return Stack(
+        children: [
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.filter_alt_outlined, size: 64, color: Colors.grey.shade300),
+                const SizedBox(height: 16),
+                Text('当前过滤条件下没有数据',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.grey)),
+                const SizedBox(height: 8),
+                Text('尝试切换到「全部图层」或取消类型过滤',
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () => setState(() => _hiddenTypes.clear()),
+                  icon: const Icon(Icons.visibility),
+                  label: const Text('显示全部类型'),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 12, top: 12,
+            child: _LayerToggleBar(),
+          ),
+          Positioned(
+            right: 12, top: 12,
+            child: _FilterableLegend(
+              allNodes: widget.data.nodes,
+              hiddenTypes: _hiddenTypes,
+              onToggleType: (type) {
+                setState(() {
+                  if (_hiddenTypes.contains(type)) {
+                    _hiddenTypes.remove(type);
+                  } else {
+                    _hiddenTypes.add(type);
+                  }
+                });
+              },
+            ),
+          ),
+        ],
+      );
+    }
+
     final selectedNode = _selectedNodeId != null
         ? visibleNodes
             .where((n) => n.id == _selectedNodeId)
@@ -944,7 +991,17 @@ class _LayerToggleBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedLayers = ref.watch(selectedGraphLayersProvider);
+    final graphAsync = ref.watch(graphDataProvider);
     final theme = Theme.of(context);
+
+    final layerCounts = <String, int>{};
+    final data = graphAsync.valueOrNull;
+    if (data != null) {
+      for (final node in data.nodes) {
+        final layer = node.graphLayer ?? 'knowledge';
+        layerCounts[layer] = (layerCounts[layer] ?? 0) + 1;
+      }
+    }
 
     return Card(
       elevation: 2,
@@ -958,11 +1015,15 @@ class _LayerToggleBar extends ConsumerWidget {
             final key = entry.key;
             final (label, color, icon) = entry.value;
             final isActive = selectedLayers.contains(key);
+            final count = layerCounts[key] ?? 0;
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: FilterChip(
                 avatar: Icon(icon, size: 16, color: isActive ? color : Colors.grey),
-                label: Text(label, style: TextStyle(fontSize: 11)),
+                label: Text(
+                  count > 0 ? '$label ($count)' : label,
+                  style: const TextStyle(fontSize: 11),
+                ),
                 selected: isActive,
                 selectedColor: color.withAlpha(40),
                 checkmarkColor: color,
