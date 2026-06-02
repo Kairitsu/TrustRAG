@@ -239,4 +239,32 @@ final documentProvider =
   return DocumentNotifier(ref);
 });
 
+class GraphStat {
+  final String documentId;
+  final int entitiesCount;
+  final int relationsCount;
+
+  GraphStat({required this.documentId, required this.entitiesCount, required this.relationsCount});
+
+  factory GraphStat.fromJson(Map<String, dynamic> json) => GraphStat(
+    documentId: json['document_id'],
+    entitiesCount: json['entities_count'] ?? 0,
+    relationsCount: json['relations_count'] ?? 0,
+  );
+}
+
+final graphStatsProvider = StateProvider<Map<String, GraphStat>>((ref) => {});
+
+Future<void> loadGraphStats(WidgetRef ref, String workspaceId) async {
+  try {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get('/workspaces/$workspaceId/documents/graph-stats');
+    final list = (resp.data as List).map((j) => GraphStat.fromJson(j)).toList();
+    final map = {for (final s in list) s.documentId: s};
+    ref.read(graphStatsProvider.notifier).state = map;
+  } catch (_) {
+    // non-critical, silently ignore
+  }
+}
+
 final selectedFolderProvider = StateProvider<String?>((ref) => null);

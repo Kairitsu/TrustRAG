@@ -81,6 +81,10 @@ pub fn router() -> Router<AppState> {
             "/workspaces/{ws_id}/documents/{doc_id}/reprocess",
             post(reprocess_document),
         )
+        .route(
+            "/workspaces/{ws_id}/documents/graph-stats",
+            get(documents_graph_stats),
+        )
 }
 
 fn extract_extension(filename: &str) -> Option<String> {
@@ -649,4 +653,56 @@ async fn update_document_tags(
         .ok_or_else(|| AppError::NotFound("Document not found".into()))?;
 
     Ok(Json(parse_doc_row(row)?))
+}
+
+#[derive(Serialize)]
+struct GraphStatItem {
+    document_id: String,
+    entities_count: i64,
+    relations_count: i64,
+}
+
+async fn documents_graph_stats(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(ws_id): Path<Uuid>,
+) -> Result<Json<Vec<GraphStatItem>>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+
+    let rows = sqlx::query_as::<_, (String, i64)>(
+        "SELECT document_id, COUNT(*) FROM entities WHERE workspace_id = $1 AND document_id IS NOT NULL GROUP BY document_id",
+    )
+    .bind(ws_id.to_string())
+    .fetch_all(&state.pool)
+    .await?;
+
+    let rel_rows = sqlx::query_as::<_, (String, i64)>(
+        r#"SELECT e.document_id, COUNT(*)
+           FROM entity_relations r
+           JOIN entities e ON e.id = r.source_entity_id
+           WHERE r.workspace_id = $1 AND e.document_id IS NOT NULL
+           GROUP BY e.document_id"#,
+    )
+    .bind(ws_id.to_string())
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut rel_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for (doc_id, cnt) in rel_rows {
+        rel_map.insert(doc_id, cnt);
+    }
+
+    let items = rows
+        .into_iter()
+        .map(|(doc_id, ent_cnt)| {
+            let rel_cnt = rel_map.get(&doc_id).copied().unwrap_or(0);
+            GraphStatItem {
+                document_id: doc_id,
+                entities_count: ent_cnt,
+                relations_count: rel_cnt,
+            }
+        })
+        .collect();
+
+    Ok(Json(items))
 }

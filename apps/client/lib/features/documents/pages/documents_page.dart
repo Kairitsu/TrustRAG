@@ -33,6 +33,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
     final ws = ref.read(selectedWorkspaceProvider);
     if (ws != null) {
       ref.read(documentProvider.notifier).loadDocuments(ws.id);
+      loadGraphStats(ref, ws.id);
     }
   }
 
@@ -135,6 +136,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
   Widget build(BuildContext context) {
     final ws = ref.watch(selectedWorkspaceProvider);
     final docs = ref.watch(documentProvider);
+    final graphStats = ref.watch(graphStatsProvider);
 
     if (ws == null) {
       return Center(
@@ -357,6 +359,7 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                                     style: TextStyle(
                                         color: Colors.grey.shade600, fontSize: 12)),
                               ],
+                              _graphBadge(graphStats[doc.id]),
                             ],
                           ),
                           if (doc.tags.isNotEmpty)
@@ -810,6 +813,33 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
           Text(label,
               style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
         ],
+      ),
+    );
+  }
+
+  Widget _graphBadge(GraphStat? stat) {
+    if (stat == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(left: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.teal.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.hub, size: 11, color: Colors.teal.shade600),
+            const SizedBox(width: 3),
+            Text(
+              '${stat.entitiesCount}实体/${stat.relationsCount}关系',
+              style: TextStyle(color: Colors.teal.shade700, fontSize: 11, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
       ),
     );
   }
