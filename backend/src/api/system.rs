@@ -159,16 +159,62 @@ async fn validate_token(
 #[derive(Serialize)]
 struct OcrToolStatus {
     name: String,
+    display_name: String,
     available: bool,
     version: Option<String>,
     path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    languages: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    missing_hint: Option<String>,
 }
 
 #[derive(Serialize)]
 struct OcrStatus {
     any_available: bool,
+    pdf_ocr_ready: bool,
     tools: Vec<OcrToolStatus>,
     recommendation: String,
+}
+
+async fn check_binary(name: &str, args: &[&str]) -> (bool, Option<String>, Option<String>) {
+    let try_commands = build_ocr_check_commands(name, args);
+    for (prog, cmd_args) in &try_commands {
+        if let Ok(output) = tokio::process::Command::new(prog).args(cmd_args).output().await {
+            if output.status.success() {
+                let combined = format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let ver = combined.lines().next().unwrap_or("").trim().to_string();
+                return (true, Some(ver), Some(prog.clone()));
+            }
+        }
+    }
+    (false, None, None)
+}
+
+async fn detect_tesseract_languages(tess_path: &str) -> Vec<String> {
+    let result = tokio::process::Command::new(tess_path)
+        .args(["--list-langs"])
+        .output()
+        .await;
+    match result {
+        Ok(output) => {
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            text.lines()
+                .skip(1) // first line is header
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        }
+        Err(_) => vec![],
+    }
 }
 
 async fn ocr_status(
@@ -176,51 +222,84 @@ async fn ocr_status(
 ) -> Result<Json<OcrStatus>, AppError> {
     let mut tools = Vec::new();
 
-    for (name, commands) in [
-        ("tesseract", vec!["tesseract", "--version"]),
-        ("paddleocr", vec!["python3", "-c", "import paddleocr; print(paddleocr.VERSION)"]),
-    ] {
-        let try_commands = build_ocr_check_commands(name, &commands);
-        let mut found = false;
-        let mut found_ver = None;
-        let mut found_path = None;
-
-        for (prog, args) in &try_commands {
-            let result = tokio::process::Command::new(prog)
-                .args(args)
-                .output()
-                .await;
-            if let Ok(output) = result {
-                if output.status.success() {
-                    let ver = String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    found = true;
-                    found_ver = Some(ver);
-                    found_path = Some(prog.to_string());
-                    break;
-                }
-            }
+    let (tess_ok, tess_ver, tess_path) = check_binary("tesseract", &["tesseract", "--version"]).await;
+    let mut tess_langs = Vec::new();
+    if tess_ok {
+        if let Some(ref p) = tess_path {
+            tess_langs = detect_tesseract_languages(p).await;
         }
-
-        tools.push(OcrToolStatus { name: name.into(), available: found, version: found_ver, path: found_path });
     }
-
-    let any = tools.iter().any(|t| t.available);
-    let recommendation = if any {
-        "已检测到 OCR 工具，可处理扫描版 PDF。".into()
+    let tess_hint = if !tess_ok {
+        Some("安装 Tesseract: brew install tesseract / apt install tesseract-ocr / choco install tesseract".into())
+    } else if !tess_langs.contains(&"eng".to_string()) {
+        Some("缺少 eng 语言包".into())
     } else {
-        "未检测到 OCR 工具。建议安装 Tesseract (推荐) 或 PaddleOCR:\n\
-         • macOS: brew install tesseract tesseract-lang\n\
-         • Ubuntu: sudo apt install tesseract-ocr tesseract-ocr-chi-sim\n\
-         • Windows: 从 https://github.com/UB-Mannheim/tesseract/wiki 下载安装"
-            .into()
+        None
+    };
+    tools.push(OcrToolStatus {
+        name: "tesseract".into(),
+        display_name: "Tesseract OCR".into(),
+        available: tess_ok,
+        version: tess_ver,
+        path: tess_path.clone(),
+        languages: if tess_ok { Some(tess_langs.clone()) } else { None },
+        missing_hint: tess_hint,
+    });
+
+    let has_chi_sim = tess_langs.contains(&"chi_sim".to_string());
+    tools.push(OcrToolStatus {
+        name: "chi_sim".into(),
+        display_name: "中文简体语言包 (chi_sim)".into(),
+        available: tess_ok && has_chi_sim,
+        version: None,
+        path: None,
+        languages: None,
+        missing_hint: if tess_ok && !has_chi_sim {
+            Some("安装中文语言包: apt install tesseract-ocr-chi-sim / brew install tesseract-lang".into())
+        } else { None },
+    });
+
+    let (pdftoppm_ok, pdftoppm_ver, pdftoppm_path) = check_binary("pdftoppm", &["pdftoppm", "-v"]).await;
+    tools.push(OcrToolStatus {
+        name: "pdftoppm".into(),
+        display_name: "Poppler / pdftoppm (PDF 转图片)".into(),
+        available: pdftoppm_ok,
+        version: pdftoppm_ver,
+        path: pdftoppm_path,
+        languages: None,
+        missing_hint: if !pdftoppm_ok {
+            Some("安装 Poppler: brew install poppler / apt install poppler-utils / choco install poppler".into())
+        } else { None },
+    });
+
+    let (paddle_ok, paddle_ver, paddle_path) = check_binary(
+        "paddleocr",
+        &["python3", "-c", "import paddleocr; print(paddleocr.VERSION)"],
+    ).await;
+    tools.push(OcrToolStatus {
+        name: "paddleocr".into(),
+        display_name: "PaddleOCR".into(),
+        available: paddle_ok,
+        version: paddle_ver,
+        path: paddle_path,
+        languages: None,
+        missing_hint: if !paddle_ok { Some("安装: pip3 install paddleocr paddlepaddle".into()) } else { None },
+    });
+
+    let any_ocr = tess_ok || paddle_ok;
+    let pdf_ocr_ready = (tess_ok && pdftoppm_ok) || paddle_ok;
+
+    let recommendation = if pdf_ocr_ready {
+        "OCR 工具已就绪，可处理扫描版 PDF。".into()
+    } else if tess_ok && !pdftoppm_ok {
+        "已检测到 Tesseract，但缺少 pdftoppm (Poppler)，无法处理扫描版 PDF。\n请安装 Poppler 后重试。".into()
+    } else if !any_ocr {
+        "未检测到 OCR 工具。建议安装 Tesseract + Poppler (推荐) 或 PaddleOCR。".into()
+    } else {
+        "OCR 基础工具已安装，建议补全依赖以支持扫描版 PDF。".into()
     };
 
-    Ok(Json(OcrStatus { any_available: any, tools, recommendation }))
+    Ok(Json(OcrStatus { any_available: any_ocr, pdf_ocr_ready, tools, recommendation }))
 }
 
 fn build_ocr_check_commands(_name: &str, default_commands: &[&str]) -> Vec<(String, Vec<String>)> {
@@ -383,9 +462,9 @@ async fn ocr_install_options(
                 methods.push(InstallMethod {
                     package_manager: PackageManager::Choco,
                     engine: "tesseract".into(),
-                    command: "choco install tesseract -y".into(),
+                    command: "choco install tesseract poppler -y --no-progress".into(),
                     needs_sudo: true,
-                    description: "通过 Chocolatey 安装 Tesseract OCR".into(),
+                    description: "通过 Chocolatey 安装 Tesseract OCR + Poppler (含 pdftoppm)".into(),
                 });
             }
             if managers.contains(&PackageManager::Winget) {
@@ -394,7 +473,7 @@ async fn ocr_install_options(
                     engine: "tesseract".into(),
                     command: "winget install UB-Mannheim.TesseractOCR".into(),
                     needs_sudo: false,
-                    description: "通过 winget 安装 Tesseract OCR".into(),
+                    description: "通过 winget 安装 Tesseract OCR (需另行安装 Poppler)".into(),
                 });
             }
         }
@@ -436,6 +515,7 @@ struct OcrInstallResponse {
     engine: String,
     package_manager: String,
     output: String,
+    exit_code: Option<i32>,
     message: String,
 }
 
@@ -458,7 +538,7 @@ async fn ocr_install(
         ),
         ("tesseract", "choco", OsPlatform::Windows) => (
             "choco",
-            vec!["install", "tesseract", "-y"],
+            vec!["install", "tesseract", "poppler", "-y", "--no-progress"],
         ),
         ("tesseract", "winget", OsPlatform::Windows) => (
             "winget",
@@ -481,13 +561,18 @@ async fn ocr_install(
 
     tracing::info!(engine, package_manager = pm, %platform, "Starting OCR install");
 
-    let result = tokio::process::Command::new(program)
-        .args(&args)
-        .output()
-        .await;
+    let install_timeout = std::time::Duration::from_secs(600); // 10 minutes
+
+    let result = tokio::time::timeout(
+        install_timeout,
+        tokio::process::Command::new(program)
+            .args(&args)
+            .output(),
+    )
+    .await;
 
     match result {
-        Ok(output) => {
+        Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let combined = format!("{}\n{}", stdout, stderr).trim().to_string();
@@ -510,7 +595,12 @@ async fn ocr_install(
             } else if success {
                 format!("{} 安装成功！请刷新页面确认状态。", engine)
             } else {
-                format!("{} 安装失败，请查看输出日志或手动安装。", engine)
+                let hint = if !output.status.success() && lower.contains("access") {
+                    "\n提示: 可能需要管理员权限，请以管理员身份运行或手动执行安装命令。"
+                } else {
+                    ""
+                };
+                format!("{} 安装失败 (退出码: {:?})，请查看输出日志或手动安装。{}", engine, output.status.code(), hint)
             };
 
             Ok(Json(OcrInstallResponse {
@@ -518,16 +608,32 @@ async fn ocr_install(
                 engine: engine.into(),
                 package_manager: pm.into(),
                 output: combined,
+                exit_code: output.status.code(),
                 message,
             }))
         }
-        Err(e) => Ok(Json(OcrInstallResponse {
+        Ok(Err(e)) => Ok(Json(OcrInstallResponse {
             success: false,
             engine: engine.into(),
             package_manager: pm.into(),
             output: e.to_string(),
+            exit_code: None,
             message: format!("执行安装命令失败: {}。请检查 {} 是否已正确安装。", e, pm),
         })),
+        Err(_) => {
+            tracing::warn!(engine, "OCR install timed out after 10 minutes");
+            Ok(Json(OcrInstallResponse {
+                success: false,
+                engine: engine.into(),
+                package_manager: pm.into(),
+                output: "安装命令执行超时 (10 分钟)。".into(),
+                exit_code: None,
+                message: format!(
+                    "{} 安装超时。可能原因：网络慢、包管理器锁、需要管理员权限。\n建议手动执行安装命令。",
+                    engine
+                ),
+            }))
+        }
     }
 }
 

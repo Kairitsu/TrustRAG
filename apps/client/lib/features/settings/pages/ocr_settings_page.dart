@@ -87,12 +87,17 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
     }
   }
 
+  String? _installMessage;
+  int? _installExitCode;
+
   Future<void> _startInstall() async {
     if (_selectedMethod == null) return;
     setState(() {
       _installing = true;
       _installLog = '';
       _installSuccess = null;
+      _installMessage = null;
+      _installExitCode = null;
     });
     try {
       final api = ref.read(apiClientProvider);
@@ -102,7 +107,7 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
           'engine': _selectedMethod!['engine'],
           'package_manager': _selectedMethod!['package_manager'].toString(),
         },
-        options: Options(receiveTimeout: const Duration(minutes: 5)),
+        options: Options(receiveTimeout: const Duration(minutes: 11)),
       );
       if (mounted) {
         final data = resp.data as Map<String, dynamic>;
@@ -110,9 +115,27 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
           _installing = false;
           _installSuccess = data['success'] == true;
           _installLog = data['output']?.toString() ?? '';
+          _installMessage = data['message']?.toString();
+          _installExitCode = data['exit_code'] as int?;
           if (_installSuccess == true) {
             _currentStep = 3;
           }
+        });
+      }
+    } on DioException catch (e) {
+      if (mounted) {
+        String errMsg;
+        if (e.type == DioExceptionType.receiveTimeout) {
+          errMsg = '安装请求超时（前端等待已超过 11 分钟）。\n'
+              '安装可能仍在后台运行，请稍后点击"重新检测"确认状态。';
+        } else {
+          errMsg = e.message ?? e.toString();
+        }
+        setState(() {
+          _installing = false;
+          _installSuccess = false;
+          _installLog = errMsg;
+          _installMessage = '安装请求异常';
         });
       }
     } catch (e) {
@@ -188,48 +211,48 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
 
   Widget _buildStatusBanner(ThemeData theme) {
     final anyAvailable = _ocrStatus?['any_available'] == true;
-    final tools = (_ocrStatus?['tools'] as List?) ?? [];
-    final installed = tools.where((t) => t['available'] == true).toList();
+    final pdfReady = _ocrStatus?['pdf_ocr_ready'] == true;
+    final recommendation = _ocrStatus?['recommendation'] as String? ?? '';
+
+    final Color bannerColor;
+    final IconData bannerIcon;
+    final String bannerTitle;
+    if (pdfReady) {
+      bannerColor = Colors.green;
+      bannerIcon = Icons.check_circle;
+      bannerTitle = 'OCR 组件已就绪，可处理扫描版 PDF';
+    } else if (anyAvailable) {
+      bannerColor = Colors.orange;
+      bannerIcon = Icons.warning_amber;
+      bannerTitle = 'OCR 部分就绪，扫描版 PDF 可能不可用';
+    } else {
+      bannerColor = Colors.orange;
+      bannerIcon = Icons.warning_amber;
+      bannerTitle = '未检测到 OCR 组件';
+    }
 
     return Card(
-      color: anyAvailable ? Colors.green.shade50 : Colors.orange.shade50,
+      color: bannerColor.withAlpha(25),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            Icon(
-              anyAvailable ? Icons.check_circle : Icons.warning_amber,
-              color: anyAvailable ? Colors.green : Colors.orange,
-              size: 36,
-            ),
+            Icon(bannerIcon, color: bannerColor, size: 36),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    anyAvailable ? 'OCR 组件已就绪' : '未检测到 OCR 组件',
+                  Text(bannerTitle,
                     style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: anyAvailable
-                          ? Colors.green.shade800
-                          : Colors.orange.shade800,
+                      fontWeight: FontWeight.bold, fontSize: 16,
+                      color: bannerColor.withAlpha(200),
                     ),
                   ),
                   const SizedBox(height: 4),
-                  if (anyAvailable)
-                    Text(
-                      '已安装: ${installed.map((t) => _toolDisplayName(t['name'] ?? '')).join(', ')}',
-                      style: TextStyle(
-                          fontSize: 13, color: Colors.green.shade600),
-                    )
-                  else
-                    Text(
-                      '按照下方向导安装 OCR 组件',
-                      style: TextStyle(
-                          fontSize: 13, color: Colors.orange.shade600),
-                    ),
+                  Text(recommendation,
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  ),
                 ],
               ),
             ),
@@ -299,7 +322,6 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
     );
   }
 
-  // Step 1: Detect current status
   Widget _buildStep1DetectStatus(ThemeData theme) {
     final tools = (_ocrStatus?['tools'] as List?) ?? [];
 
@@ -308,25 +330,39 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
       children: [
         ...tools.map((t) {
           final available = t['available'] == true;
-          final name = t['name'] as String? ?? '';
+          final displayName = t['display_name'] as String? ?? t['name'] as String? ?? '';
           final version = t['version'] as String?;
           final path = t['path'] as String?;
+          final missingHint = t['missing_hint'] as String?;
+          final languages = (t['languages'] as List?)?.map((e) => e.toString()).toList();
+
+          final subtitleParts = <String>[];
+          if (available) {
+            if (version != null && version.isNotEmpty) subtitleParts.add('版本: $version');
+            if (path != null) subtitleParts.add('路径: $path');
+            if (languages != null && languages.isNotEmpty) {
+              subtitleParts.add('语言包: ${languages.join(", ")}');
+            }
+          } else if (missingHint != null) {
+            subtitleParts.add(missingHint);
+          } else {
+            subtitleParts.add('未安装');
+          }
+
           return Card(
             child: ListTile(
               leading: Icon(
                 available ? Icons.check_circle : Icons.cancel,
                 color: available ? Colors.green : Colors.grey,
               ),
-              title: Text(_toolDisplayName(name),
+              title: Text(displayName,
                   style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: available
-                  ? Text('版本: ${version ?? "未知"}${path != null ? '\n路径: $path' : ''}',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600))
-                  : Text('未安装',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              subtitle: Text(subtitleParts.join('\n'),
+                  style: TextStyle(fontSize: 12, color: available ? Colors.grey.shade600 : Colors.orange.shade700)),
+              isThreeLine: subtitleParts.length > 1,
               trailing: available
                   ? _chip('可用', Colors.green)
-                  : _chip('未安装', Colors.grey),
+                  : _chip('缺失', Colors.orange),
             ),
           );
         }),
@@ -339,7 +375,7 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
               label: const Text('重新检测'),
             ),
             const SizedBox(width: 12),
-            if (_ocrStatus?['any_available'] != true)
+            if (_ocrStatus?['pdf_ocr_ready'] != true)
               FilledButton(
                 onPressed: () => setState(() => _currentStep = 1),
                 child: const Text('开始安装'),
@@ -489,7 +525,6 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
     );
   }
 
-  // Step 3: Install
   Widget _buildStep3Install(ThemeData theme) {
     if (_selectedMethod == null) {
       return const Text('请先选择安装方式');
@@ -514,13 +549,23 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
                 _commandBlock(command),
                 if (needsSudo) ...[
                   const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.warning_amber, size: 16, color: Colors.amber.shade700),
-                      const SizedBox(width: 6),
-                      Text('此操作需要管理员权限 (sudo)',
-                          style: TextStyle(fontSize: 12, color: Colors.amber.shade700)),
-                    ],
+                  Card(
+                    color: Colors.amber.shade50,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.admin_panel_settings, size: 20, color: Colors.amber.shade700),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(
+                            '此操作需要管理员权限。Windows 下会弹出 UAC 权限确认窗口，请点击"是"以继续安装。\n'
+                            '如果安装卡住，可能是权限不足。建议手动以管理员身份运行命令。',
+                            style: TextStyle(fontSize: 12, color: Colors.amber.shade800),
+                          )),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               ],
@@ -529,11 +574,15 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
         ),
         const SizedBox(height: 12),
         if (_installing)
-          const Column(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              LinearProgressIndicator(),
-              SizedBox(height: 8),
-              Text('正在安装，请稍候...'),
+              const LinearProgressIndicator(),
+              const SizedBox(height: 8),
+              const Text('正在安装，请稍候... (最长等待 10 分钟)'),
+              const SizedBox(height: 4),
+              Text('如果长时间无响应，可能是需要管理员权限或网络问题。',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
             ],
           )
         else if (_installSuccess == true)
@@ -541,11 +590,14 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
             color: Colors.green.shade50,
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.check_circle, color: Colors.green),
-                  const SizedBox(width: 8),
-                  const Expanded(child: Text('安装成功！')),
+                  Row(children: [
+                    const Icon(Icons.check_circle, color: Colors.green),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_installMessage ?? '安装成功！')),
+                  ]),
                 ],
               ),
             ),
@@ -555,11 +607,19 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
             color: Colors.red.shade50,
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.error, color: Colors.red),
-                  const SizedBox(width: 8),
-                  const Expanded(child: Text('安装失败，请查看日志或手动安装。')),
+                  Row(children: [
+                    const Icon(Icons.error, color: Colors.red),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_installMessage ?? '安装失败，请查看日志或手动安装。')),
+                  ]),
+                  if (_installExitCode != null) ...[
+                    const SizedBox(height: 4),
+                    Text('退出码: $_installExitCode',
+                        style: TextStyle(fontSize: 12, color: Colors.red.shade300, fontFamily: 'monospace')),
+                  ],
                 ],
               ),
             ),
@@ -568,21 +628,39 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
           const SizedBox(height: 8),
           ExpansionTile(
             title: const Text('安装日志', style: TextStyle(fontSize: 13)),
+            initiallyExpanded: _installSuccess == false,
             children: [
               Container(
                 width: double.infinity,
+                constraints: const BoxConstraints(maxHeight: 300),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade900,
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: SelectableText(
-                  _installLog,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                    color: Colors.white70,
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    _installLog,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: Colors.white70,
+                    ),
                   ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: _installLog));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('日志已复制到剪贴板'), duration: Duration(seconds: 1)),
+                    );
+                  },
+                  icon: const Icon(Icons.copy, size: 14),
+                  label: const Text('复制日志', style: TextStyle(fontSize: 12)),
                 ),
               ),
             ],
@@ -613,8 +691,10 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
     );
   }
 
-  // Step 4: Verify
   Widget _buildStep4Verify(ThemeData theme) {
+    final pdfReady = _ocrStatus?['pdf_ocr_ready'] == true;
+    final tools = (_ocrStatus?['tools'] as List?) ?? [];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -629,21 +709,56 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
             ],
           )
         else if (_verifySuccess == true)
-          Card(
-            color: Colors.green.shade50,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.green, size: 48),
-                  const SizedBox(height: 8),
-                  const Text('安装验证通过！',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  const SizedBox(height: 4),
-                  const Text('OCR 组件已就绪，可以处理扫描版 PDF 文档。'),
-                ],
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Card(
+                color: pdfReady ? Colors.green.shade50 : Colors.orange.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Icon(
+                        pdfReady ? Icons.check_circle : Icons.warning_amber,
+                        color: pdfReady ? Colors.green : Colors.orange,
+                        size: 48,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        pdfReady ? '安装验证通过！' : 'OCR 部分可用',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(pdfReady
+                        ? 'OCR 组件已就绪，可以处理扫描版 PDF 文档。'
+                        : _ocrStatus?['recommendation'] as String? ?? '部分依赖缺失，请查看下方详情。',
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(height: 12),
+              ...tools.map((t) {
+                final ok = t['available'] == true;
+                final name = t['display_name'] as String? ?? t['name'] as String? ?? '';
+                final hint = t['missing_hint'] as String?;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(children: [
+                    Icon(ok ? Icons.check : Icons.close,
+                        size: 16, color: ok ? Colors.green : Colors.red),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(
+                      ok ? name : '$name — ${hint ?? "缺失"}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: ok ? Colors.grey.shade700 : Colors.red.shade700,
+                      ),
+                    )),
+                  ]),
+                );
+              }),
+            ],
           )
         else if (_verifySuccess == false)
           Card(
