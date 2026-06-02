@@ -50,6 +50,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   static const double _maxConvPanelWidth = 400;
   static const double _maxCitationPanelWidth = 500;
   String _streamingContent = '';
+  String _streamingPhase = '';
   List<Citation> _streamingCitations = [];
   StreamController<String>? _streamingTextController;
 
@@ -120,6 +121,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     setState(() {
       _isSending = true;
       _streamingContent = '';
+      _streamingPhase = '正在连接...';
       _streamingCitations = [];
     });
 
@@ -153,8 +155,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         final response = await client.send(request);
 
         if (response.statusCode != 200) {
-          throw Exception('HTTP ${response.statusCode}');
+          final body = await response.stream.transform(utf8.decoder).join();
+          throw Exception('HTTP ${response.statusCode}: $body');
         }
+
+        if (mounted) setState(() => _streamingPhase = '正在检索资料库...');
 
         String assistantId = '';
         String currentEventType = '';
@@ -194,6 +199,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               final event = jsonDecode(jsonStr);
               if (eventType == 'message_start') {
                 assistantId = event['message_id'] ?? '';
+                if (mounted) setState(() => _streamingPhase = '正在生成回答...');
               } else if (eventType == 'citation') {
                 setState(() {
                   _streamingCitations.add(Citation.fromJson(event));
@@ -270,16 +276,32 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       } finally {
         client.close();
       }
+
+      if (_streamingContent.isEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('AI 未返回任何内容，请检查 LLM 模型配置和资料库状态'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
     } catch (e) {
       DebugLogBuffer().add('ERROR CHAT 发送失败: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('发送失败: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('发送失败: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ));
       }
     } finally {
       DebugLogBuffer().add('CHAT 流式响应结束，引用数: ${_streamingCitations.length}');
       if (mounted) {
-        setState(() => _isSending = false);
+        setState(() {
+          _isSending = false;
+          _streamingPhase = '';
+        });
       }
     }
   }
@@ -332,7 +354,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       children: [
         if (!_isCompact) _buildWorkspaceBar(ws),
         Expanded(
-          child: messages.isEmpty && _streamingContent.isEmpty
+          child: messages.isEmpty && !_isSending && _streamingContent.isEmpty
               ? _buildEmptyChat()
               : _buildMessageList(messages),
         ),
@@ -638,7 +660,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         child: ListView.builder(
           controller: _scrollController,
           padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 16),
-          itemCount: messages.length + (_streamingContent.isNotEmpty ? 1 : 0),
+          itemCount: messages.length + (_isSending || _streamingContent.isNotEmpty ? 1 : 0),
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
           itemBuilder: (context, i) {
@@ -1074,8 +1096,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text('思考中...',
-                          style: TextStyle(color: Colors.grey.shade500)),
+                      Text(
+                        _streamingPhase.isNotEmpty ? _streamingPhase : '思考中...',
+                        style: TextStyle(color: Colors.grey.shade500),
+                      ),
                     ],
                   )
                 else if (_streamingTextController != null)
