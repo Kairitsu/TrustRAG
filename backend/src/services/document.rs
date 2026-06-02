@@ -89,7 +89,14 @@ pub async fn process_document(
     embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     doc_id: Uuid,
     workspace_id: Uuid,
+    semaphore: Option<Arc<tokio::sync::Semaphore>>,
 ) {
+    let _permit = if let Some(ref sem) = semaphore {
+        Some(sem.acquire().await.expect("semaphore closed"))
+    } else {
+        None
+    };
+
     if let Err(e) = process_document_inner(
         &pool,
         &storage,

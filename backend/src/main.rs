@@ -47,6 +47,48 @@ async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn recover_stale_documents(state: &AppState) {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT id, workspace_id FROM documents WHERE processing_status IN ('processing', 'chunking', 'embedding')"
+    )
+    .fetch_all(&state.pool)
+    .await;
+
+    match rows {
+        Ok(stale) => {
+            if stale.is_empty() {
+                tracing::info!("No stale documents to recover");
+                return;
+            }
+            tracing::info!(count = stale.len(), "Recovering stale documents");
+            for (doc_id_str, ws_id_str) in stale {
+                let doc_id = match uuid::Uuid::parse_str(&doc_id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let ws_id = match uuid::Uuid::parse_str(&ws_id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let pool = state.pool.clone();
+                let storage = state.storage.clone();
+                let doc_processor_url = state.doc_processor_url.clone();
+                let embedding_provider = state.embedding_provider.read().await.clone();
+                let semaphore = state.doc_processing_semaphore.clone();
+                tokio::spawn(async move {
+                    services::document::process_document(
+                        pool, storage, doc_processor_url, embedding_provider,
+                        doc_id, ws_id, Some(semaphore),
+                    ).await;
+                });
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to query stale documents for recovery");
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_logging();
@@ -95,6 +137,12 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let doc_concurrency: usize = std::env::var("TRUSTRAG_DOC_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2);
+    tracing::info!(doc_concurrency, "Document processing concurrency limit");
+
     let state = AppState {
         pool: pool.clone(),
         jwt_secret: config.jwt_secret.clone(),
@@ -104,11 +152,14 @@ async fn main() -> anyhow::Result<()> {
         doc_processor_url: config.doc_processor_url.clone(),
         embedding_cache,
         domain_profiles,
+        doc_processing_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(doc_concurrency)),
         #[cfg(sqlite_mode)]
         ocr_tasks: api::system::new_ocr_task_store(),
     };
 
     api::embedding_configs::init_embedding_provider(&state).await;
+
+    recover_stale_documents(&state).await;
 
     let trace_layer = TraceLayer::new_for_http()
         .make_span_with(|request: &axum::http::Request<_>| {

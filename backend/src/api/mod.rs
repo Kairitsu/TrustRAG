@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use moka::future::Cache;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 
 use crate::db::DbPool;
 use crate::services::domain_profile::DomainProfileRegistry;
@@ -38,6 +38,7 @@ pub struct AppState {
     pub doc_processor_url: String,
     pub embedding_cache: Cache<String, Vec<f32>>,
     pub domain_profiles: Arc<DomainProfileRegistry>,
+    pub doc_processing_semaphore: Arc<Semaphore>,
     #[cfg(sqlite_mode)]
     pub ocr_tasks: crate::api::system::OcrTaskStore,
 }
