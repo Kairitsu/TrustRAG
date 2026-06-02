@@ -14,6 +14,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.7-beta.2] - 2026-06-02
+
+### Fixed / 修复
+- 🐛 **Rerank 配置 PUT 500 错误** — 类型安全 SQLite 绑定，修复 rerank 配置更新时 `CAST` 类型错误导致的 500 响应。（Issue #20）
+- 🐛 **Embedding 批处理 off-by-one** — 修复批处理循环边界条件，避免最后一批 embedding 被跳过。（Issue #21）
+- 🐛 **知识图谱空节点导致前端崩溃** — 后端过滤无效节点/边，前端增加空状态 fallback。（Issue #22）
+- 🐛 **文档处理进度缺失** — 新增 `chunks_total/done`、`embedding_batches_total/done` 字段，前端显示确定性进度条。（Issue #23）
+- 🐛 **聊天流 SSE 阶段事件缺失** — 新增 `retrieval_started`、`retrieval_finished`、`llm_started` SSE 事件，前端消费并展示阶段状态。（Issue #24）
+- 🐛 **知识图谱图层过滤空状态** — 过滤后无数据时显示友好提示和"显示全部类型"按钮。（Issue #25）
+- 🔧 **OcrInstallResponse 缺少 exit_code 字段** — 修复不支持的安装组合分支构造体缺少字段导致 CI 编译失败。
+
+### Added / 新增
+- ⏹️ **聊天「停止生成」按钮** — 流式响应期间可随时中止生成。（E-24.1）
+- ⏱️ **首 Token 超时检测（30s）** — 30 秒内无响应自动终止并提示用户。（E-24.2）
+- 🔄 **文档「重新处理」按钮** — 一键重新处理失败/过期文档。（E-23.1）
+- 📊 **文档处理进度实时显示** — 分块/向量化阶段显示具体进度（如"分块中 120/380"）。（E-23.2, E-23.3）
+- 🔗 **资料库文档图谱统计 badge** — 文档列表卡片显示实体/关系数量。（E-25.1）
+- 🏷️ **图层节点数量标注** — 知识图谱图层切换按钮显示节点计数。（E-25.2）
+
+### Infrastructure / 基础设施
+- 新增 PostgreSQL 迁移 `0023_document_processing_progress.sql`
+- SQLite schema 更新支持进度追踪字段
+- `DocRow` 从 tuple 重构为 `#[derive(sqlx::FromRow)]` struct
+
+---
+
 ## [0.2.7-beta.1] - 2026-06-01
 
 ### Fixed / 修复
