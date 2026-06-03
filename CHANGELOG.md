@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.7-beta.4] - 2026-06-03
+
+### Fixed / 修复
+- 🐛 **Windows 本地模式启动 panic 修复 (Issue #27)** — `backend/src/api/system.rs` 中 OCR 安装状态/取消路由使用了旧式 axum 路由参数 `:task_id`，axum 0.8 不支持此语法导致后端启动时 panic。已替换为 `{task_id}` 新语法。全局搜索确认无其他遗漏。
+- 🧹 **Windows 卸载数据清理修复 (Issue #26)** — 卸载脚本 `installer.iss` 只清理了 `{localappdata}\TrustRAG`，但实际数据在 `{localappdata}\trustrag\TrustRAG`（Rust directories crate）和 `{userappdata}\com.trustrag`（Flutter path_provider）。现在动态检测并清理所有实际存在的数据目录。
+
+### Changed / 变更
+- 🔍 **后端启动失败错误展示增强** — `BackendManager` 现在捕获后端进程 stderr 输出，异常退出时展示真实错误信息（退出码 + 最后几行 stderr），不再显示泛化的"本地后端未启动"。
+
+---
+
 ## [0.2.7-beta.3] - 2026-06-03
 
 ### Added / 新增
