@@ -37,13 +37,35 @@ Filename: "{app}\TrustRAG.exe"; Description: "{cm:LaunchProgram,TrustRAG}"; Flag
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   MsgResult: Integer;
-  LocalAppDataDir: String;
-  RoamingAppDataDir: String;
+  DirsToDelete: String;
+  DirPath: String;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    LocalAppDataDir := ExpandConstant('{localappdata}\TrustRAG');
-    RoamingAppDataDir := ExpandConstant('{userappdata}\TrustRAG');
+    DirsToDelete := '';
+
+    DirPath := ExpandConstant('{localappdata}\trustrag\TrustRAG');
+    if DirExists(DirPath) then
+      DirsToDelete := DirsToDelete + '  ' + DirPath + #13#10;
+
+    DirPath := ExpandConstant('{localappdata}\trustrag');
+    if DirExists(DirPath) then
+      DirsToDelete := DirsToDelete + '  ' + DirPath + #13#10;
+
+    DirPath := ExpandConstant('{userappdata}\com.trustrag');
+    if DirExists(DirPath) then
+      DirsToDelete := DirsToDelete + '  ' + DirPath + #13#10;
+
+    DirPath := ExpandConstant('{localappdata}\TrustRAG');
+    if DirExists(DirPath) then
+      DirsToDelete := DirsToDelete + '  ' + DirPath + #13#10;
+
+    DirPath := ExpandConstant('{userappdata}\TrustRAG');
+    if DirExists(DirPath) then
+      DirsToDelete := DirsToDelete + '  ' + DirPath + #13#10;
+
+    if DirsToDelete = '' then
+      Exit;
 
     MsgResult := MsgBox(
       'Do you want to delete all TrustRAG local data?' + #13#10 + #13#10 +
@@ -53,17 +75,26 @@ begin
       '  - Account data and login tokens' + #13#10 +
       '  - Document caches and indexes' + #13#10 + #13#10 +
       'Directories that will be deleted:' + #13#10 +
-      '  ' + LocalAppDataDir + #13#10 +
-      '  ' + RoamingAppDataDir + #13#10 + #13#10 +
+      DirsToDelete + #13#10 +
       'Choose "No" if you plan to reinstall or upgrade TrustRAG later.',
       mbConfirmation, MB_YESNO or MB_DEFBUTTON2);
 
     if MsgResult = IDYES then
     begin
-      if DirExists(LocalAppDataDir) then
-        DelTree(LocalAppDataDir, True, True, True);
-      if DirExists(RoamingAppDataDir) then
-        DelTree(RoamingAppDataDir, True, True, True);
+      DirPath := ExpandConstant('{localappdata}\trustrag\TrustRAG');
+      if DirExists(DirPath) then DelTree(DirPath, True, True, True);
+
+      DirPath := ExpandConstant('{localappdata}\trustrag');
+      if DirExists(DirPath) then DelTree(DirPath, True, True, True);
+
+      DirPath := ExpandConstant('{userappdata}\com.trustrag');
+      if DirExists(DirPath) then DelTree(DirPath, True, True, True);
+
+      DirPath := ExpandConstant('{localappdata}\TrustRAG');
+      if DirExists(DirPath) then DelTree(DirPath, True, True, True);
+
+      DirPath := ExpandConstant('{userappdata}\TrustRAG');
+      if DirExists(DirPath) then DelTree(DirPath, True, True, True);
     end;
   end;
 end;
