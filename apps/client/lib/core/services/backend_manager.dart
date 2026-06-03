@@ -84,9 +84,9 @@ class BackendManager {
     DebugLogBuffer().add('BACKEND 启动中 port=$_port account=${accountId ?? "default"}');
     DebugLogBuffer().add('BACKEND 数据目录: $dataDir');
 
-    try {
-      final stderrLines = <String>[];
+    final stderrLines = <String>[];
 
+    try {
       _process = await Process.start(
         backendPath,
         [],
