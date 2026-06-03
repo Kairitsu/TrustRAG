@@ -261,33 +261,65 @@ async fn process_document_inner(
     let mut chunk_ids = Vec::with_capacity(chunks.len());
     let mut chunk_texts = Vec::with_capacity(chunks.len());
 
-    for (ci, chunk) in chunks.iter().enumerate() {
+    struct ChunkRow {
+        id: String,
+        index: i32,
+        heading_path: Option<String>,
+        content: String,
+        char_start: i64,
+        char_end: i64,
+        content_hash: String,
+    }
+
+    let rows: Vec<ChunkRow> = chunks.iter().map(|chunk| {
         let chunk_id = Uuid::new_v4();
         chunk_ids.push(chunk_id);
         chunk_texts.push(chunk.content.clone());
-
-        sqlx::query(
-            r#"
-            INSERT INTO document_chunks (
-                id, document_id, chunk_index, heading_path, content,
-                char_start, char_end, content_hash
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-        )
-        .bind(chunk_id.to_string())
-        .bind(doc_id.to_string())
-        .bind(chunk.index as i32)
-        .bind(&chunk.heading_path)
-        .bind(&chunk.content)
-        .bind(chunk.char_start as i64)
-        .bind(chunk.char_end as i64)
-        .bind(&chunk.content_hash)
-        .execute(pool)
-        .await?;
-
-        if (ci + 1) % 50 == 0 || ci + 1 == chunks.len() {
-            update_progress(pool, doc_id, None, Some((ci + 1) as i32), None, None).await?;
+        ChunkRow {
+            id: chunk_id.to_string(),
+            index: chunk.index as i32,
+            heading_path: chunk.heading_path.clone(),
+            content: chunk.content.clone(),
+            char_start: chunk.char_start as i64,
+            char_end: chunk.char_end as i64,
+            content_hash: chunk.content_hash.clone(),
         }
+    }).collect();
+
+    const BATCH_SIZE: usize = 100;
+    let doc_id_str = doc_id.to_string();
+
+    for (batch_idx, batch) in rows.chunks(BATCH_SIZE).enumerate() {
+        let cols_per_row = 8;
+        let mut sql = String::from(
+            "INSERT INTO document_chunks (id, document_id, chunk_index, heading_path, content, char_start, char_end, content_hash) VALUES "
+        );
+        let mut placeholders = Vec::with_capacity(batch.len());
+        for (i, _) in batch.iter().enumerate() {
+            let base = i * cols_per_row + 1;
+            placeholders.push(format!(
+                "(${}, ${}, ${}, ${}, ${}, ${}, ${}, ${})",
+                base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6, base + 7
+            ));
+        }
+        sql.push_str(&placeholders.join(", "));
+
+        let mut query = sqlx::query(&sql);
+        for row in batch {
+            query = query
+                .bind(&row.id)
+                .bind(&doc_id_str)
+                .bind(row.index)
+                .bind(&row.heading_path)
+                .bind(&row.content)
+                .bind(row.char_start)
+                .bind(row.char_end)
+                .bind(&row.content_hash);
+        }
+        query.execute(pool).await?;
+
+        let done = ((batch_idx + 1) * BATCH_SIZE).min(rows.len());
+        update_progress(pool, doc_id, None, Some(done as i32), None, None).await?;
     }
 
     if let Some(provider) = embedding_provider {
