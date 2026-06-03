@@ -894,11 +894,7 @@ async fn ocr_install_start(
 
                     if success {
                         t.status = OcrTaskStatus::Completed;
-                        t.message = if already_installed {
-                            Some(format!("{} 已安装（最新版本），无需更新。", eng))
-                        } else {
-                            Some(format!("{} 安装成功！请刷新页面确认状态。", eng))
-                        };
+                        t.log_lines.push("安装命令执行完成，正在验证...".to_string());
                     } else {
                         t.status = OcrTaskStatus::Failed;
                         t.message = Some(format!(
@@ -916,6 +912,46 @@ async fn ocr_install_start(
                     t.status = OcrTaskStatus::Failed;
                     t.log_lines.push("Installation timed out after 10 minutes.".to_string());
                     t.message = Some(format!("{} 安装超时 (10 分钟)。建议手动安装。", eng));
+                }
+            }
+        }
+
+        // Post-install verification: re-check if the binary is now available
+        {
+            let should_verify = {
+                let tasks = store.lock().await;
+                tasks.get(&tid).map(|t| t.status == OcrTaskStatus::Completed).unwrap_or(false)
+            };
+
+            if should_verify {
+                let (check_name, check_args): (&str, &[&str]) = if eng == "paddleocr" {
+                    ("python3", &["python3", "-c", "import paddleocr; print(paddleocr.VERSION)"])
+                } else {
+                    ("tesseract", &["tesseract", "--version"])
+                };
+
+                let (ok, ver, path) = check_binary(check_name, check_args).await;
+
+                let mut tasks = store.lock().await;
+                if let Some(t) = tasks.get_mut(&tid) {
+                    if ok {
+                        let ver_str = ver.unwrap_or_default();
+                        let path_str = path.unwrap_or_default();
+                        t.log_lines.push(format!("验证成功: {} v{} ({})", check_name, ver_str, path_str));
+                        t.message = Some(format!(
+                            "{} 安装并验证成功！版本: {}",
+                            eng, ver_str
+                        ));
+                    } else {
+                        t.log_lines.push(format!(
+                            "警告: 安装命令执行成功，但 {} 仍不可用。可能需要重启终端或将其添加到 PATH。",
+                            check_name
+                        ));
+                        t.message = Some(format!(
+                            "{} 安装命令已完成，但验证未通过。建议重启应用后重新检测。",
+                            eng
+                        ));
+                    }
                 }
             }
         }
