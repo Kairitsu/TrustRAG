@@ -30,8 +30,8 @@ pub fn router() -> Router<AppState> {
         .route("/system/ocr-install-options", get(ocr_install_options))
         .route("/system/ocr-install", post(ocr_install))
         .route("/system/ocr-install/start", post(ocr_install_start))
-        .route("/system/ocr-install/status/:task_id", get(ocr_install_status))
-        .route("/system/ocr-install/cancel/:task_id", post(ocr_install_cancel))
+        .route("/system/ocr-install/status/{task_id}", get(ocr_install_status))
+        .route("/system/ocr-install/cancel/{task_id}", post(ocr_install_cancel))
 }
 
 #[derive(Serialize)]

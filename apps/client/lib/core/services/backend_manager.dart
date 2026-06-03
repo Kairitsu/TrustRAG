@@ -85,6 +85,8 @@ class BackendManager {
     DebugLogBuffer().add('BACKEND 数据目录: $dataDir');
 
     try {
+      final stderrLines = <String>[];
+
       _process = await Process.start(
         backendPath,
         [],
@@ -103,13 +105,28 @@ class BackendManager {
 
       _process!.stderr.listen((data) {
         final line = String.fromCharCodes(data).trim();
-        if (line.isNotEmpty) debugPrint('[Backend:ERR] $line');
+        if (line.isNotEmpty) {
+          debugPrint('[Backend:ERR] $line');
+          stderrLines.add(line);
+          DebugLogBuffer().add('BACKEND STDERR: $line');
+        }
       });
 
       _process!.exitCode.then((code) {
         debugPrint('[BackendManager] Backend exited with code $code');
         _isRunning = false;
         _process = null;
+        if (code != 0 && _startupError == null) {
+          final lastLines = stderrLines.length > 5
+              ? stderrLines.sublist(stderrLines.length - 5)
+              : stderrLines;
+          final detail = lastLines.isNotEmpty
+              ? lastLines.join('\n')
+              : 'No stderr output captured';
+          _startupError = 'Backend exited with code $code.\n$detail';
+          DebugLogBuffer().add('ERROR BACKEND 异常退出 code=$code');
+          if (!_readyCompleter.isCompleted) _readyCompleter.complete();
+        }
       });
 
       await _readyCompleter.future.timeout(
@@ -125,12 +142,18 @@ class BackendManager {
       if (!_readyCompleter.isCompleted) _readyCompleter.complete();
     }
 
-    if (!_isRunning) {
+    if (!_isRunning && _startupError == null) {
       _isRunning = await _healthCheck();
       debugPrint('[BackendManager] Health check result: $_isRunning');
       DebugLogBuffer().add(_isRunning
           ? 'BACKEND 健康检查通过，端口 $_port'
           : 'ERROR BACKEND 健康检查失败');
+      if (!_isRunning && _startupError == null) {
+        final detail = stderrLines.isNotEmpty
+            ? stderrLines.last
+            : 'Health check failed after timeout';
+        _startupError = 'Backend did not become ready.\n$detail';
+      }
     }
   }
 
