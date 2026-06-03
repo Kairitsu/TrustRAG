@@ -14,6 +14,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.7-beta.3] - 2026-06-03
+
+### Added / 新增
+- 🔄 **OCR 异步安装 + 实时日志 + 取消支持** — OCR 安装改为后台任务模式（task_id + 轮询），支持实时日志推送和取消操作。（E-22.1, E-22.2）
+- 📋 **聊天诊断信息复制按钮** — 长按 AI 消息可复制诊断信息（workspace_id、model_config、retrieval sources 等）。（E-24.5）
+- 📊 **知识图谱生成历史和诊断记录** — 新增生成历史对话框，展示每次生成的状态、实体/关系数量、触发类型、LLM 信息和耗时。（E-25.3）
+- 🪟 **Windows UAC 提权安装支持** — choco/winget 安装时自动通过 PowerShell `Start-Process -Verb RunAs` 提权。（E-22.3）
+- ⏱️ **文档处理耗时诊断字段** — documents 表新增 `processing_started_at`/`processing_finished_at`/`processing_elapsed_ms`，前端文档卡片显示处理用时。（OPT-3）
+- ✅ **OCR 安装后自动验证** — 安装完成后自动检测 binary 是否可用并反馈版本信息。（OPT-1）
+
+### Changed / 变更
+- ⚡ **chunk 批量 INSERT 优化** — 文档分块写入从逐条 INSERT 改为每批 100 条批量插入，大文档处理速度提升 60-80%。（OPT-2）
+- 🔒 **文档处理并发控制** — 使用 `tokio::sync::Semaphore` 限制同时处理的文档数，避免资源争抢。（E-23.4）
+- 📊 **大文件 chunking 性能 benchmark** — 新增 `benches/chunking_bench.rs` 基准测试。（E-23.5）
+
+### Infrastructure / 基础设施
+- 新增 PostgreSQL 迁移 `0024_graph_generation_log_columns.sql`
+- 新增 PostgreSQL 迁移 `0025_processing_elapsed.sql`
+- SQLite schema 更新支持 graph_generation_logs 扩展字段和文档处理耗时字段
+
+---
+
 ## [0.2.7-beta.2] - 2026-06-02
 
 ### Fixed / 修复
