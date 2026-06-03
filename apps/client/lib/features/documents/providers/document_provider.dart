@@ -19,6 +19,9 @@ class Document {
   final int? chunksDone;
   final int? embeddingBatchesTotal;
   final int? embeddingBatchesDone;
+  final String? processingStartedAt;
+  final String? processingFinishedAt;
+  final int? processingElapsedMs;
   final List<String> tags;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -36,6 +39,9 @@ class Document {
     this.chunksDone,
     this.embeddingBatchesTotal,
     this.embeddingBatchesDone,
+    this.processingStartedAt,
+    this.processingFinishedAt,
+    this.processingElapsedMs,
     this.tags = const [],
     required this.createdAt,
     required this.updatedAt,
@@ -101,6 +107,9 @@ class Document {
       chunksDone: json['chunks_done'],
       embeddingBatchesTotal: json['embedding_batches_total'],
       embeddingBatchesDone: json['embedding_batches_done'],
+      processingStartedAt: json['processing_started_at'],
+      processingFinishedAt: json['processing_finished_at'],
+      processingElapsedMs: json['processing_elapsed_ms'],
       tags: parsedTags,
       createdAt: DateTime.parse(json['created_at']),
       updatedAt: DateTime.tryParse(json['updated_at'] ?? '') ?? DateTime.parse(json['created_at']),
@@ -125,6 +134,9 @@ class Document {
       chunksDone: chunksDone,
       embeddingBatchesTotal: embeddingBatchesTotal,
       embeddingBatchesDone: embeddingBatchesDone,
+      processingStartedAt: processingStartedAt,
+      processingFinishedAt: processingFinishedAt,
+      processingElapsedMs: processingElapsedMs,
       tags: tags ?? this.tags,
       createdAt: createdAt,
       updatedAt: updatedAt,

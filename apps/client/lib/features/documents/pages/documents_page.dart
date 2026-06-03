@@ -353,6 +353,11 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
                               Text(doc.fileSizeFormatted),
                               const SizedBox(width: 12),
                               _statusChip(doc),
+                              if (doc.processingElapsedMs != null && doc.processingStatus == 'ready') ...[
+                                const SizedBox(width: 8),
+                                Text(_formatElapsed(doc.processingElapsedMs!),
+                                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                              ],
                               if (doc.chunkCount != null) ...[
                                 const SizedBox(width: 12),
                                 Text('${doc.chunkCount} 分块',
@@ -815,6 +820,14 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
         ],
       ),
     );
+  }
+
+  String _formatElapsed(int ms) {
+    if (ms < 1000) return '处理用时: ${ms}ms';
+    final secs = ms / 1000.0;
+    if (secs < 60) return '处理用时: ${secs.toStringAsFixed(1)}s';
+    final mins = secs / 60.0;
+    return '处理用时: ${mins.toStringAsFixed(1)}min';
   }
 
   Widget _graphBadge(GraphStat? stat) {

@@ -154,4 +154,55 @@ void main() {
       expect(filtered.length, 2);
     });
   });
+
+  group('Document processing elapsed fields', () {
+    test('fromJson parses processing timing fields', () {
+      final doc = Document.fromJson({
+        'id': 'abc',
+        'workspace_id': 'ws1',
+        'original_filename': 'test.md',
+        'file_type': 'md',
+        'file_size_bytes': 1024,
+        'processing_status': 'ready',
+        'processing_started_at': '2026-06-03T10:00:00Z',
+        'processing_finished_at': '2026-06-03T10:00:05Z',
+        'processing_elapsed_ms': 5200,
+        'created_at': '2026-06-03T00:00:00Z',
+      });
+      expect(doc.processingStartedAt, '2026-06-03T10:00:00Z');
+      expect(doc.processingFinishedAt, '2026-06-03T10:00:05Z');
+      expect(doc.processingElapsedMs, 5200);
+    });
+
+    test('fromJson handles null processing timing fields', () {
+      final doc = Document.fromJson({
+        'id': 'abc',
+        'workspace_id': 'ws1',
+        'original_filename': 'test.md',
+        'file_type': 'md',
+        'file_size_bytes': 1024,
+        'processing_status': 'pending',
+        'created_at': '2026-06-03T00:00:00Z',
+      });
+      expect(doc.processingStartedAt, isNull);
+      expect(doc.processingFinishedAt, isNull);
+      expect(doc.processingElapsedMs, isNull);
+    });
+
+    test('copyWith preserves processing timing fields', () {
+      final doc = Document.fromJson({
+        'id': 'abc',
+        'workspace_id': 'ws1',
+        'original_filename': 'test.md',
+        'file_type': 'md',
+        'file_size_bytes': 1024,
+        'processing_status': 'ready',
+        'processing_elapsed_ms': 3500,
+        'created_at': '2026-06-03T00:00:00Z',
+      });
+      final copy = doc.copyWith(tags: ['folder1']);
+      expect(copy.processingElapsedMs, 3500);
+      expect(copy.tags, ['folder1']);
+    });
+  });
 }

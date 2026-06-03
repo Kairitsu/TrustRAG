@@ -97,7 +97,16 @@ pub async fn process_document(
         None
     };
 
-    if let Err(e) = process_document_inner(
+    let started = chrono::Utc::now();
+    let _ = sqlx::query(
+        "UPDATE documents SET processing_started_at = $1 WHERE id = $2"
+    )
+    .bind(started.to_rfc3339())
+    .bind(doc_id.to_string())
+    .execute(&pool)
+    .await;
+
+    let result = process_document_inner(
         &pool,
         &storage,
         &doc_processor_url,
@@ -105,15 +114,27 @@ pub async fn process_document(
         doc_id,
         workspace_id,
     )
-    .await
-    {
+    .await;
+
+    let finished = chrono::Utc::now();
+    let elapsed_ms = (finished - started).num_milliseconds();
+    let _ = sqlx::query(
+        "UPDATE documents SET processing_finished_at = $1, processing_elapsed_ms = $2 WHERE id = $3"
+    )
+    .bind(finished.to_rfc3339())
+    .bind(elapsed_ms)
+    .bind(doc_id.to_string())
+    .execute(&pool)
+    .await;
+
+    if let Err(e) = result {
         let err_msg = e.to_string();
         let status = if err_msg.contains("[embedding]") {
             "embedding_failed"
         } else {
             "failed"
         };
-        tracing::error!("Document processing failed for {} (status={}): {}", doc_id, status, err_msg);
+        tracing::error!("Document processing failed for {} (status={}, elapsed={}ms): {}", doc_id, status, elapsed_ms, err_msg);
         let _ = update_status(&pool, doc_id, status, Some(&err_msg)).await;
     }
 }

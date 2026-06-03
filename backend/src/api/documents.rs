@@ -34,6 +34,9 @@ pub struct DocumentResponse {
     pub chunks_done: Option<i32>,
     pub embedding_batches_total: Option<i32>,
     pub embedding_batches_done: Option<i32>,
+    pub processing_started_at: Option<String>,
+    pub processing_finished_at: Option<String>,
+    pub processing_elapsed_ms: Option<i64>,
     pub uploaded_by: Uuid,
     pub created_at: String,
     pub updated_at: String,
@@ -151,6 +154,9 @@ struct DocRow {
     chunks_done: Option<i32>,
     embedding_batches_total: Option<i32>,
     embedding_batches_done: Option<i32>,
+    processing_started_at: Option<String>,
+    processing_finished_at: Option<String>,
+    processing_elapsed_ms: Option<i64>,
     uploaded_by: String,
     created_at: String,
     updated_at: String,
@@ -174,13 +180,16 @@ fn parse_doc_row(r: DocRow) -> Result<DocumentResponse, AppError> {
         chunks_done: r.chunks_done,
         embedding_batches_total: r.embedding_batches_total,
         embedding_batches_done: r.embedding_batches_done,
+        processing_started_at: r.processing_started_at,
+        processing_finished_at: r.processing_finished_at,
+        processing_elapsed_ms: r.processing_elapsed_ms,
         uploaded_by: compat::parse_uuid(&r.uploaded_by).map_err(|e| AppError::Internal(e.into()))?,
         created_at: r.created_at,
         updated_at: r.updated_at,
     })
 }
 
-const DOC_SELECT: &str = "id, workspace_id, title, original_filename, file_type, file_size_bytes, page_count, language, CAST(tags AS TEXT) AS tags_text, processing_status, processing_error, chunks_total, chunks_done, embedding_batches_total, embedding_batches_done, uploaded_by, CAST(created_at AS TEXT) AS created_at, CAST(updated_at AS TEXT) AS updated_at";
+const DOC_SELECT: &str = "id, workspace_id, title, original_filename, file_type, file_size_bytes, page_count, language, CAST(tags AS TEXT) AS tags_text, processing_status, processing_error, chunks_total, chunks_done, embedding_batches_total, embedding_batches_done, CAST(processing_started_at AS TEXT) AS processing_started_at, CAST(processing_finished_at AS TEXT) AS processing_finished_at, processing_elapsed_ms, uploaded_by, CAST(created_at AS TEXT) AS created_at, CAST(updated_at AS TEXT) AS updated_at";
 
 async fn list_documents(
     auth: AuthUser,
