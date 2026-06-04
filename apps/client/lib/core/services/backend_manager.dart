@@ -122,7 +122,7 @@ class BackendManager {
               : stderrLines;
           final detail = lastLines.isNotEmpty
               ? lastLines.join('\n')
-              : 'No stderr output captured';
+              : _diagnoseExitCode(code, backendPath);
           _startupError = 'Backend exited with code $code.\n$detail';
           DebugLogBuffer().add('ERROR BACKEND 异常退出 code=$code');
           if (!_readyCompleter.isCompleted) _readyCompleter.complete();
@@ -311,5 +311,31 @@ class BackendManager {
     final hostname = Platform.isAndroid ? 'android-device' : Platform.localHostname;
     final seed = hostname + Platform.operatingSystem;
     return seed.hashCode.toRadixString(36).padLeft(32, 'x');
+  }
+
+  /// Provide actionable diagnostics when the backend crashes without stderr.
+  static String _diagnoseExitCode(int code, String binaryPath) {
+    final buf = StringBuffer();
+
+    if (Platform.isWindows && (code == -1 || code == 0xC0000135 || code == 0xC000007B)) {
+      buf.writeln('可能原因: 缺少 Visual C++ 运行时库 (VCRUNTIME140.dll)');
+      buf.writeln('请安装 Microsoft Visual C++ Redistributable:');
+      buf.writeln('https://aka.ms/vs/17/release/vc_redist.x64.exe');
+      buf.writeln('');
+      buf.writeln('或者尝试在 cmd 中手动运行:');
+      buf.writeln('  $binaryPath');
+      buf.writeln('查看 Windows 的具体错误提示。');
+    } else if (code == -1 || code == 255) {
+      buf.writeln('后端进程异常终止 (信号或依赖缺失)。');
+      buf.writeln('请在终端中手动运行后端查看详细错误:');
+      buf.writeln('  $binaryPath');
+    } else if (code == 101) {
+      buf.writeln('后端发生 Rust panic，请检查日志。');
+    } else {
+      buf.writeln('后端异常退出，未捕获到错误输出。');
+      buf.writeln('请在终端中手动运行后端查看详细错误。');
+    }
+
+    return buf.toString().trim();
   }
 }

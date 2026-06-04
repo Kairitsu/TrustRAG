@@ -60,6 +60,8 @@ jobs:
 
       - name: Build Rust backend (desktop mode)
         working-directory: backend
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --no-default-features --features desktop
 
       - name: Build Windows desktop

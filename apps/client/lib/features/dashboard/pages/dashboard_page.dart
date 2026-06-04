@@ -8,6 +8,7 @@ import '../../../core/api/api_client.dart';
 import '../../../core/providers/app_version_provider.dart';
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../../core/services/backend_manager.dart';
+import '../../../core/services/mode_manager.dart';
 import '../../../core/services/update_checker.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../main.dart';
@@ -466,6 +467,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               const SizedBox(height: 8),
               _buildServerConfigCard(),
               const SizedBox(height: 8),
+              _buildModeCard(),
+              const SizedBox(height: 8),
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.storage),
@@ -724,6 +727,53 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             MaterialPageRoute(builder: (_) => const ServerConfigPage()),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildModeCard() {
+    final modeState = ref.watch(modeProvider);
+    final String modeLabel;
+    final IconData modeIcon;
+
+    switch (modeState.mode) {
+      case AppMode.local:
+        modeLabel = '本地模式';
+        modeIcon = Icons.computer;
+      case AppMode.server:
+        modeLabel = '服务器模式';
+        modeIcon = Icons.cloud;
+      case AppMode.unset:
+        modeLabel = '未设置';
+        modeIcon = Icons.help_outline;
+    }
+
+    return Card(
+      child: ListTile(
+        leading: Icon(modeIcon),
+        title: const Text('使用模式'),
+        subtitle: Text(modeLabel),
+        trailing: TextButton(
+          onPressed: () async {
+            final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('切换使用模式'),
+                content: const Text('将返回引导页面重新选择使用模式。\n当前登录状态将被清除。'),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                  FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确认')),
+                ],
+              ),
+            );
+            if (confirmed == true && mounted) {
+              await ref.read(authProvider.notifier).logout();
+              await ref.read(modeProvider.notifier).resetMode();
+              if (mounted) context.go('/onboarding');
+            }
+          },
+          child: const Text('切换'),
+        ),
       ),
     );
   }

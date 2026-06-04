@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../features/auth/pages/login_page.dart';
 import '../../features/auth/pages/register_page.dart';
 import '../../features/dashboard/pages/dashboard_page.dart';
+import '../../features/onboarding/pages/onboarding_page.dart';
 import '../../main.dart' show rootNavigatorKey;
 
 CustomTransitionPage<void> _fadeTransition(
@@ -21,8 +23,18 @@ CustomTransitionPage<void> _fadeTransition(
 
 final appRouter = GoRouter(
   navigatorKey: rootNavigatorKey,
-  initialLocation: '/login',
+  initialLocation: '/',
   routes: [
+    GoRoute(
+      path: '/',
+      pageBuilder: (context, state) =>
+          _fadeTransition(state, const _RootRedirector()),
+    ),
+    GoRoute(
+      path: '/onboarding',
+      pageBuilder: (context, state) =>
+          _fadeTransition(state, const OnboardingPage()),
+    ),
     GoRoute(
       path: '/login',
       pageBuilder: (context, state) =>
@@ -40,3 +52,43 @@ final appRouter = GoRouter(
     ),
   ],
 );
+
+/// Reads the persisted app_mode and redirects accordingly.
+/// This avoids coupling the router to Riverpod at the top level.
+class _RootRedirector extends StatefulWidget {
+  const _RootRedirector();
+
+  @override
+  State<_RootRedirector> createState() => _RootRedirectorState();
+}
+
+class _RootRedirectorState extends State<_RootRedirector> {
+  @override
+  void initState() {
+    super.initState();
+    _redirect();
+  }
+
+  Future<void> _redirect() async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = prefs.getString('app_mode');
+
+    if (!mounted) return;
+
+    if (mode == 'local') {
+      context.go('/login');
+    } else if (mode == 'server') {
+      context.go('/login');
+    } else {
+      context.go('/onboarding');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+

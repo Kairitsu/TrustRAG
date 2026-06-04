@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/api/api_client.dart';
-import '../../../core/services/backend_manager.dart';
-import '../../../core/services/desktop_auto_setup.dart';
+import '../../../core/services/mode_manager.dart';
 import '../providers/auth_provider.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
@@ -21,110 +19,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _rememberLogin = true;
-  List<String> _savedAccounts = [];
-  bool _enteringLocalMode = false;
-  bool _switchingAccount = false;
-
-  static const _localEmail = 'local@trustrag.desktop';
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSavedAccounts();
-  }
-
-  Future<void> _loadSavedAccounts() async {
-    final accounts = await ApiClient.getSavedAccounts();
-    if (mounted) {
-      setState(() => _savedAccounts = accounts);
-    }
-  }
-
-  Future<void> _ensureBackendRunning({String? accountId}) async {
-    if (!BackendManager.shouldRunEmbedded) return;
-    final bm = BackendManager();
-    if (bm.isRunning) return;
-
-    await bm.start(accountId: accountId ?? _localEmail);
-    await bm.ready;
-
-    if (bm.hasFailed) {
-      throw Exception(bm.startupError ?? '本地后端启动失败');
-    }
-  }
-
-  Future<void> _enterLocalMode() async {
-    setState(() => _enteringLocalMode = true);
-    try {
-      if (BackendManager.shouldRunEmbedded) {
-        await _ensureBackendRunning(accountId: _localEmail);
-
-        final api = ref.read(apiClientProvider);
-        api.dio.options.baseUrl = BackendManager().baseUrl;
-
-        await DesktopAutoSetup.ensureSetup(api);
-        ref.invalidate(authProvider);
-        ref.read(authProvider.notifier).checkAuthStatus();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('本地模式启动失败: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _enteringLocalMode = false);
-    }
-  }
-
-  Future<void> _handleAccountSwitch(String email) async {
-    setState(() => _switchingAccount = true);
-    try {
-      if (BackendManager.shouldRunEmbedded) {
-        await _ensureBackendRunning(accountId: email);
-      }
-
-      final result = await ApiClient.switchToAccount(email);
-      if (!mounted) return;
-
-      switch (result) {
-        case ApiClient.switchOk:
-          final api = ref.read(apiClientProvider);
-          if (BackendManager.shouldRunEmbedded) {
-            api.dio.options.baseUrl = BackendManager().baseUrl;
-          }
-          ref.invalidate(authProvider);
-          ref.read(authProvider.notifier).checkAuthStatus();
-          break;
-        case ApiClient.switchNeedLogin:
-          _emailController.text = email;
-          _passwordController.clear();
-          FocusScope.of(context).nextFocus();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('该账号需要重新输入密码')),
-          );
-          break;
-        case ApiClient.switchFailed:
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '切换账号失败: ${BackendManager().startupError ?? "本地后端启动失败"}',
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-          break;
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('切换账号失败: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _switchingAccount = false);
-    }
-  }
 
   @override
   void dispose() {
@@ -172,6 +66,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       );
     }
 
+    final modeState = ref.watch(modeProvider);
+
     return Scaffold(
       body: Center(
         child: SingleChildScrollView(
@@ -197,67 +93,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '可信赖的 RAG 知识工作台',
-                  style: theme.textTheme.bodyLarge?.copyWith(
+                  modeState.mode == AppMode.server
+                      ? '连接到: ${modeState.serverUrl ?? "服务器"}'
+                      : '可信赖的 RAG 知识工作台',
+                  style: theme.textTheme.bodyMedium?.copyWith(
                     color: Colors.grey,
                   ),
                   textAlign: TextAlign.center,
                 ),
-                if (BackendManager.shouldRunEmbedded) ...[
-                  const SizedBox(height: 20),
-                  OutlinedButton.icon(
-                    onPressed: _enteringLocalMode ? null : _enterLocalMode,
-                    icon: _enteringLocalMode
-                        ? const SizedBox(width: 16, height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.computer),
-                    label: const Text('进入本地模式'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(44),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text('无需登录，数据保存在本地',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                    textAlign: TextAlign.center,
-                  ),
-                  const Divider(height: 32),
-                ],
-                if (_savedAccounts.where((e) => e != _localEmail).isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    '已有账号',
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (_switchingAccount)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          SizedBox(width: 16, height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2)),
-                          SizedBox(width: 8),
-                          Text('正在切换账号...', style: TextStyle(fontSize: 13)),
-                        ],
-                      ),
-                    )
-                  else
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: _savedAccounts
-                          .where((e) => e != _localEmail)
-                          .map((email) => ActionChip(
-                        avatar: const Icon(Icons.person, size: 18),
-                        label: Text(email, style: const TextStyle(fontSize: 13)),
-                        onPressed: () => _handleAccountSwitch(email),
-                      )).toList(),
-                    ),
-                ],
                 const SizedBox(height: 24),
                 Form(
                   key: _formKey,
@@ -366,6 +209,17 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       child: const Text('注册'),
                     ),
                   ],
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () async {
+                    await ref.read(modeProvider.notifier).resetMode();
+                    if (context.mounted) context.go('/onboarding');
+                  },
+                  child: Text(
+                    '切换使用方式',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
                 ),
               ],
             ),

@@ -81,6 +81,8 @@ jobs:
 
       - name: Build Rust backend (desktop mode)
         working-directory: backend
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
         run: cargo build --release --no-default-features --features desktop
 
       - name: Build Flutter desktop (Linux)

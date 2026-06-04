@@ -7,6 +7,7 @@ import 'core/api/api_client.dart';
 import 'core/providers/app_version_provider.dart';
 import 'core/router/app_router.dart';
 import 'core/services/backend_manager.dart';
+import 'core/services/mode_manager.dart';
 import 'core/services/update_checker.dart';
 import 'core/theme/app_theme.dart';
 import 'features/settings/widgets/update_dialog.dart';
@@ -35,14 +36,16 @@ void main() async {
 
   await ApiClient.loadSavedServerUrl();
 
-  if (BackendManager.shouldRunEmbedded) {
+  // Only start embedded backend eagerly if the user previously chose local mode
+  final prefs = await SharedPreferences.getInstance();
+  final savedMode = prefs.getString('app_mode');
+  if (savedMode == 'local' && BackendManager.shouldRunEmbedded) {
     final activeAccount = await ApiClient.getActiveAccount();
-    debugPrint('[App] Starting embedded backend for account: ${activeAccount ?? "default"}...');
+    debugPrint('[App] Local mode: starting embedded backend for account: ${activeAccount ?? "default"}...');
     await BackendManager().start(accountId: activeAccount);
     debugPrint('[App] Backend status: running=${BackendManager().isRunning}, url=${BackendManager().baseUrl}');
   }
 
-  final prefs = await SharedPreferences.getInstance();
   final savedLocale = prefs.getString('app_locale');
 
   runApp(ProviderScope(
