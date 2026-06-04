@@ -1,12 +1,9 @@
-import 'dart:io';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/api/api_client.dart';
 import '../../../core/services/backend_manager.dart';
 import '../../../core/services/desktop_auto_setup.dart';
 import '../../../core/services/mode_manager.dart';
