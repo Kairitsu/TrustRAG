@@ -56,6 +56,8 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
       await ref.read(modeProvider.notifier).setLocalMode();
       ref.invalidate(authProvider);
       ref.read(authProvider.notifier).checkAuthStatus();
+
+      if (mounted) context.go('/login');
     } catch (e) {
       if (mounted) {
         setState(() => _localError = '$e');
