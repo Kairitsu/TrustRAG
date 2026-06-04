@@ -4,8 +4,8 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev curl && rm -rf /v
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release && rm -rf src target/release/deps/trustrag*
+RUN mkdir -p src benches && echo "fn main() {}" > src/main.rs && echo "fn main() {}" > benches/chunking_bench.rs
+RUN cargo build --release && rm -rf src benches target/release/deps/trustrag*
 
 COPY . .
 RUN cargo build --release
