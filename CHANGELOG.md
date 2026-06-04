@@ -14,6 +14,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.7] - 2026-06-04
+
+### Added / 新增
+- 🎯 **首次使用引导页** — 新增 Onboarding 页面，用户首次打开时选择"本地使用"或"连接服务器"，明确分离两种模式。
+- 🔄 **模式管理服务** — 新增 `ModeManager`，持久化保存用户选择的使用模式（本地/服务器），支持随时切换。
+- 🏷️ **登录页模式徽章** — 登录页显示当前运行模式（绿色「本地模式」/ 蓝色「服务器模式」），用户一目了然。
+- 🔑 **本地模式自动登录** — 本地模式下，退出登录后重新进入时自动启动后端并登录，无需手动输入账号密码。
+- ⚙️ **设置页模式切换** — Dashboard 设置页新增"使用模式"卡片，显示当前模式并支持一键切换。
+- 🩺 **后端启动错误诊断** — Windows 下后端启动失败（exit code -1）时给出具体排查建议（如缺少 VC++ 运行时库）。
+
+### Fixed / 修复
+- 🐛 **Windows VCRUNTIME140.dll 依赖** — CI 构建启用 CRT 静态链接（`+crt-static`），解决 Windows 用户缺少 VC++ Redistributable 导致后端无法启动的问题。
+- 🐛 **后端 stderr 捕获 Web 构建兼容** — 修复 `stderrLines` 变量声明位置导致 Web 平台编译失败的问题。
+
+### Changed / 变更
+- 🏗️ **路由重构** — `app_router.dart` 初始路由改为 `/`，新增根重定向器根据保存的模式自动导航到引导页或登录页。
+- 🧹 **登录页精简** — 移除旧的"进入本地模式"按钮和账号切换逻辑，统一由引导页和模式管理器处理。
+- 🚀 **延迟后端启动** — `main.dart` 只在用户明确选择本地模式后才启动内嵌后端，避免不必要的资源占用。
+
+### Infrastructure / 基础设施
+- 新增 `backend/.cargo/config.toml` — Windows 平台 Rust 编译配置（CRT 静态链接）
+- `.github/workflows/release.yml` — Windows 构建步骤添加 `RUSTFLAGS: -C target-feature=+crt-static`
+- `.github/workflows/test-build.yml` — Windows 构建步骤条件启用静态链接
+
+---
+
 ## [0.2.7-beta.4] - 2026-06-03
 
 ### Fixed / 修复
