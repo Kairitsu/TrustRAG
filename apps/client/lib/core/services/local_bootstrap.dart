@@ -8,7 +8,7 @@ import '../../features/auth/providers/auth_provider.dart';
 import '../../features/dashboard/providers/workspace_provider.dart';
 import 'backend_manager.dart';
 import 'desktop_auto_setup.dart';
-import 'session_reset.dart' as session_reset;
+import 'session_reset.dart';
 
 enum LocalBootstrapStatus {
   success,
@@ -49,11 +49,7 @@ class LocalBootstrap {
       ref == null || widgetRef == null,
       'Pass only ref or widgetRef, not both',
     );
-    final scope = ref != null
-        ? _BootstrapScope.fromRef(ref)
-        : widgetRef != null
-            ? _BootstrapScope.fromWidgetRef(widgetRef)
-            : null;
+
     if (kIsWeb || !BackendManager.shouldRunEmbedded) {
       return const LocalBootstrapResult(
         status: LocalBootstrapStatus.backendFailed,
@@ -87,14 +83,17 @@ class LocalBootstrap {
 
       try {
         final me = await api.dio.get('/auth/me');
-        if (scope != null) {
-          scope.read(authProvider.notifier).state = AuthState(
-            status: AuthStatus.authenticated,
-            token: token,
-            user: me.data is Map<String, dynamic>
-                ? me.data as Map<String, dynamic>
-                : null,
-          );
+        final user = me.data is Map<String, dynamic>
+            ? me.data as Map<String, dynamic>
+            : null;
+        if (ref != null) {
+          ref
+              .read(authProvider.notifier)
+              .applyAuthenticatedSession(token: token, user: user);
+        } else if (widgetRef != null) {
+          widgetRef
+              .read(authProvider.notifier)
+              .applyAuthenticatedSession(token: token, user: user);
         }
       } on DioException catch (e) {
         if (e.response?.statusCode == 401) {
@@ -114,14 +113,10 @@ class LocalBootstrap {
         );
       }
 
-      if (scope != null) {
-        final current = scope.read(selectedWorkspaceProvider);
-        if (current == null || current.id != workspace.id) {
-          scope.applyAccountReset();
-          scope.read(selectedWorkspaceProvider.notifier).state = workspace;
-          await saveLastWorkspaceId(workspace.id);
-          scope.invalidate(workspaceProvider);
-        }
+      if (ref != null) {
+        await _applyWorkspaceForRef(ref, workspace);
+      } else if (widgetRef != null) {
+        await _applyWorkspaceForWidgetRef(widgetRef, workspace);
       }
 
       return LocalBootstrapResult(
@@ -136,6 +131,29 @@ class LocalBootstrap {
         message: '本地初始化失败：$e',
       );
     }
+  }
+
+  static Future<void> _applyWorkspaceForRef(Ref ref, Workspace workspace) async {
+    final current = ref.read(selectedWorkspaceProvider);
+    if (current != null && current.id == workspace.id) return;
+
+    resetAccountScopedStateFromRef(ref);
+    ref.read(selectedWorkspaceProvider.notifier).state = workspace;
+    await saveLastWorkspaceId(workspace.id);
+    ref.invalidate(workspaceProvider);
+  }
+
+  static Future<void> _applyWorkspaceForWidgetRef(
+    WidgetRef widgetRef,
+    Workspace workspace,
+  ) async {
+    final current = widgetRef.read(selectedWorkspaceProvider);
+    if (current != null && current.id == workspace.id) return;
+
+    resetAccountScopedState(widgetRef);
+    widgetRef.read(selectedWorkspaceProvider.notifier).state = workspace;
+    await saveLastWorkspaceId(workspace.id);
+    widgetRef.invalidate(workspaceProvider);
   }
 
   static Future<Workspace?> _ensureDefaultWorkspace(ApiClient api) async {
@@ -189,40 +207,6 @@ class LocalBootstrap {
       } catch (e) {
         debugPrint('[LocalBootstrap] resetLocalData: $e');
       }
-    }
-  }
-}
-
-/// Bridges [Ref] and [WidgetRef] for bootstrap without a shared supertype.
-class _BootstrapScope {
-  _BootstrapScope._(this._ref, this._widgetRef);
-
-  final Ref? _ref;
-  final WidgetRef? _widgetRef;
-
-  factory _BootstrapScope.fromRef(Ref ref) => _BootstrapScope._(ref, null);
-
-  factory _BootstrapScope.fromWidgetRef(WidgetRef ref) =>
-      _BootstrapScope._(null, ref);
-
-  T read<T>(ProviderListenable<T> provider) {
-    if (_widgetRef != null) return _widgetRef!.read(provider);
-    return _ref!.read(provider);
-  }
-
-  void invalidate(ProviderOrFamily provider) {
-    if (_widgetRef != null) {
-      _widgetRef!.invalidate(provider);
-    } else {
-      _ref!.invalidate(provider);
-    }
-  }
-
-  void applyAccountReset() {
-    if (_widgetRef != null) {
-      session_reset.resetAccountScopedState(_widgetRef!);
-    } else {
-      session_reset.resetAccountScopedStateFromRef(_ref!);
     }
   }
 }

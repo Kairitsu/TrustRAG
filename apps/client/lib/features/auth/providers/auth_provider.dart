@@ -9,7 +9,6 @@ import '../../../core/services/desktop_auto_setup.dart';
 import '../../../core/services/local_bootstrap.dart';
 import '../../../core/services/mode_manager.dart';
 import '../../../core/services/session_reset.dart';
-import '../../dashboard/providers/workspace_provider.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient();
@@ -54,6 +53,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> checkAuthStatus() => _checkAuth();
+
+  /// Updates auth state after local bootstrap has verified `/auth/me`.
+  void applyAuthenticatedSession({
+    required String token,
+    Map<String, dynamic>? user,
+  }) {
+    state = AuthState(
+      status: AuthStatus.authenticated,
+      token: token,
+      user: user,
+    );
+  }
 
   Future<void> _checkAuth() async {
     final mode = _ref.read(modeProvider).mode;
@@ -181,7 +192,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
             ? resp.data['user'] as Map<String, dynamic>
             : null,
       );
-      _ref.invalidate(workspaceProvider);
+      invalidateWorkspaceList(_ref);
       return true;
     } on DioException catch (e) {
       String msg;
@@ -262,7 +273,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
             ? resp.data['user'] as Map<String, dynamic>
             : null,
       );
-      _ref.invalidate(workspaceProvider);
+      invalidateWorkspaceList(_ref);
       return true;
     } on DioException catch (e) {
       String msg;

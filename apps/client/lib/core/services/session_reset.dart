@@ -23,6 +23,11 @@ void resetAccountScopedState(WidgetRef ref) {
   ref.invalidate(generationHistoryProvider);
 }
 
+/// Reload workspace list after login/register without importing workspace in auth.
+void invalidateWorkspaceList(Ref ref) {
+  ref.invalidate(workspaceProvider);
+}
+
 /// Same reset for [Ref] (e.g. StateNotifier without WidgetRef).
 void resetAccountScopedStateFromRef(Ref ref) {
   ref.read(selectedWorkspaceProvider.notifier).state = null;
