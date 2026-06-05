@@ -1,9 +1,13 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
+import 'diagnostic_logger.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/dashboard/providers/workspace_provider.dart';
 import 'backend_manager.dart';
@@ -29,6 +33,18 @@ class LocalBootstrapResult {
   });
 
   bool get isSuccess => status == LocalBootstrapStatus.success;
+}
+
+class LocalResetResult {
+  final bool success;
+  final String message;
+  final List<String> deletedPaths;
+
+  const LocalResetResult({
+    required this.success,
+    required this.message,
+    this.deletedPaths = const [],
+  });
 }
 
 /// Fixed embedded-backend account id for local mode (not shown in UI).
@@ -194,19 +210,85 @@ class LocalBootstrap {
   }
 
   /// Clears local setup flags and embedded data for the default local account.
-  static Future<void> resetLocalData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_setupDoneKey);
-    await ApiClient.clearToken();
-    await ApiClient.clearAllAccountData();
+  static Future<LocalResetResult> resetLocalData() async {
+    await DiagnosticLogger.info('RESET local data started');
+    final deletedPaths = <String>[];
 
-    if (BackendManager.shouldRunEmbedded) {
-      try {
-        await BackendManager().stop();
-        await BackendManager().deleteAccountData(localAccountId);
-      } catch (e) {
-        debugPrint('[LocalBootstrap] resetLocalData: $e');
+    try {
+      if (BackendManager.shouldRunEmbedded) {
+        final bm = BackendManager();
+        final dataDir = await bm.getAccountDataDir(localAccountId);
+        await DiagnosticLogger.info('RESET target data_dir=$dataDir');
+
+        if (!_isSafeToDelete(dataDir)) {
+          final msg = '拒绝删除：路径不安全 ($dataDir)';
+          await DiagnosticLogger.error('RESET $msg');
+          return LocalResetResult(success: false, message: msg);
+        }
+
+        if (bm.isRunning) {
+          try {
+            await DiagnosticLogger.info('RESET POST /system/reset-db');
+            final api = ApiClient();
+            await api.dio.post('/system/reset-db');
+          } catch (e) {
+            await DiagnosticLogger.warn('RESET reset-db skipped: $e');
+          }
+        }
+
+        await DiagnosticLogger.info('RESET stopping backend');
+        await bm.stop();
+
+        if (await Directory(dataDir).exists()) {
+          await Directory(dataDir).delete(recursive: true);
+          deletedPaths.add(dataDir);
+          await DiagnosticLogger.info('RESET deleted $dataDir');
+        } else {
+          await DiagnosticLogger.warn('RESET data dir not found: $dataDir');
+        }
       }
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_setupDoneKey);
+      await prefs.remove('last_workspace_id');
+      await prefs.remove('last_workspace_id_$localAccountId');
+      await ApiClient.clearToken();
+      await ApiClient.clearAllAccountData();
+
+      await DiagnosticLogger.info('RESET local data completed');
+      return LocalResetResult(
+        success: true,
+        message: '本机资料库已删除',
+        deletedPaths: deletedPaths,
+      );
+    } catch (e, st) {
+      await DiagnosticLogger.error('RESET failed: $e\n$st');
+      debugPrint('[LocalBootstrap] resetLocalData: $e\n$st');
+      return LocalResetResult(
+        success: false,
+        message: e.toString(),
+        deletedPaths: deletedPaths,
+      );
     }
+  }
+
+  /// Visible for tests — only TrustRAG per-account dirs may be deleted.
+  static bool isDataDirSafeToDelete(String dirPath) => _isSafeToDelete(dirPath);
+
+  /// Only delete paths under TrustRAG account storage, never install dir.
+  static bool _isSafeToDelete(String dirPath) {
+    if (dirPath.trim().isEmpty) return false;
+    final normalized = p.normalize(p.absolute(dirPath));
+    if (normalized.length < 12) return false;
+    if (!normalized.contains('TrustRAG')) return false;
+
+    final exeDir = p.normalize(p.dirname(Platform.resolvedExecutable));
+    if (normalized.startsWith(exeDir)) return false;
+
+    final segments = p.split(normalized);
+    final accountsIdx = segments.indexOf('accounts');
+    if (accountsIdx < 0 || accountsIdx >= segments.length - 1) return false;
+
+    return true;
   }
 }

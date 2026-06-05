@@ -763,6 +763,10 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         subtitle: Text(modeLabel),
         trailing: TextButton(
           onPressed: () async {
+            if (modeState.mode == AppMode.local) {
+              _showAccountMenu(context, ref);
+              return;
+            }
             final confirmed = await showDialog<bool>(
               context: context,
               builder: (ctx) => AlertDialog(

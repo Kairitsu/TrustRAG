@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/services/backend_manager.dart';
+import '../../../core/services/diagnostic_logger.dart';
 import '../../auth/providers/auth_provider.dart';
 
 class DataManagementPage extends ConsumerStatefulWidget {
@@ -218,6 +222,41 @@ class _DataManagementPageState extends ConsumerState<DataManagementPage> {
     }
   }
 
+  Future<void> _openLogDirectory() async {
+    if (kIsWeb) {
+      setState(() => _lastMessage = '日志目录仅在桌面客户端可用');
+      return;
+    }
+    try {
+      final dir = await DiagnosticLogger.logDirectory;
+      await Directory(dir).create(recursive: true);
+      if (Platform.isWindows) {
+        await Process.run('explorer', [dir]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [dir]);
+      } else if (Platform.isLinux) {
+        await Process.run('xdg-open', [dir]);
+      }
+      setState(() => _lastMessage = '已打开日志目录：$dir');
+    } catch (e) {
+      setState(() => _lastMessage = '打开日志目录失败: $e');
+    }
+  }
+
+  Future<void> _copyDiagnosticLog() async {
+    try {
+      final text = await DiagnosticLogger.exportRecent();
+      await Clipboard.setData(ClipboardData(text: text));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('诊断日志已复制到剪贴板'), duration: Duration(seconds: 2)),
+        );
+      }
+    } catch (e) {
+      setState(() => _lastMessage = '复制诊断日志失败: $e');
+    }
+  }
+
   Future<void> _validateToken() async {
     setState(() => _loading = true);
     try {
@@ -348,6 +387,26 @@ class _DataManagementPageState extends ConsumerState<DataManagementPage> {
                     subtitle: '检查当前 Token 与数据库用户是否一致',
                     onTap: _validateToken,
                     color: Colors.blue,
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  _actionCard(
+                    icon: Icons.folder_open,
+                    title: '打开日志目录',
+                    subtitle: '查看 client-YYYY-MM-DD.log 等诊断文件',
+                    onTap: _openLogDirectory,
+                    color: Colors.indigo,
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  _actionCard(
+                    icon: Icons.content_copy,
+                    title: '复制诊断日志',
+                    subtitle: '合并文件日志与当前会话日志，便于反馈问题',
+                    onTap: _copyDiagnosticLog,
+                    color: Colors.blueGrey,
                   ),
 
                   const SizedBox(height: 8),

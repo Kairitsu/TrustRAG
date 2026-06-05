@@ -277,9 +277,8 @@ class _ServerModeAccountSheetState extends ConsumerState<ServerModeAccountSheet>
           ListTile(
             leading: Icon(Icons.logout, color: Colors.red.shade400),
             title: Text('退出登录', style: TextStyle(color: Colors.red.shade400)),
-            onTap: () {
-              Navigator.pop(context);
-              AccountModeService.serverLogout(ref, context);
+            onTap: () async {
+              await AccountModeService.serverLogout(ref, context);
             },
           ),
           ListTile(
@@ -290,9 +289,8 @@ class _ServerModeAccountSheetState extends ConsumerState<ServerModeAccountSheet>
           ListTile(
             leading: const Icon(Icons.computer_outlined),
             title: const Text('切换使用方式'),
-            onTap: () {
-              Navigator.pop(context);
-              AccountModeService.switchToLocalMode(ref, context);
+            onTap: () async {
+              await AccountModeService.switchToLocalMode(ref, context);
             },
           ),
           ListTile(

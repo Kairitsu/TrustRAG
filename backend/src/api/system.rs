@@ -125,6 +125,8 @@ async fn reset_db(
         "workspace_members", "workspaces", "users",
     ];
 
+    tracing::info!(data_dir = %data_dir, "Resetting local database tables");
+
     for table in &tables {
         let sql = format!("DELETE FROM {}", table);
         match sqlx::query(&sql).execute(&state.pool).await {
@@ -132,6 +134,8 @@ async fn reset_db(
             Err(e) => tracing::warn!(table = table, error = %e, "Failed to clear table"),
         }
     }
+
+    tracing::info!(data_dir = %data_dir, "Local database reset completed");
 
     Ok(Json(ResetResult {
         success: true,

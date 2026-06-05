@@ -47,9 +47,8 @@ class LocalModeAccountSheet extends ConsumerWidget {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               leading: const Icon(Icons.cloud_outlined),
               title: const Text('切换到服务器账号'),
-              onTap: () {
-                Navigator.pop(context);
-                AccountModeService.switchToServerMode(ref, context);
+              onTap: () async {
+                await AccountModeService.switchToServerMode(ref, context);
               },
             ),
           ),
@@ -62,9 +61,8 @@ class LocalModeAccountSheet extends ConsumerWidget {
                 '删除本机资料库',
                 style: TextStyle(color: Colors.red.shade400),
               ),
-              onTap: () {
-                Navigator.pop(context);
-                AccountModeService.deleteLocalLibrary(ref, context);
+              onTap: () async {
+                await AccountModeService.deleteLocalLibrary(ref, context);
               },
             ),
           ),

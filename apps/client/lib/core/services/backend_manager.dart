@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../providers/dev_mode_provider.dart';
+import 'diagnostic_logger.dart';
 
 class BackendManager {
   static final BackendManager _instance = BackendManager._();
@@ -19,8 +20,10 @@ class BackendManager {
   Process? _process;
   int? _port;
   bool _isRunning = false;
+  bool _ownsProcess = false;
   bool _startAttempted = false;
   String? _startupError;
+  static const _attachPorts = [8080];
   Completer<void> _readyCompleter = Completer<void>();
   String? _currentAccountId;
   String? _currentDataDir;
@@ -45,6 +48,10 @@ class BackendManager {
     if (!shouldRunEmbedded || _isRunning) return;
 
     _startAttempted = true;
+    if (await _tryAttachExistingBackend()) {
+      _currentAccountId = accountId;
+      return;
+    }
     _currentAccountId = accountId;
     _port = await _findFreePort();
     final backendPath = await _findBackendBinary();
@@ -93,6 +100,7 @@ class BackendManager {
         environment: env,
         workingDirectory: Platform.isAndroid ? dataDir : p.dirname(backendPath),
       );
+      _ownsProcess = true;
 
       _process!.stdout.listen((data) {
         final line = String.fromCharCodes(data).trim();
@@ -115,6 +123,7 @@ class BackendManager {
       _process!.exitCode.then((code) {
         debugPrint('[BackendManager] Backend exited with code $code');
         _isRunning = false;
+        _ownsProcess = false;
         _process = null;
         if (code != 0 && _startupError == null) {
           final lastLines = stderrLines.length > 5
@@ -162,6 +171,7 @@ class BackendManager {
   Future<void> restart({String? accountId}) async {
     debugPrint('[BackendManager] Restarting for account: ${accountId ?? "default"}');
     DebugLogBuffer().add('BACKEND 重启中，切换账号: ${accountId ?? "default"}');
+    await DiagnosticLogger.info('BACKEND restart account=${accountId ?? "default"}');
     await stop();
     _readyCompleter = Completer<void>();
     _startupError = null;
@@ -188,32 +198,23 @@ class BackendManager {
 
   /// HTTP health check to verify the backend is actually responding.
   Future<bool> _healthCheck() async {
-    final url = Uri.parse('http://127.0.0.1:$_port/health');
+    final port = _port;
+    if (port == null) return false;
     for (var i = 0; i < 3; i++) {
-      try {
-        final client = HttpClient()
-          ..connectionTimeout = const Duration(seconds: 2);
-        final request = await client.getUrl(url);
-        final response = await request.close().timeout(
-          const Duration(seconds: 3),
-        );
-        final body = await response.transform(utf8.decoder).join();
-        client.close();
-        if (response.statusCode == 200 && body.contains('ok')) {
-          debugPrint('[BackendManager] Health check passed on attempt ${i + 1}');
-          return true;
-        }
-      } catch (e) {
-        debugPrint('[BackendManager] Health check attempt ${i + 1} failed: $e');
+      if (await _healthCheckOnPort(port)) {
+        debugPrint('[BackendManager] Health check passed on attempt ${i + 1}');
+        return true;
       }
+      debugPrint('[BackendManager] Health check attempt ${i + 1} failed');
       if (i < 2) await Future.delayed(const Duration(seconds: 2));
     }
     return false;
   }
 
   Future<void> stop() async {
-    if (_process != null) {
-      debugPrint('[BackendManager] Stopping backend...');
+    if (_process != null && _ownsProcess) {
+      debugPrint('[BackendManager] Stopping owned backend...');
+      await DiagnosticLogger.info('BACKEND stopping owned process');
       _process!.kill(ProcessSignal.sigterm);
       try {
         await _process!.exitCode.timeout(const Duration(seconds: 5));
@@ -221,7 +222,48 @@ class BackendManager {
         _process!.kill(ProcessSignal.sigkill);
       }
       _process = null;
+      _ownsProcess = false;
       _isRunning = false;
+    } else if (_isRunning && !_ownsProcess) {
+      debugPrint('[BackendManager] Detaching from external backend (not killed)');
+      await DiagnosticLogger.info('BACKEND detach external on port $_port');
+      _isRunning = false;
+      _port = null;
+    }
+  }
+
+  /// Reuse a healthy backend already listening (e.g. user-started on 8080).
+  Future<bool> _tryAttachExistingBackend() async {
+    for (final port in _attachPorts) {
+      if (await _healthCheckOnPort(port)) {
+        _port = port;
+        _isRunning = true;
+        _ownsProcess = false;
+        debugPrint('[BackendManager] Attached to existing backend on port $port');
+        DebugLogBuffer().add('BACKEND 复用已有进程 port=$port');
+        await DiagnosticLogger.info('BACKEND attached existing port=$port');
+        if (!_readyCompleter.isCompleted) _readyCompleter.complete();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<bool> _healthCheckOnPort(int port) async {
+    final url = Uri.parse('http://127.0.0.1:$port/health');
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 2);
+      final request = await client.getUrl(url);
+      final response = await request.close().timeout(
+        const Duration(seconds: 3),
+      );
+      final body = await response.transform(utf8.decoder).join();
+      client.close();
+      return response.statusCode == 200 && body.contains('ok');
+    } catch (e) {
+      debugPrint('[BackendManager] Attach health check port $port: $e');
+      return false;
     }
   }
 
