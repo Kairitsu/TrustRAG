@@ -41,7 +41,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
       await ref.read(modeProvider.notifier).setLocalMode();
 
       final api = ref.read(apiClientProvider);
-      final result = await LocalBootstrap.bootstrap(api, ref: ref);
+      final result = await LocalBootstrap.bootstrap(api, widgetRef: ref);
 
       if (!mounted) return;
 

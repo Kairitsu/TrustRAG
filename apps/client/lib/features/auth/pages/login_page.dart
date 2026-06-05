@@ -64,7 +64,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       }
 
       final api = ref.read(apiClientProvider);
-      final result = await LocalBootstrap.bootstrap(api, ref: ref);
+      final result = await LocalBootstrap.bootstrap(api, widgetRef: ref);
       if (!mounted) return;
 
       if (result.isSuccess) {

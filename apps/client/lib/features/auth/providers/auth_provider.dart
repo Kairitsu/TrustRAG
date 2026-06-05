@@ -9,6 +9,7 @@ import '../../../core/services/desktop_auto_setup.dart';
 import '../../../core/services/local_bootstrap.dart';
 import '../../../core/services/mode_manager.dart';
 import '../../../core/services/session_reset.dart';
+import '../../dashboard/providers/workspace_provider.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient();
