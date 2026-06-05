@@ -102,6 +102,14 @@ async fn register(
     let user_id: Uuid = row.0.parse()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("UUID parse error: {e}")))?;
 
+    sqlx::query(
+        r#"INSERT INTO workspaces (name, description, owner_id, visibility, type)
+           VALUES ('个人空间', NULL, $1, 'private', 'personal')"#,
+    )
+    .bind(user_id.to_string())
+    .execute(&state.pool)
+    .await?;
+
     let expiry_hours: i64 = 168; // 7 days
     let token = create_token(user_id, &row.1, &row.3, &state.jwt_secret, expiry_hours)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Token error: {e}")))?;

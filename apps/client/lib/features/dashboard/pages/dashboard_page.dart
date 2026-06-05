@@ -8,7 +8,9 @@ import '../../../core/api/api_client.dart';
 import '../../../core/providers/app_version_provider.dart';
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../../core/services/backend_manager.dart';
+import '../../../core/services/local_bootstrap.dart';
 import '../../../core/services/mode_manager.dart';
+import '../../../core/services/session_reset.dart';
 import '../../../core/services/update_checker.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../main.dart';
@@ -1116,10 +1118,10 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           if (!context.mounted) return;
           switch (result) {
             case ApiClient.switchOk:
-              ref.read(selectedWorkspaceProvider.notifier).state = null;
-              ref.invalidate(workspaceProvider);
+              resetAccountScopedState(ref);
               ref.invalidate(authProvider);
               ref.read(authProvider.notifier).checkAuthStatus();
+              ref.read(workspaceProvider.notifier).loadWorkspaces();
             case ApiClient.switchNeedLogin:
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -1169,6 +1171,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           OutlinedButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
+              resetAccountScopedState(ref);
               ref.read(authProvider.notifier).logout(clearData: true);
               context.go('/login');
             },
@@ -1178,6 +1181,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           FilledButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
+              resetAccountScopedState(ref);
               ref.read(authProvider.notifier).logout();
               context.go('/login');
             },
@@ -1650,7 +1654,7 @@ class _AccountMenuSheetState extends State<_AccountMenuSheet> {
   List<String> _savedAccounts = [];
   Set<String> _accountsWithToken = {};
 
-  static const _localEmail = 'local@trustrag.desktop';
+  static const _localEmail = LocalBootstrap.localAccountId;
 
   @override
   void initState() {

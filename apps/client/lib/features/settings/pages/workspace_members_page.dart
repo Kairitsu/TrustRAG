@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_error_messages.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../dashboard/providers/workspace_provider.dart';
 
@@ -81,7 +82,7 @@ class _WorkspaceMembersPageState extends ConsumerState<WorkspaceMembersPage> {
       });
     } catch (e) {
       setState(() {
-        _error = e.toString();
+        _error = friendlyApiError(e, fallback: '无法加载成员列表');
         _loading = false;
       });
     }

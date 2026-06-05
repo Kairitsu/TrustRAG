@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/services/backend_manager.dart';
-import '../../../core/services/desktop_auto_setup.dart';
+import '../../../core/services/local_bootstrap.dart';
 import '../../../core/services/mode_manager.dart';
 import '../../auth/providers/auth_provider.dart';
 
@@ -38,29 +38,23 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
     });
 
     try {
-      if (BackendManager.shouldRunEmbedded) {
-        final bm = BackendManager();
-        if (!bm.isRunning) {
-          await bm.start(accountId: 'local@trustrag.desktop');
-          await bm.ready;
-          if (bm.hasFailed) {
-            throw Exception(bm.startupError ?? '本地后端启动失败');
-          }
-        }
+      await ref.read(modeProvider.notifier).setLocalMode();
 
-        final api = ref.read(apiClientProvider);
-        api.dio.options.baseUrl = BackendManager().baseUrl;
-        await DesktopAutoSetup.ensureSetup(api);
+      final api = ref.read(apiClientProvider);
+      final result = await LocalBootstrap.bootstrap(api, ref: ref);
+
+      if (!mounted) return;
+
+      if (result.isSuccess) {
+        ref.invalidate(authProvider);
+        context.go('/dashboard');
+        return;
       }
 
-      await ref.read(modeProvider.notifier).setLocalMode();
-      ref.invalidate(authProvider);
-      ref.read(authProvider.notifier).checkAuthStatus();
-
-      if (mounted) context.go('/login');
+      setState(() => _localError = result.message);
     } catch (e) {
       if (mounted) {
-        setState(() => _localError = '$e');
+        setState(() => _localError = '本地服务启动失败，请重试');
       }
     } finally {
       if (mounted) setState(() => _startingLocal = false);

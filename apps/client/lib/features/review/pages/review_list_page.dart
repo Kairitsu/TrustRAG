@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_error_messages.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../chat/providers/review_provider.dart';
 
@@ -53,8 +54,12 @@ class ReviewListPage extends ConsumerWidget {
                 children: [
                   Icon(Icons.error_outline, size: 48, color: Colors.red.shade300),
                   const SizedBox(height: 12),
-                  Text(s.loadFailed(e.toString()),
-                      style: TextStyle(color: Colors.grey.shade600)),
+                  Text(
+                    s.loadFailed(
+                      friendlyApiError(e, fallback: '无法加载审核记录'),
+                    ),
+                    style: TextStyle(color: Colors.grey.shade600),
+                  ),
                   const SizedBox(height: 12),
                   OutlinedButton(
                     onPressed: () => ref.invalidate(reviewListProvider),

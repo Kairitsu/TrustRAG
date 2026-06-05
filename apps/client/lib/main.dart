@@ -7,6 +7,7 @@ import 'core/api/api_client.dart';
 import 'core/providers/app_version_provider.dart';
 import 'core/router/app_router.dart';
 import 'core/services/backend_manager.dart';
+import 'core/services/local_bootstrap.dart';
 import 'core/services/update_checker.dart';
 import 'core/theme/app_theme.dart';
 import 'features/settings/widgets/update_dialog.dart';
@@ -39,9 +40,8 @@ void main() async {
   final prefs = await SharedPreferences.getInstance();
   final savedMode = prefs.getString('app_mode');
   if (savedMode == 'local' && BackendManager.shouldRunEmbedded) {
-    final activeAccount = await ApiClient.getActiveAccount();
-    debugPrint('[App] Local mode: starting embedded backend for account: ${activeAccount ?? "default"}...');
-    await BackendManager().start(accountId: activeAccount);
+    debugPrint('[App] Local mode: starting embedded backend...');
+    await BackendManager().start(accountId: LocalBootstrap.localAccountId);
     debugPrint('[App] Backend status: running=${BackendManager().isRunning}, url=${BackendManager().baseUrl}');
   }
 

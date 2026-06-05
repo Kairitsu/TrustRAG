@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:streaming_markdown/streaming_markdown.dart' hide MarkdownStyleSheet;
 
+import '../../../core/api/api_error_messages.dart';
 import '../../../core/providers/app_version_provider.dart';
 import '../../../core/utils/ai_icon_helper.dart';
 import '../../../l10n/app_localizations.dart';
@@ -518,7 +519,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         Expanded(
           child: convs.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text('$e')),
+            error: (e, _) => Center(
+              child: Text(
+                friendlyApiError(e, fallback: '无法加载对话列表'),
+              ),
+            ),
             data: (list) {
               if (list.isEmpty) {
                 return Center(

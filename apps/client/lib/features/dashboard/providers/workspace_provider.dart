@@ -51,6 +51,12 @@ class WorkspaceErrorInfo {
               canRetry: false,
             );
           }
+          if (statusCode == 404) {
+            return const WorkspaceErrorInfo(
+              type: WorkspaceLoadError.serverError,
+              message: 'workspaceNotFound',
+            );
+          }
           return const WorkspaceErrorInfo(
             type: WorkspaceLoadError.serverError,
             message: 'serverError',
@@ -134,6 +140,10 @@ class WorkspaceNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
     } catch (e, st) {
       lastError = WorkspaceErrorInfo.fromException(e);
 
+      if (lastError!.message == 'workspaceNotFound') {
+        ref.read(selectedWorkspaceProvider.notifier).state = null;
+      }
+
       if (lastError!.type == WorkspaceLoadError.networkUnavailable ||
           lastError!.type == WorkspaceLoadError.serverError) {
         _isOfflineMode = true;
@@ -145,22 +155,31 @@ class WorkspaceNotifier extends StateNotifier<AsyncValue<List<Workspace>>> {
   }
 
   Future<void> _restoreLastWorkspace(List<Workspace> list) async {
-    if (list.isEmpty) return;
+    if (list.isEmpty) {
+      final created = await createWorkspace('个人空间', null);
+      if (created != null) {
+        await _selectWorkspace(created);
+      }
+      return;
+    }
+
     final current = ref.read(selectedWorkspaceProvider);
-    if (current != null) return;
+    if (current != null && list.any((w) => w.id == current.id)) {
+      return;
+    }
 
     final prefs = await SharedPreferences.getInstance();
     final activeAccount = await ApiClient.getActiveAccount();
     final key = _accountWorkspaceKey(activeAccount);
     final savedId = prefs.getString(key) ?? prefs.getString(_kLastWorkspaceId);
-    Workspace target;
-    if (savedId != null) {
-      target = list.firstWhere((w) => w.id == savedId, orElse: () => list.first);
-    } else {
-      target = list.first;
-    }
-    ref.read(selectedWorkspaceProvider.notifier).state = target;
-    await prefs.setString(key, target.id);
+
+    final target = pickWorkspaceForRestore(list, savedId);
+    await _selectWorkspace(target);
+  }
+
+  Future<void> _selectWorkspace(Workspace ws) async {
+    ref.read(selectedWorkspaceProvider.notifier).state = ws;
+    await saveLastWorkspaceId(ws.id);
   }
 
   Future<Workspace?> createWorkspace(String name, String? description, {String type = 'personal'}) async {
@@ -225,6 +244,19 @@ final workspaceProvider =
 });
 
 final selectedWorkspaceProvider = StateProvider<Workspace?>((ref) => null);
+
+/// Picks a workspace from [list] using [savedId], falling back to [list].first.
+Workspace pickWorkspaceForRestore(List<Workspace> list, String? savedId) {
+  if (list.isEmpty) {
+    throw StateError('pickWorkspaceForRestore requires a non-empty list');
+  }
+  if (savedId != null) {
+    for (final w in list) {
+      if (w.id == savedId) return w;
+    }
+  }
+  return list.first;
+}
 
 Future<void> saveLastWorkspaceId(String id) async {
   final prefs = await SharedPreferences.getInstance();

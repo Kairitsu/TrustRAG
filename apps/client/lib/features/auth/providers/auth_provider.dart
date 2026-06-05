@@ -1,10 +1,14 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/services/backend_manager.dart';
 import '../../../core/services/desktop_auto_setup.dart';
+import '../../../core/services/local_bootstrap.dart';
+import '../../../core/services/mode_manager.dart';
+import '../../../core/services/session_reset.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient();
@@ -42,17 +46,48 @@ class AuthState {
 
 class AuthNotifier extends StateNotifier<AuthState> {
   final ApiClient _api;
+  final Ref _ref;
 
-  AuthNotifier(this._api) : super(const AuthState()) {
+  AuthNotifier(this._api, this._ref) : super(const AuthState()) {
     _checkAuth();
   }
 
   Future<void> checkAuthStatus() => _checkAuth();
 
   Future<void> _checkAuth() async {
-    // For desktop embedded mode, auto-setup creates and logs in a local user
-    if (DesktopAutoSetup.shouldAutoSetup) {
-      await DesktopAutoSetup.ensureSetup(_api);
+    final mode = _ref.read(modeProvider).mode;
+
+    if (mode == AppMode.local &&
+        !kIsWeb &&
+        BackendManager.shouldRunEmbedded) {
+      final existingToken = await ApiClient.getToken();
+      if (existingToken != null) {
+        try {
+          final resp = await _api.dio.get('/auth/me');
+          state = AuthState(
+            status: AuthStatus.authenticated,
+            token: existingToken,
+            user: resp.data is Map<String, dynamic>
+                ? resp.data as Map<String, dynamic>
+                : null,
+          );
+          return;
+        } on DioException catch (e) {
+          if (e.response?.statusCode == 401) {
+            await ApiClient.clearToken();
+          }
+        }
+      }
+
+      final result = await LocalBootstrap.bootstrap(_api, ref: _ref);
+      if (result.isSuccess) {
+        return;
+      }
+      if (DesktopAutoSetup.shouldAutoSetup) {
+        await DesktopAutoSetup.ensureLocalIdentity(_api);
+      }
+    } else if (DesktopAutoSetup.shouldAutoSetup) {
+      await DesktopAutoSetup.ensureLocalIdentity(_api);
     }
 
     final token = await ApiClient.getToken();
@@ -62,14 +97,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
         state = AuthState(
           status: AuthStatus.authenticated,
           token: token,
-          user: resp.data,
+          user: resp.data is Map<String, dynamic>
+              ? resp.data as Map<String, dynamic>
+              : null,
         );
       } on DioException catch (e) {
         if (e.response?.statusCode == 401) {
           await ApiClient.clearToken();
           state = const AuthState(status: AuthStatus.unauthenticated);
         } else {
-          // Network/timeout errors: keep token, assume authenticated
           state = AuthState(
             status: AuthStatus.authenticated,
             token: token,
@@ -88,9 +124,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<bool> login(String email, String password, {bool rememberLogin = true}) async {
     final backend = BackendManager();
+    final mode = _ref.read(modeProvider).mode;
+
+    if (mode == AppMode.local) {
+      state = state.copyWith(
+        error: '本地模式无需登录，请使用自动进入',
+      );
+      return false;
+    }
 
     try {
       state = state.copyWith(error: null);
+      resetAccountScopedStateFromRef(_ref);
 
       if (BackendManager.shouldRunEmbedded) {
         final previousAccount = await ApiClient.getActiveAccount();
@@ -131,8 +176,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthState(
         status: AuthStatus.authenticated,
         token: token,
-        user: resp.data['user'],
+        user: resp.data['user'] is Map<String, dynamic>
+            ? resp.data['user'] as Map<String, dynamic>
+            : null,
       );
+      _ref.invalidate(workspaceProvider);
       return true;
     } on DioException catch (e) {
       String msg;
@@ -140,7 +188,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
           e.type == DioExceptionType.connectionTimeout) {
         if (BackendManager.shouldRunEmbedded) {
           if (!backend.isRunning) {
-            msg = '本地后端未启动，请先点击"进入本地模式"启动后端服务';
+            msg = '本地后端未启动，请先启动后端服务';
           } else if (backend.hasFailed) {
             msg = '本地后端启动失败: ${backend.startupError ?? "请查看应用日志"}';
           } else {
@@ -162,9 +210,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<bool> register(String name, String email, String password) async {
     final backend = BackendManager();
+    final mode = _ref.read(modeProvider).mode;
+
+    if (mode == AppMode.local) {
+      state = state.copyWith(
+        error: '本地模式不支持注册服务器账号，请切换为服务器模式',
+      );
+      return false;
+    }
 
     try {
       state = state.copyWith(error: null);
+      resetAccountScopedStateFromRef(_ref);
 
       if (BackendManager.shouldRunEmbedded) {
         final previousAccount = await ApiClient.getActiveAccount();
@@ -200,8 +257,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = AuthState(
         status: AuthStatus.authenticated,
         token: token,
-        user: resp.data['user'],
+        user: resp.data['user'] is Map<String, dynamic>
+            ? resp.data['user'] as Map<String, dynamic>
+            : null,
       );
+      _ref.invalidate(workspaceProvider);
       return true;
     } on DioException catch (e) {
       String msg;
@@ -209,7 +269,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
           e.type == DioExceptionType.connectionTimeout) {
         if (BackendManager.shouldRunEmbedded) {
           if (!backend.isRunning) {
-            msg = '本地后端未启动，请先点击"进入本地模式"启动后端服务';
+            msg = '本地后端未启动，请先启动后端服务';
           } else if (backend.hasFailed) {
             msg = '本地后端启动失败: ${backend.startupError ?? "请查看应用日志"}';
           } else {
@@ -227,13 +287,19 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> logout({bool clearData = false}) async {
+    final mode = _ref.read(modeProvider).mode;
     final email = await ApiClient.getActiveAccount();
+
+    resetAccountScopedStateFromRef(_ref);
+
     if (clearData) {
       if (email != null) {
         if (BackendManager.shouldRunEmbedded) {
           try {
             await BackendManager().stop();
-            await BackendManager().deleteAccountData(email);
+            await BackendManager().deleteAccountData(
+              mode == AppMode.local ? LocalBootstrap.localAccountId : email,
+            );
           } catch (e) {
             debugPrint('[Auth] Failed to delete account data: $e');
           }
@@ -241,8 +307,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
         await ApiClient.removeAccount(email);
       }
       await ApiClient.clearAllAccountData();
+      if (mode == AppMode.local) {
+        await LocalBootstrap.resetLocalData();
+      }
     } else {
       await ApiClient.clearToken();
+      if (mode == AppMode.local) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('active_account_email');
+      }
     }
     state = const AuthState(status: AuthStatus.unauthenticated);
   }
@@ -250,5 +323,5 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   final api = ref.watch(apiClientProvider);
-  return AuthNotifier(api);
+  return AuthNotifier(api, ref);
 });

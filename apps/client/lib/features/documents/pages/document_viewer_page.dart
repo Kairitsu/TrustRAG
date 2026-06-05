@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_error_messages.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/document_provider.dart';
 
@@ -70,7 +71,7 @@ class _DocumentViewerPageState extends ConsumerState<DocumentViewerPage>
     } catch (e) {
       if (mounted) {
         setState(() {
-          _markdownError = e.toString();
+          _markdownError = friendlyApiError(e, fallback: '无法加载文档内容');
           _loadingMarkdown = false;
         });
       }
@@ -98,7 +99,7 @@ class _DocumentViewerPageState extends ConsumerState<DocumentViewerPage>
     } catch (e) {
       if (mounted) {
         setState(() {
-          _chunksError = e.toString();
+          _chunksError = friendlyApiError(e, fallback: '无法加载文档分块');
           _loadingChunks = false;
         });
       }

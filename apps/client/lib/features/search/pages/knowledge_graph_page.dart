@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_error_messages.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../dashboard/providers/workspace_provider.dart';
 import '../providers/knowledge_graph_provider.dart';
@@ -326,7 +327,7 @@ class _GraphViewTab extends ConsumerWidget {
           children: [
             Icon(Icons.error_outline, size: 48, color: Colors.red.shade300),
             const SizedBox(height: 12),
-            Text(s.loadFailed(e.toString()),
+            Text(s.loadFailed(friendlyApiError(e, fallback: '无法加载知识图谱')),
                 style: TextStyle(color: Colors.grey.shade600)),
           ],
         ),
@@ -1575,7 +1576,7 @@ class _EntityListTab extends ConsumerWidget {
     return entitiesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
-        child: Text(s.loadFailed(e.toString()),
+        child: Text(s.loadFailed(friendlyApiError(e, fallback: '无法加载实体列表')),
             style: TextStyle(color: Colors.grey.shade600)),
       ),
       data: (entities) {

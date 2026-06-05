@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_error_messages.dart';
 import '../../../core/services/backend_manager.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../chat/providers/chat_provider.dart';
@@ -221,7 +222,11 @@ class _DocumentsPageState extends ConsumerState<DocumentsPage> {
         Expanded(
           child: docs.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text('加载失败: $e')),
+            error: (e, _) => Center(
+              child: Text(
+                '加载失败: ${friendlyApiError(e, fallback: '无法加载文档列表')}',
+              ),
+            ),
             data: (allDocs) {
               _startAutoRefresh(allDocs);
               final folders = _extractFolders(allDocs);
