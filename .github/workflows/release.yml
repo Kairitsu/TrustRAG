@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without v prefix (e.g. 0.2.8)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -248,7 +254,11 @@ jobs:
       - name: Get version from tag
         id: get_version
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           if [[ "$VERSION" == *-alpha* ]] || [[ "$VERSION" == *-beta* ]] || [[ "$VERSION" == *-rc* ]]; then
             echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
@@ -267,6 +277,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          target_commitish: ${{ github.sha }}
           name: TrustRAG v${{ steps.get_version.outputs.VERSION }}
           body_path: release-notes.md
           draft: false
