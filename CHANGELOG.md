@@ -14,6 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.8] - 2026-06-05
+
+### Fixed / 修复
+- 🐛 **本地模式认证与工作区 Bootstrap** — 分离本地自动初始化与服务器注册/登录；退出后无需再输入本地账号密码；修复注册/切换账号后旧 `workspaceId` 导致资料库与对话 404。
+- 🐛 **工作区恢复逻辑** — 校验 `selectedWorkspace` 是否属于当前账号列表；列表为空时自动创建「个人空间」。
+- 🐛 **账号切换状态清理** — 登录/注册/退出/切换账号时统一重置 workspace、对话、文档、知识图谱等 Riverpod 缓存。
+
+### Added / 新增
+- 📦 **LocalBootstrap** — 本地模式一键流程：启动 embedded backend → 本地身份 → 默认工作区 → 进入 Dashboard。
+- 💬 **API 友好错误提示** — 401/404/超时等映射为简短中文，不再向用户展示 `DioException` 堆栈。
+
+### Changed / 变更
+- 🖥️ **本地模式登录页** — 隐藏邮箱密码与注册入口；失败时提供重试、切换使用方式、清除本地数据并重新初始化。
+- 🔐 **注册默认工作区** — 后端 `POST /auth/register` 自动创建「个人空间」。
+
+### Infrastructure / 基础设施
+- CI Windows 构建步骤安装 Inno Setup，确保 `.exe` 安装包可稳定生成。
+- `test-build` 工作流在 `master` 分支推送时也会构建桌面端产物（Actions 工件，保留 7 天）。
+
+---
+
 ## [0.2.7] - 2026-06-04
 
 ### Added / 新增

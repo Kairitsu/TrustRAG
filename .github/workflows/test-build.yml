@@ -2,7 +2,7 @@ name: Test Build
 
 on:
   push:
-    branches: [test]
+    branches: [test, master]
   workflow_dispatch:
 
 permissions:
@@ -106,6 +106,10 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           Copy-Item backend/target/release/trustrag-backend.exe apps/client/build/windows/x64/runner/Release/
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        run: choco install innosetup -y --no-progress
 
       - name: Create Windows installer
         if: runner.os == 'Windows'

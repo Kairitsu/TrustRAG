@@ -1,8 +1,8 @@
 [Setup]
 AppId={{B2F8A9E1-7C3D-4F5A-9E1B-2D4F6A8C0E3F}
 AppName=TrustRAG
-AppVersion=0.1.1
-AppVerName=TrustRAG 0.1.1
+AppVersion=0.2.8
+AppVerName=TrustRAG 0.2.8
 AppPublisher=TrustRAG Team
 AppSupportURL=https://github.com/ximi-ai/TrustRAG/issues
 AppUpdatesURL=https://github.com/ximi-ai/TrustRAG/releases
@@ -15,7 +15,7 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\TrustRAG.exe
-UninstallDisplayName=TrustRAG 0.1.1
+UninstallDisplayName=TrustRAG 0.2.8
 UninstallFilesDir={app}\uninstall
 WizardStyle=modern
 
