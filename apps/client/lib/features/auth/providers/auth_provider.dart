@@ -6,9 +6,14 @@ import '../../../core/api/api_client.dart';
 import '../../../core/services/backend_manager.dart';
 import '../../../core/services/mode_manager.dart';
 import '../../../core/services/session_reset.dart';
+import '../../settings/providers/server_config_provider.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) {
-  return ApiClient();
+  final modeState = ref.watch(modeProvider);
+  return ApiClient(
+    mode: modeState.mode,
+    serverUrl: modeState.serverUrl,
+  );
 });
 
 enum AuthStatus { unknown, authenticated, unauthenticated }
@@ -135,43 +140,27 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<bool> login(String email, String password, {bool rememberLogin = true}) async {
-    final backend = BackendManager();
     final mode = _ref.read(modeProvider).mode;
 
     if (mode == AppMode.local) {
       state = state.copyWith(
-        error: '本地模式无需登录',
+        error: '本地模式无需登录/注册，请返回本地工作台',
       );
       return false;
     }
 
+    if (mode == AppMode.unset) {
+      state = state.copyWith(error: '请先选择使用方式（本地或服务器）');
+      return false;
+    }
+
     final normalizedEmail = email.trim().toLowerCase();
+    final serverUrl = _serverBaseUrl();
 
     try {
       state = state.copyWith(error: null);
       resetAccountScopedStateFromRef(_ref);
-
-      if (BackendManager.shouldRunEmbedded) {
-        final previousAccount = await ApiClient.getActiveAccount();
-        final needRestart = previousAccount != normalizedEmail || !backend.isRunning;
-
-        if (needRestart) {
-          if (backend.isRunning && previousAccount != normalizedEmail) {
-            await backend.restart(accountId: normalizedEmail);
-          } else if (!backend.isRunning) {
-            await backend.start(accountId: normalizedEmail);
-          }
-          await backend.ready;
-          if (backend.hasFailed) {
-            state = state.copyWith(
-              status: AuthStatus.unauthenticated,
-              error: '本地后端启动失败: ${backend.startupError ?? "未知错误"}',
-            );
-            return false;
-          }
-        }
-        _api.dio.options.baseUrl = backend.baseUrl;
-      }
+      _api.dio.options.baseUrl = serverUrl;
 
       final resp = await _api.dio.post('/auth/login', data: {
         'email': normalizedEmail,
@@ -201,17 +190,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       String msg;
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
-        if (BackendManager.shouldRunEmbedded) {
-          if (!backend.isRunning) {
-            msg = '本地后端未启动，请先启动后端服务';
-          } else if (backend.hasFailed) {
-            msg = '本地后端启动失败: ${backend.startupError ?? "请查看应用日志"}';
-          } else {
-            msg = '本地后端健康检查失败 (${backend.baseUrl})，请稍后重试';
-          }
-        } else {
-          msg = '无法连接服务器，请检查网络连接';
-        }
+        msg = '无法连接服务器，请检查服务器地址与网络连接 ($serverUrl)';
       } else {
         msg = (e.response?.data?['error'] ?? '登录失败').toString();
       }
@@ -224,42 +203,27 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<bool> register(String name, String email, String password) async {
-    final backend = BackendManager();
     final mode = _ref.read(modeProvider).mode;
 
     if (mode == AppMode.local) {
       state = state.copyWith(
-        error: '本地模式不支持注册服务器账号，请切换为服务器模式',
+        error: '本地模式不支持注册服务器账号，请返回本地工作台',
       );
       return false;
     }
 
+    if (mode == AppMode.unset) {
+      state = state.copyWith(error: '请先选择使用方式（本地或服务器）');
+      return false;
+    }
+
     final normalizedEmail = email.trim().toLowerCase();
+    final serverUrl = _serverBaseUrl();
 
     try {
       state = state.copyWith(error: null);
       resetAccountScopedStateFromRef(_ref);
-
-      if (BackendManager.shouldRunEmbedded) {
-        final previousAccount = await ApiClient.getActiveAccount();
-        final needRestart = previousAccount != normalizedEmail || !backend.isRunning;
-
-        if (needRestart) {
-          if (backend.isRunning && previousAccount != normalizedEmail) {
-            await backend.restart(accountId: normalizedEmail);
-          } else if (!backend.isRunning) {
-            await backend.start(accountId: normalizedEmail);
-          }
-          await backend.ready;
-          if (backend.hasFailed) {
-            state = state.copyWith(
-              error: '本地后端启动失败: ${backend.startupError ?? "未知错误"}',
-            );
-            return false;
-          }
-        }
-        _api.dio.options.baseUrl = backend.baseUrl;
-      }
+      _api.dio.options.baseUrl = serverUrl;
 
       final resp = await _api.dio.post('/auth/register', data: {
         'display_name': name,
@@ -285,23 +249,23 @@ class AuthNotifier extends StateNotifier<AuthState> {
       String msg;
       if (e.type == DioExceptionType.connectionError ||
           e.type == DioExceptionType.connectionTimeout) {
-        if (BackendManager.shouldRunEmbedded) {
-          if (!backend.isRunning) {
-            msg = '本地后端未启动，请先启动后端服务';
-          } else if (backend.hasFailed) {
-            msg = '本地后端启动失败: ${backend.startupError ?? "未知错误"}';
-          } else {
-            msg = '本地后端健康检查失败 (${backend.baseUrl})，请稍后重试';
-          }
-        } else {
-          msg = '无法连接服务器，请检查网络连接';
-        }
+        msg = '无法连接服务器，请检查服务器地址与网络连接 ($serverUrl)';
       } else {
         msg = (e.response?.data?['error'] ?? '注册失败').toString();
       }
       state = state.copyWith(error: msg);
       return false;
     }
+  }
+
+  String _serverBaseUrl() {
+    final modeState = _ref.read(modeProvider);
+    final url = ApiClient.resolveBaseUrl(
+      mode: AppMode.server,
+      serverUrl: modeState.serverUrl,
+    );
+    if (url.isEmpty) return ServerConfig.officialUrl;
+    return url;
   }
 
   Future<void> logout() async {

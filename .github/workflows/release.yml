@@ -78,6 +78,54 @@ jobs:
         run: |
           Copy-Item backend/target/release/trustrag-backend.exe apps/client/build/windows/x64/runner/Release/
 
+      - name: Smoke test trustrag-backend.exe (health)
+        shell: pwsh
+        run: |
+          $backend = "apps/client/build/windows/x64/runner/Release/trustrag-backend.exe"
+          if (-not (Test-Path $backend)) { throw "Backend binary not found: $backend" }
+
+          $tempDir = Join-Path $env:TEMP ("trustrag-smoke-" + [guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Path $tempDir | Out-Null
+
+          $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $port = $listener.LocalEndpoint.Port
+          $listener.Stop()
+
+          $dbPath = Join-Path $tempDir "trustrag.db"
+          $env:TRUSTRAG__LISTEN_ADDR = "127.0.0.1:$port"
+          $env:TRUSTRAG__DATABASE_URL = "sqlite://$dbPath?mode=rwc"
+          $env:TRUSTRAG__DATA_DIR = $tempDir
+          $env:TRUSTRAG__JWT_SECRET = "smoke-test-secret-32chars-minimum!!"
+          $env:TRUSTRAG__DOC_PROCESSOR_URL = "http://127.0.0.1:0"
+          $env:RUST_LOG = "trustrag_backend=info"
+
+          $proc = Start-Process -FilePath $backend -PassThru -WindowStyle Hidden
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              try {
+                $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$port/health" -UseBasicParsing -TimeoutSec 3
+                if ($resp.StatusCode -eq 200 -and $resp.Content -match 'ok') {
+                  $ok = $true
+                  break
+                }
+              } catch {}
+              if ($proc.HasExited) {
+                throw "trustrag-backend.exe exited early with code $($proc.ExitCode)"
+              }
+            }
+            if (-not $ok) { throw "Health check failed on port $port" }
+            Write-Host "Backend smoke test passed on port $port"
+          } finally {
+            if (-not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 1
+            }
+            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+          }
+
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 

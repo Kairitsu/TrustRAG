@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +10,7 @@ import '../../features/auth/providers/auth_provider.dart';
 import '../../features/dashboard/providers/workspace_provider.dart';
 import 'backend_manager.dart';
 import 'desktop_auto_setup.dart';
+import 'local_data_path_guard.dart';
 import 'session_reset.dart';
 
 enum LocalBootstrapStatus {
@@ -215,37 +214,37 @@ class LocalBootstrap {
     final deletedPaths = <String>[];
 
     try {
-      if (BackendManager.shouldRunEmbedded) {
-        final bm = BackendManager();
-        final dataDir = await bm.getAccountDataDir(localAccountId);
-        await DiagnosticLogger.info('RESET target data_dir=$dataDir');
+      if (!BackendManager.shouldRunEmbedded) {
+        return const LocalResetResult(
+          success: false,
+          message: '当前环境不支持删除本机资料库',
+        );
+      }
 
-        if (!_isSafeToDelete(dataDir)) {
-          final msg = '拒绝删除：路径不安全 ($dataDir)';
-          await DiagnosticLogger.error('RESET $msg');
-          return LocalResetResult(success: false, message: msg);
-        }
+      final bm = BackendManager();
+      final dataDir = await bm.getAccountDataDir(localAccountId);
+      await DiagnosticLogger.info('RESET target data_dir=$dataDir');
 
-        if (bm.isRunning) {
-          try {
-            await DiagnosticLogger.info('RESET POST /system/reset-db');
-            final api = ApiClient();
-            await api.dio.post('/system/reset-db');
-          } catch (e) {
-            await DiagnosticLogger.warn('RESET reset-db skipped: $e');
-          }
-        }
+      if (!LocalDataPathGuard.isSafeToDelete(dataDir)) {
+        final msg = '拒绝删除：路径不安全 ($dataDir)';
+        await DiagnosticLogger.error('RESET $msg');
+        return LocalResetResult(success: false, message: msg);
+      }
 
-        await DiagnosticLogger.info('RESET stopping backend');
-        await bm.stop();
+      await DiagnosticLogger.info('RESET stopping backend before delete');
+      await bm.stop();
 
-        if (await Directory(dataDir).exists()) {
-          await Directory(dataDir).delete(recursive: true);
-          deletedPaths.add(dataDir);
-          await DiagnosticLogger.info('RESET deleted $dataDir');
-        } else {
-          await DiagnosticLogger.warn('RESET data dir not found: $dataDir');
-        }
+      final deleteResult = await bm.deleteDataDirectory(dataDir);
+      if (!deleteResult.success) {
+        await DiagnosticLogger.error('RESET delete failed: ${deleteResult.message}');
+        return LocalResetResult(
+          success: false,
+          message: deleteResult.message,
+          deletedPaths: deletedPaths,
+        );
+      }
+      if (deleteResult.message.contains('已删除')) {
+        deletedPaths.add(dataDir);
       }
 
       final prefs = await SharedPreferences.getInstance();
@@ -253,7 +252,9 @@ class LocalBootstrap {
       await prefs.remove('last_workspace_id');
       await prefs.remove('last_workspace_id_$localAccountId');
       await ApiClient.clearToken();
-      await ApiClient.clearAllAccountData();
+      await prefs.remove('active_account_email');
+      await prefs.remove('auth_token_$localAccountId');
+      bm.resetLifecycle();
 
       await DiagnosticLogger.info('RESET local data completed');
       return LocalResetResult(
@@ -266,29 +267,15 @@ class LocalBootstrap {
       debugPrint('[LocalBootstrap] resetLocalData: $e\n$st');
       return LocalResetResult(
         success: false,
-        message: e.toString(),
+        message: BackendManager().hasFailed
+            ? '删除失败：$e'
+            : '删除本机资料库失败：$e',
         deletedPaths: deletedPaths,
       );
     }
   }
 
   /// Visible for tests — only TrustRAG per-account dirs may be deleted.
-  static bool isDataDirSafeToDelete(String dirPath) => _isSafeToDelete(dirPath);
-
-  /// Only delete paths under TrustRAG account storage, never install dir.
-  static bool _isSafeToDelete(String dirPath) {
-    if (dirPath.trim().isEmpty) return false;
-    final normalized = p.normalize(p.absolute(dirPath));
-    if (normalized.length < 12) return false;
-    if (!normalized.contains('TrustRAG')) return false;
-
-    final exeDir = p.normalize(p.dirname(Platform.resolvedExecutable));
-    if (normalized.startsWith(exeDir)) return false;
-
-    final segments = p.split(normalized);
-    final accountsIdx = segments.indexOf('accounts');
-    if (accountsIdx < 0 || accountsIdx >= segments.length - 1) return false;
-
-    return true;
-  }
+  static bool isDataDirSafeToDelete(String dirPath) =>
+      LocalDataPathGuard.isSafeToDelete(dirPath);
 }

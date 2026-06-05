@@ -3,10 +3,12 @@ import 'package:dio_cache_interceptor/dio_cache_interceptor.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../features/settings/providers/server_config_provider.dart';
 import '../account/account_display_helper.dart';
 import '../providers/dev_mode_provider.dart';
 import '../services/backend_manager.dart';
 import '../services/local_bootstrap.dart';
+import '../services/app_mode.dart';
 
 class ApiClient {
   late final Dio dio;
@@ -16,8 +18,12 @@ class ApiClient {
   static const _accountListKey = 'account_list';
   static const _lastLoginEmailKey = 'last_login_email';
 
-  ApiClient({String? baseUrl})
-      : baseUrl = baseUrl ?? _resolveBaseUrl() {
+  ApiClient({String? baseUrl, AppMode? mode, String? serverUrl})
+      : baseUrl = baseUrl ??
+            resolveBaseUrl(
+              mode: mode ?? AppMode.unset,
+              serverUrl: serverUrl,
+            ) {
     dio = Dio(BaseOptions(
       baseUrl: this.baseUrl,
       connectTimeout: const Duration(seconds: 10),
@@ -64,28 +70,37 @@ class ApiClient {
     }
   }
 
-  static String _resolveBaseUrl() {
-    if (BackendManager.shouldRunEmbedded) {
-      if (BackendManager().isRunning || BackendManager().startAttempted) {
-        return BackendManager().baseUrl;
-      }
-    }
-
-    const envUrl = String.fromEnvironment(
-      'API_BASE_URL',
-      defaultValue: '',
-    );
+  /// Resolves API base URL strictly by [mode]; never uses BackendManager in server mode.
+  static String resolveBaseUrl({
+    required AppMode mode,
+    String? serverUrl,
+    bool backendRunning = false,
+    String? backendBaseUrl,
+  }) {
+    const envUrl = String.fromEnvironment('API_BASE_URL', defaultValue: '');
     if (envUrl.isNotEmpty) return envUrl;
 
-    if (_savedServerUrl != null && _savedServerUrl!.isNotEmpty) {
-      return _savedServerUrl!;
-    }
+    switch (mode) {
+      case AppMode.local:
+        if (backendRunning && backendBaseUrl != null && backendBaseUrl.isNotEmpty) {
+          return backendBaseUrl;
+        }
+        if (BackendManager.shouldRunEmbedded && BackendManager().isRunning) {
+          return BackendManager().baseUrl;
+        }
+        return 'http://127.0.0.1:0';
 
-    if (kIsWeb) {
-      return const String.fromEnvironment('API_BASE_URL', defaultValue: '/api');
-    }
+      case AppMode.server:
+        final custom = (serverUrl ?? _savedServerUrl)?.trim();
+        if (custom != null && custom.isNotEmpty) return custom;
+        return ServerConfig.officialUrl;
 
-    return 'http://localhost:8080';
+      case AppMode.unset:
+        if (kIsWeb) {
+          return const String.fromEnvironment('API_BASE_URL', defaultValue: '/api');
+        }
+        return '';
+    }
   }
 
   static String _accountTokenKey(String email) => 'auth_token_$email';
@@ -214,8 +229,8 @@ class ApiClient {
       await prefs.remove(_tokenKey);
     }
 
-    // Restart backend for new account data directory
-    if (BackendManager.shouldRunEmbedded) {
+    final appMode = prefs.getString('app_mode');
+    if (appMode == 'local' && BackendManager.shouldRunEmbedded) {
       try {
         await BackendManager().restart(accountId: email);
         await BackendManager().ready;
@@ -224,7 +239,6 @@ class ApiClient {
         }
       } catch (e) {
         debugPrint('[ApiClient] switchToAccount backend restart failed: $e');
-        // Rollback to previous account
         await _rollbackAccount(prefs, previousEmail, previousToken);
         return switchFailed;
       }
@@ -243,7 +257,8 @@ class ApiClient {
       if (previousToken != null) {
         await prefs.setString(_tokenKey, previousToken);
       }
-      if (BackendManager.shouldRunEmbedded) {
+      final appMode = prefs.getString('app_mode');
+      if (appMode == 'local' && BackendManager.shouldRunEmbedded) {
         try {
           await BackendManager().restart(accountId: previousEmail);
           await BackendManager().ready;

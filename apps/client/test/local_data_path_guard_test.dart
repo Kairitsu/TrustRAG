@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:client/core/services/local_bootstrap.dart';
+import 'package:client/core/services/local_data_path_guard.dart';
 
 void main() {
   group('LocalBootstrap.isDataDirSafeToDelete', () {
@@ -29,6 +30,13 @@ void main() {
     test('rejects empty or short paths', () {
       expect(LocalBootstrap.isDataDirSafeToDelete(''), isFalse);
       expect(LocalBootstrap.isDataDirSafeToDelete('/tmp'), isFalse);
+    });
+
+    test('LocalDataPathGuard matches LocalBootstrap delegate', () {
+      const path =
+          '/home/user/.local/share/TrustRAG/accounts/local@trustrag.desktop';
+      expect(LocalDataPathGuard.isSafeToDelete(path), isTrue);
+      expect(LocalBootstrap.isDataDirSafeToDelete(path), isTrue);
     });
   });
 }

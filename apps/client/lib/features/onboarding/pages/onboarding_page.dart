@@ -38,6 +38,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
 
     try {
       await ref.read(modeProvider.notifier).setLocalMode();
+      ref.invalidate(apiClientProvider);
       if (!mounted) return;
       context.go('/local-startup');
     } catch (e) {
@@ -97,7 +98,7 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
   Future<void> _confirmServerMode() async {
     final url = _urlController.text.trim();
     await ref.read(modeProvider.notifier).setServerMode(url);
-
+    ref.invalidate(apiClientProvider);
     final api = ref.read(apiClientProvider);
     api.dio.options.baseUrl = url;
 

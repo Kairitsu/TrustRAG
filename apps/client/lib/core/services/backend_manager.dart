@@ -9,6 +9,17 @@ import 'package:path_provider/path_provider.dart';
 
 import '../providers/dev_mode_provider.dart';
 import 'diagnostic_logger.dart';
+import 'local_data_path_guard.dart';
+
+class DirectoryDeleteResult {
+  final bool success;
+  final String message;
+
+  const DirectoryDeleteResult({
+    required this.success,
+    required this.message,
+  });
+}
 
 class BackendManager {
   static final BackendManager _instance = BackendManager._();
@@ -31,6 +42,7 @@ class BackendManager {
   int? get port => _port;
   bool get isRunning => _isRunning;
   bool get startAttempted => _startAttempted;
+  bool get ownsProcess => _ownsProcess;
   String? get startupError => _startupError;
   bool get hasFailed => _startupError != null;
   String get baseUrl => 'http://127.0.0.1:$_port';
@@ -41,17 +53,42 @@ class BackendManager {
   /// Whether this platform should run an embedded backend.
   static bool get shouldRunEmbedded {
     if (kIsWeb) return false;
-    return Platform.isWindows || Platform.isLinux || Platform.isMacOS || Platform.isAndroid;
+    return Platform.isWindows ||
+        Platform.isLinux ||
+        Platform.isMacOS ||
+        Platform.isAndroid;
   }
 
-  Future<void> start({String? accountId}) async {
-    if (!shouldRunEmbedded || _isRunning) return;
+  /// Clears startup failure state before a new start/restart attempt.
+  void resetLifecycle() {
+    _startupError = null;
+    if (!_readyCompleter.isCompleted) {
+      _readyCompleter.complete();
+    }
+    _readyCompleter = Completer<void>();
+    if (_process == null) {
+      _isRunning = false;
+      _port = null;
+      _ownsProcess = false;
+    }
+  }
 
+  Future<void> start({
+    String? accountId,
+    bool allowAttachExisting = true,
+  }) async {
+    if (!shouldRunEmbedded) return;
+
+    resetLifecycle();
     _startAttempted = true;
-    if (await _tryAttachExistingBackend()) {
+
+    if (_isRunning && _process != null) return;
+
+    if (allowAttachExisting && await _tryAttachExistingBackend()) {
       _currentAccountId = accountId;
       return;
     }
+
     _currentAccountId = accountId;
     _port = await _findFreePort();
     final backendPath = await _findBackendBinary();
@@ -59,10 +96,10 @@ class BackendManager {
     if (backendPath == null) {
       _startupError = Platform.isAndroid
           ? 'Embedded backend binary not found. '
-            'This may be caused by missing android:extractNativeLibs="true" '
-            'in AndroidManifest.xml, or the APK was not built with the backend.'
+              'This may be caused by missing android:extractNativeLibs="true" '
+              'in AndroidManifest.xml, or the APK was not built with the backend.'
           : 'Embedded backend binary not found. '
-            'The backend executable may not be bundled with this build.';
+              'The backend executable may not be bundled with this build.';
       debugPrint('[BackendManager] $_startupError');
       if (!_readyCompleter.isCompleted) _readyCompleter.complete();
       return;
@@ -98,7 +135,8 @@ class BackendManager {
         backendPath,
         [],
         environment: env,
-        workingDirectory: Platform.isAndroid ? dataDir : p.dirname(backendPath),
+        workingDirectory:
+            Platform.isAndroid ? dataDir : p.dirname(backendPath),
       );
       _ownsProcess = true;
 
@@ -141,7 +179,8 @@ class BackendManager {
       await _readyCompleter.future.timeout(
         const Duration(seconds: 15),
         onTimeout: () {
-          debugPrint('[BackendManager] Backend startup timed out, will verify via health check');
+          debugPrint(
+              '[BackendManager] Backend startup timed out, will verify via health check');
           if (!_readyCompleter.isCompleted) _readyCompleter.complete();
         },
       );
@@ -169,12 +208,11 @@ class BackendManager {
   /// Stop the current backend, then start a new one pointing to
   /// the given account's isolated data directory.
   Future<void> restart({String? accountId}) async {
-    debugPrint('[BackendManager] Restarting for account: ${accountId ?? "default"}');
+    debugPrint(
+        '[BackendManager] Restarting for account: ${accountId ?? "default"}');
     DebugLogBuffer().add('BACKEND 重启中，切换账号: ${accountId ?? "default"}');
     await DiagnosticLogger.info('BACKEND restart account=${accountId ?? "default"}');
     await stop();
-    _readyCompleter = Completer<void>();
-    _startupError = null;
     _startAttempted = false;
     await start(accountId: accountId);
   }
@@ -185,15 +223,87 @@ class BackendManager {
   }
 
   /// Delete the local data directory for a specific account.
-  Future<bool> deleteAccountData(String accountId) async {
-    final dir = Directory(await getAccountDataDir(accountId));
-    if (await dir.exists()) {
-      debugPrint('[BackendManager] Deleting data for account: $accountId');
-      DebugLogBuffer().add('BACKEND 删除账号数据: $accountId');
-      await dir.delete(recursive: true);
-      return true;
+  Future<DirectoryDeleteResult> deleteAccountData(String accountId) async {
+    final dir = await getAccountDataDir(accountId);
+    return deleteDataDirectory(dir);
+  }
+
+  /// Stops owned backend if needed, then deletes [dirPath] with retries.
+  Future<DirectoryDeleteResult> deleteDataDirectory(String dirPath) async {
+    if (!LocalDataPathGuard.isSafeToDelete(dirPath)) {
+      return DirectoryDeleteResult(
+        success: false,
+        message: '拒绝删除：路径不安全 ($dirPath)',
+      );
     }
-    return false;
+
+    if (_isRunning && !_ownsProcess) {
+      return const DirectoryDeleteResult(
+        success: false,
+        message:
+            '无法删除本机资料库：检测到外部 trustrag-backend 进程（例如端口 8080）仍可能占用数据库文件。\n'
+            '请关闭该进程后重试，或从任务管理器结束 trustrag-backend.exe。',
+      );
+    }
+
+    if (_ownsProcess || _process != null) {
+      await stop();
+      if (_isRunning) {
+        return DirectoryDeleteResult(
+          success: false,
+          message:
+              '无法删除本机资料库：本机后端未能完全退出，可能仍占用 $dirPath 下的 trustrag.db。\n'
+              '请完全退出 TrustRAG，在任务管理器中结束 trustrag-backend.exe 后重试。',
+        );
+      }
+    }
+
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) {
+      return const DirectoryDeleteResult(
+        success: true,
+        message: '目录不存在，无需删除',
+      );
+    }
+
+    const delays = [Duration.zero, Duration(milliseconds: 300),
+        Duration(milliseconds: 600), Duration(milliseconds: 1000)];
+    Object? lastError;
+
+    for (final delay in delays) {
+      if (delay > Duration.zero) await Future.delayed(delay);
+      try {
+        await dir.delete(recursive: true);
+        return DirectoryDeleteResult(
+          success: true,
+          message: '已删除 $dirPath',
+        );
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    return DirectoryDeleteResult(
+      success: false,
+      message: _formatDeleteFailure(dirPath, lastError),
+    );
+  }
+
+  static String _formatDeleteFailure(String dirPath, Object? error) {
+    final buf = StringBuffer()
+      ..writeln('无法删除本机资料库目录：')
+      ..writeln(dirPath)
+      ..writeln()
+      ..writeln('可能原因：trustrag-backend.exe 或 TrustRAG.exe 仍占用 trustrag.db。')
+      ..writeln('建议操作：')
+      ..writeln('1. 完全退出 TrustRAG')
+      ..writeln('2. 打开任务管理器，结束 trustrag-backend.exe')
+      ..writeln('3. 重启电脑后再次尝试删除');
+    if (error != null) {
+      buf.writeln();
+      buf.writeln('系统错误：$error');
+    }
+    return buf.toString().trim();
   }
 
   /// HTTP health check to verify the backend is actually responding.
@@ -215,21 +325,31 @@ class BackendManager {
     if (_process != null && _ownsProcess) {
       debugPrint('[BackendManager] Stopping owned backend...');
       await DiagnosticLogger.info('BACKEND stopping owned process');
-      _process!.kill(ProcessSignal.sigterm);
+      final proc = _process!;
+      proc.kill(ProcessSignal.sigterm);
       try {
-        await _process!.exitCode.timeout(const Duration(seconds: 5));
+        await proc.exitCode.timeout(const Duration(seconds: 10));
       } catch (_) {
-        _process!.kill(ProcessSignal.sigkill);
+        proc.kill(ProcessSignal.sigkill);
+        try {
+          await proc.exitCode.timeout(const Duration(seconds: 5));
+        } catch (_) {}
       }
       _process = null;
       _ownsProcess = false;
       _isRunning = false;
+      _port = null;
     } else if (_isRunning && !_ownsProcess) {
       debugPrint('[BackendManager] Detaching from external backend (not killed)');
       await DiagnosticLogger.info('BACKEND detach external on port $_port');
       _isRunning = false;
       _port = null;
     }
+
+    _startAttempted = false;
+    resetLifecycle();
+    _currentAccountId = null;
+    _currentDataDir = null;
   }
 
   /// Reuse a healthy backend already listening (e.g. user-started on 8080).
@@ -304,9 +424,9 @@ class BackendManager {
   Future<String?> _findAndroidBinary() async {
     const libName = 'libtrustrap_backend.so';
 
-    // Primary: get native library directory via platform channel
     try {
-      final nativeLibDir = await _channel.invokeMethod<String>('getNativeLibraryDir');
+      final nativeLibDir =
+          await _channel.invokeMethod<String>('getNativeLibraryDir');
       if (nativeLibDir != null) {
         final path = p.join(nativeLibDir, libName);
         debugPrint('[BackendManager] Checking native lib path from channel: $path');
@@ -319,7 +439,6 @@ class BackendManager {
       debugPrint('[BackendManager] MethodChannel failed: $e');
     }
 
-    // Fallback: common paths
     final appInfo = await getApplicationSupportDirectory();
     final dataDir = p.dirname(p.dirname(appInfo.path));
     final candidates = [
@@ -350,7 +469,8 @@ class BackendManager {
   }
 
   String _generateJwtSecret() {
-    final hostname = Platform.isAndroid ? 'android-device' : Platform.localHostname;
+    final hostname =
+        Platform.isAndroid ? 'android-device' : Platform.localHostname;
     final seed = hostname + Platform.operatingSystem;
     return seed.hashCode.toRadixString(36).padLeft(32, 'x');
   }
@@ -359,7 +479,8 @@ class BackendManager {
   static String _diagnoseExitCode(int code, String binaryPath) {
     final buf = StringBuffer();
 
-    if (Platform.isWindows && (code == -1 || code == 0xC0000135 || code == 0xC000007B)) {
+    if (Platform.isWindows &&
+        (code == -1 || code == 0xC0000135 || code == 0xC000007B)) {
       buf.writeln('可能原因: 缺少 Visual C++ 运行时库 (VCRUNTIME140.dll)');
       buf.writeln('请安装 Microsoft Visual C++ Redistributable:');
       buf.writeln('https://aka.ms/vs/17/release/vc_redist.x64.exe');

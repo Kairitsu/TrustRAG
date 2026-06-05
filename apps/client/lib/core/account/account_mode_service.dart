@@ -7,7 +7,6 @@ import '../../features/auth/providers/auth_provider.dart';
 import '../../features/settings/providers/server_config_provider.dart';
 import '../../main.dart' show rootNavigatorKey;
 import '../api/api_client.dart';
-import '../services/backend_manager.dart';
 import '../services/diagnostic_logger.dart';
 import '../services/local_bootstrap.dart';
 import '../services/mode_manager.dart';
@@ -134,17 +133,7 @@ class AccountModeService {
 
     try {
       await _withLoading(ctx, () async {
-        if (BackendManager.shouldRunEmbedded) {
-          await DiagnosticLogger.info('MODE stopping embedded backend');
-          try {
-            await BackendManager().stop();
-          } catch (e) {
-            await DiagnosticLogger.warn('MODE backend stop: $e');
-          }
-        }
-
         resetAccountScopedState(ref);
-        await ApiClient.clearCurrentServerSession();
         ref.read(authProvider.notifier).clearSessionState();
 
         final modeState = ref.read(modeProvider);
@@ -158,8 +147,9 @@ class AccountModeService {
         }
 
         await DiagnosticLogger.info('MODE persisting server mode url=$url');
-        final api = ref.read(apiClientProvider);
         await ref.read(modeProvider.notifier).setServerMode(url);
+        ref.invalidate(apiClientProvider);
+        final api = ref.read(apiClientProvider);
         api.dio.options.baseUrl = url;
         ref.invalidate(authProvider);
 
@@ -224,6 +214,7 @@ class AccountModeService {
         resetAccountScopedState(ref);
         ref.read(authProvider.notifier).clearSessionState();
         await ref.read(modeProvider.notifier).resetMode();
+        ref.invalidate(apiClientProvider);
         ref.invalidate(authProvider);
 
         await DiagnosticLogger.info('MODE navigate to /onboarding after delete');
@@ -266,6 +257,7 @@ class AccountModeService {
         await ref.read(authProvider.notifier).logout();
         resetAccountScopedState(ref);
         await ref.read(modeProvider.notifier).setLocalMode();
+        ref.invalidate(apiClientProvider);
         ref.invalidate(authProvider);
         if (ctx.mounted) {
           ctx.go('/local-startup');
