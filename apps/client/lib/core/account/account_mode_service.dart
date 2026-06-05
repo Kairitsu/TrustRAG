@@ -130,9 +130,10 @@ class AccountModeService {
       await DiagnosticLogger.error('MODE navigator lost after confirm');
       return;
     }
+    final ctx = navCtx;
 
     try {
-      await _withLoading(navCtx, () async {
+      await _withLoading(ctx, () async {
         if (BackendManager.shouldRunEmbedded) {
           await DiagnosticLogger.info('MODE stopping embedded backend');
           try {
@@ -163,9 +164,9 @@ class AccountModeService {
         ref.invalidate(authProvider);
 
         await DiagnosticLogger.info('MODE navigate to /login');
-        if (navCtx.mounted) {
-          navCtx.go('/login');
-          _snack(navCtx, '已切换到服务器模式，请登录服务器账号');
+        if (ctx.mounted) {
+          ctx.go('/login');
+          _snack(ctx, '已切换到服务器模式，请登录服务器账号');
         }
       });
     } catch (e, st) {
@@ -208,9 +209,10 @@ class AccountModeService {
       await DiagnosticLogger.error('MODE navigator lost after delete confirm');
       return;
     }
+    final ctx = navCtx;
 
     try {
-      await _withLoading(navCtx, () async {
+      await _withLoading(ctx, () async {
         final resetResult = await LocalBootstrap.resetLocalData();
         await DiagnosticLogger.info(
           'MODE resetLocalData success=${resetResult.success} paths=${resetResult.deletedPaths}',
@@ -225,9 +227,9 @@ class AccountModeService {
         ref.invalidate(authProvider);
 
         await DiagnosticLogger.info('MODE navigate to /onboarding after delete');
-        if (navCtx.mounted) {
-          navCtx.go('/onboarding');
-          _snack(navCtx, '本机资料库已删除，应用将重新初始化');
+        if (ctx.mounted) {
+          ctx.go('/onboarding');
+          _snack(ctx, '本机资料库已删除，应用将重新初始化');
         }
       });
     } catch (e, st) {
@@ -257,16 +259,17 @@ class AccountModeService {
 
     navCtx = _navContext(context);
     if (navCtx == null || !navCtx.mounted) return;
+    final ctx = navCtx;
 
     try {
-      await _withLoading(navCtx, () async {
+      await _withLoading(ctx, () async {
         await ref.read(authProvider.notifier).logout();
         resetAccountScopedState(ref);
         await ref.read(modeProvider.notifier).setLocalMode();
         ref.invalidate(authProvider);
-        if (navCtx.mounted) {
-          navCtx.go('/local-startup');
-          _snack(navCtx, '已切换为本地模式');
+        if (ctx.mounted) {
+          ctx.go('/local-startup');
+          _snack(ctx, '已切换为本地模式');
         }
       });
     } catch (e, st) {
@@ -282,7 +285,7 @@ class AccountModeService {
     WidgetRef ref,
     BuildContext context,
   ) async {
-    var navCtx = _navContext(context);
+    final navCtx = _navContext(context);
     if (navCtx == null) return;
 
     try {
