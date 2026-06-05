@@ -1,12 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/services/backend_manager.dart';
-import '../../../core/services/desktop_auto_setup.dart';
-import '../../../core/services/local_bootstrap.dart';
 import '../../../core/services/mode_manager.dart';
 import '../../../core/services/session_reset.dart';
 
@@ -44,6 +41,7 @@ class AuthState {
   }
 }
 
+/// Server-account auth only. Local mode API session is applied via [applyAuthenticatedSession].
 class AuthNotifier extends StateNotifier<AuthState> {
   final ApiClient _api;
   final Ref _ref;
@@ -54,7 +52,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> checkAuthStatus() => _checkAuth();
 
-  /// Updates auth state after local bootstrap has verified `/auth/me`.
+  void clearSessionState() {
+    state = const AuthState(status: AuthStatus.unauthenticated);
+  }
+
+  /// After local bootstrap: workspace APIs only; UI must not show internal email.
   void applyAuthenticatedSession({
     required String token,
     Map<String, dynamic>? user,
@@ -69,37 +71,35 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> _checkAuth() async {
     final mode = _ref.read(modeProvider).mode;
 
-    if (mode == AppMode.local &&
-        !kIsWeb &&
-        BackendManager.shouldRunEmbedded) {
-      final existingToken = await ApiClient.getToken();
-      if (existingToken != null) {
-        try {
-          final resp = await _api.dio.get('/auth/me');
-          state = AuthState(
-            status: AuthStatus.authenticated,
-            token: existingToken,
-            user: resp.data is Map<String, dynamic>
-                ? resp.data as Map<String, dynamic>
-                : null,
-          );
-          return;
-        } on DioException catch (e) {
-          if (e.response?.statusCode == 401) {
-            await ApiClient.clearToken();
-          }
-        }
-      }
-
-      final result = await LocalBootstrap.bootstrap(_api, ref: _ref);
-      if (result.isSuccess) {
+    if (mode == AppMode.local) {
+      if (kIsWeb || !BackendManager.shouldRunEmbedded) {
+        state = const AuthState(status: AuthStatus.unauthenticated);
         return;
       }
-      if (DesktopAutoSetup.shouldAutoSetup) {
-        await DesktopAutoSetup.ensureLocalIdentity(_api);
+      final token = await ApiClient.getToken();
+      if (token == null) {
+        state = const AuthState(status: AuthStatus.unauthenticated);
+        return;
       }
-    } else if (DesktopAutoSetup.shouldAutoSetup) {
-      await DesktopAutoSetup.ensureLocalIdentity(_api);
+      try {
+        final resp = await _api.dio.get('/auth/me');
+        final user = resp.data is Map<String, dynamic>
+            ? resp.data as Map<String, dynamic>
+            : null;
+        state = AuthState(
+          status: AuthStatus.authenticated,
+          token: token,
+          user: user,
+        );
+      } on DioException catch (e) {
+        if (e.response?.statusCode == 401) {
+          await ApiClient.clearToken();
+        }
+        state = const AuthState(status: AuthStatus.unauthenticated);
+      } catch (_) {
+        state = AuthState(status: AuthStatus.authenticated, token: token);
+      }
+      return;
     }
 
     final token = await ApiClient.getToken();
@@ -140,10 +140,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
     if (mode == AppMode.local) {
       state = state.copyWith(
-        error: '本地模式无需登录，请使用自动进入',
+        error: '本地模式无需登录',
       );
       return false;
     }
+
+    final normalizedEmail = email.trim().toLowerCase();
 
     try {
       state = state.copyWith(error: null);
@@ -151,13 +153,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
       if (BackendManager.shouldRunEmbedded) {
         final previousAccount = await ApiClient.getActiveAccount();
-        final needRestart = previousAccount != email || !backend.isRunning;
+        final needRestart = previousAccount != normalizedEmail || !backend.isRunning;
 
         if (needRestart) {
-          if (backend.isRunning && previousAccount != email) {
-            await backend.restart(accountId: email);
+          if (backend.isRunning && previousAccount != normalizedEmail) {
+            await backend.restart(accountId: normalizedEmail);
           } else if (!backend.isRunning) {
-            await backend.start(accountId: email);
+            await backend.start(accountId: normalizedEmail);
           }
           await backend.ready;
           if (backend.hasFailed) {
@@ -172,12 +174,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       }
 
       final resp = await _api.dio.post('/auth/login', data: {
-        'email': email,
+        'email': normalizedEmail,
         'password': password,
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
 
-      await ApiClient.setActiveAccount(email);
+      await ApiClient.setActiveAccount(normalizedEmail);
+      await ApiClient.setLastLoginEmail(normalizedEmail);
 
       if (rememberLogin) {
         await ApiClient.saveToken(token);
@@ -231,19 +234,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return false;
     }
 
+    final normalizedEmail = email.trim().toLowerCase();
+
     try {
       state = state.copyWith(error: null);
       resetAccountScopedStateFromRef(_ref);
 
       if (BackendManager.shouldRunEmbedded) {
         final previousAccount = await ApiClient.getActiveAccount();
-        final needRestart = previousAccount != email || !backend.isRunning;
+        final needRestart = previousAccount != normalizedEmail || !backend.isRunning;
 
         if (needRestart) {
-          if (backend.isRunning && previousAccount != email) {
-            await backend.restart(accountId: email);
+          if (backend.isRunning && previousAccount != normalizedEmail) {
+            await backend.restart(accountId: normalizedEmail);
           } else if (!backend.isRunning) {
-            await backend.start(accountId: email);
+            await backend.start(accountId: normalizedEmail);
           }
           await backend.ready;
           if (backend.hasFailed) {
@@ -258,12 +263,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
       final resp = await _api.dio.post('/auth/register', data: {
         'display_name': name,
-        'email': email,
+        'email': normalizedEmail,
         'password': password,
       });
       final token = (resp.data['token'] ?? resp.data['access_token']) as String;
 
-      await ApiClient.setActiveAccount(email);
+      await ApiClient.setActiveAccount(normalizedEmail);
+      await ApiClient.setLastLoginEmail(normalizedEmail);
       await ApiClient.saveToken(token);
 
       state = AuthState(
@@ -283,7 +289,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
           if (!backend.isRunning) {
             msg = '本地后端未启动，请先启动后端服务';
           } else if (backend.hasFailed) {
-            msg = '本地后端启动失败: ${backend.startupError ?? "请查看应用日志"}';
+            msg = '本地后端启动失败: ${backend.startupError ?? "未知错误"}';
           } else {
             msg = '本地后端健康检查失败 (${backend.baseUrl})，请稍后重试';
           }
@@ -298,38 +304,39 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> logout({bool clearData = false}) async {
-    final mode = _ref.read(modeProvider).mode;
-    final email = await ApiClient.getActiveAccount();
-
+  Future<void> logout() async {
     resetAccountScopedStateFromRef(_ref);
-
-    if (clearData) {
-      if (email != null) {
-        if (BackendManager.shouldRunEmbedded) {
-          try {
-            await BackendManager().stop();
-            await BackendManager().deleteAccountData(
-              mode == AppMode.local ? LocalBootstrap.localAccountId : email,
-            );
-          } catch (e) {
-            debugPrint('[Auth] Failed to delete account data: $e');
-          }
-        }
-        await ApiClient.removeAccount(email);
-      }
-      await ApiClient.clearAllAccountData();
-      if (mode == AppMode.local) {
-        await LocalBootstrap.resetLocalData();
-      }
-    } else {
-      await ApiClient.clearToken();
-      if (mode == AppMode.local) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('active_account_email');
-      }
-    }
+    await ApiClient.clearCurrentServerSession();
     state = const AuthState(status: AuthStatus.unauthenticated);
+  }
+
+  /// Returns null on success, or an error message.
+  Future<String?> deleteServerAccount({
+    required String password,
+    required String confirmEmail,
+  }) async {
+    try {
+      await _api.dio.delete(
+        '/auth/me',
+        data: {
+          'password': password,
+          'confirm_email': confirmEmail.trim().toLowerCase(),
+        },
+      );
+      final email = await ApiClient.getActiveAccount();
+      if (email != null) {
+        await ApiClient.removeSavedServerAccount(email);
+      }
+      await ApiClient.clearCurrentServerSession();
+      state = const AuthState(status: AuthStatus.unauthenticated);
+      return null;
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      if (data is Map && data['error'] != null) {
+        return data['error'].toString();
+      }
+      return (e.response?.data?.toString() ?? e.message ?? '删除账号失败');
+    }
   }
 }
 

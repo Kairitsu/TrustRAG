@@ -27,7 +27,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final mode = ref.read(modeProvider).mode;
       if (mode == AppMode.local) {
-        if (mounted) context.go('/login');
+        if (mounted) context.go('/local-startup');
       }
     });
   }

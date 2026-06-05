@@ -111,7 +111,7 @@ class _DataManagementPageState extends ConsumerState<DataManagementPage> {
         _lastMessage = '数据库已重置。请重新登录。';
       });
       if (mounted) {
-        ref.read(authProvider.notifier).logout(clearData: true);
+        await ref.read(authProvider.notifier).logout();
       }
     } catch (e) {
       setState(() {

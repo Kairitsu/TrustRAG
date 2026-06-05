@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/services/local_bootstrap.dart';
+import '../../../core/api/api_client.dart';
 import '../../../core/services/mode_manager.dart';
 import '../providers/auth_provider.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
-  const LoginPage({super.key});
+  final String? prefillEmail;
+
+  const LoginPage({super.key, this.prefillEmail});
 
   @override
   ConsumerState<LoginPage> createState() => _LoginPageState();
@@ -20,9 +22,27 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _rememberLogin = true;
-  bool _localBootstrapAttempted = false;
-  bool _localBootstrapInProgress = false;
-  String? _localBootstrapError;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final mode = ref.read(modeProvider).mode;
+      if (mode == AppMode.local && mounted) {
+        context.go('/local-startup');
+        return;
+      }
+      final prefill = widget.prefillEmail?.trim();
+      if (prefill != null && prefill.isNotEmpty) {
+        _emailController.text = prefill;
+        return;
+      }
+      final last = await ApiClient.getLastLoginEmail();
+      if (last != null && mounted) {
+        _emailController.text = last;
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -50,46 +70,17 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
   }
 
-  Future<void> _runLocalBootstrap({bool resetFirst = false}) async {
-    if (_localBootstrapInProgress) return;
-    setState(() {
-      _localBootstrapInProgress = true;
-      _localBootstrapError = null;
-      _localBootstrapAttempted = true;
-    });
-
-    try {
-      if (resetFirst) {
-        await LocalBootstrap.resetLocalData();
-      }
-
-      final api = ref.read(apiClientProvider);
-      final result = await LocalBootstrap.bootstrap(api, widgetRef: ref);
-      if (!mounted) return;
-
-      if (result.isSuccess) {
-        if (mounted) context.go('/dashboard');
-        return;
-      }
-
-      setState(() => _localBootstrapError = result.message);
-    } catch (e) {
-      if (mounted) {
-        setState(() => _localBootstrapError = '本地初始化失败，请重试');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _localBootstrapInProgress = false);
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final authState = ref.watch(authProvider);
     final modeState = ref.watch(modeProvider);
-    final isLocalMode = modeState.mode == AppMode.local;
+
+    if (modeState.mode == AppMode.local) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
     if (authState.status == AuthStatus.authenticated) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -103,106 +94,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     if (authState.status == AuthStatus.unknown) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    if (isLocalMode) {
-      if (!_localBootstrapAttempted && !_localBootstrapInProgress) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _runLocalBootstrap());
-      }
-
-      return Scaffold(
-        body: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.computer_rounded,
-                    size: 64,
-                    color: Colors.green.shade600,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'TrustRAG',
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '正在准备本地工作台…',
-                    style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                  if (_localBootstrapInProgress) ...[
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    const Text('正在启动本地服务并初始化…'),
-                  ],
-                  if (_localBootstrapError != null) ...[
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.error.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            '本地模式初始化失败',
-                            style: TextStyle(
-                              color: theme.colorScheme.error,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            _localBootstrapError!,
-                            style: TextStyle(
-                              color: theme.colorScheme.error,
-                              fontSize: 13,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: _localBootstrapInProgress
-                          ? null
-                          : () => _runLocalBootstrap(),
-                      child: const Text('重试'),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: _localBootstrapInProgress
-                          ? null
-                          : () async {
-                              await ref.read(modeProvider.notifier).resetMode();
-                              if (context.mounted) context.go('/onboarding');
-                            },
-                      child: const Text('切换使用方式'),
-                    ),
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _localBootstrapInProgress
-                          ? null
-                          : () => _runLocalBootstrap(resetFirst: true),
-                      child: const Text('清除本地数据并重新初始化'),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
       );
     }
 
@@ -240,7 +131,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 const SizedBox(height: 12),
                 Center(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: theme.colorScheme.primary.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(20),
@@ -251,7 +143,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.cloud_rounded, size: 16, color: theme.colorScheme.primary),
+                        Icon(Icons.cloud_rounded,
+                            size: 16, color: theme.colorScheme.primary),
                         const SizedBox(width: 6),
                         Text(
                           '服务器模式',

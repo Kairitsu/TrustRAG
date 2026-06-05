@@ -1,3 +1,4 @@
+pub mod account_deletion;
 pub mod answer_status;
 pub mod answer_versions;
 pub mod audit;

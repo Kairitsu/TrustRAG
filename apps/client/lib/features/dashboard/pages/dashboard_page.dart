@@ -4,16 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../core/api/api_client.dart';
+import '../../../core/account/account_display_helper.dart';
 import '../../../core/providers/app_version_provider.dart';
 import '../../../core/providers/dev_mode_provider.dart';
 import '../../../core/services/backend_manager.dart';
-import '../../../core/services/local_bootstrap.dart';
 import '../../../core/services/mode_manager.dart';
-import '../../../core/services/session_reset.dart';
 import '../../../core/services/update_checker.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../main.dart';
+import '../../account/local_mode_account_sheet.dart';
+import '../../account/server_mode_account_sheet.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../settings/widgets/update_dialog.dart';
 import '../../chat/pages/chat_page.dart';
@@ -89,7 +89,13 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
 
     if (authState.status == AuthStatus.unauthenticated) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        context.go('/login');
+        if (!mounted) return;
+        final mode = ref.read(modeProvider).mode;
+        if (mode == AppMode.local) {
+          context.go('/local-startup');
+        } else {
+          context.go('/login');
+        }
       });
     }
 
@@ -981,6 +987,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
 
   void _showAccountDialog() {
     final user = ref.read(authProvider).user;
+    final mode = ref.read(modeProvider).mode;
+    final emailLabel = AccountDisplayHelper.accountInfoEmailLabel(
+      mode: mode,
+      serverEmail: user?['email'] as String?,
+    );
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -992,16 +1003,20 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             CircleAvatar(
               radius: 36,
               child: Text(
-                (user?['display_name'] ?? 'U')[0].toUpperCase(),
+                mode == AppMode.local
+                    ? '本'
+                    : (user?['display_name'] ?? 'U')[0].toUpperCase(),
                 style: const TextStyle(fontSize: 28),
               ),
             ),
             const SizedBox(height: 16),
             _infoRow(S.of(context).username, user?['display_name'] ?? S.of(context).unknown),
             const SizedBox(height: 8),
-            _infoRow(S.of(context).email, user?['email'] ?? S.of(context).unknown),
-            const SizedBox(height: 8),
-            _infoRow(S.of(context).role, user?['role'] ?? 'user'),
+            _infoRow(S.of(context).email, emailLabel.isNotEmpty ? emailLabel : S.of(context).unknown),
+            if (mode == AppMode.server) ...[
+              const SizedBox(height: 8),
+              _infoRow(S.of(context).role, user?['role'] ?? 'user'),
+            ],
           ],
         ),
         actions: [
@@ -1039,23 +1054,36 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
 
   Widget _buildAccountWidget(bool extended) {
     final authState = ref.watch(authProvider);
-    final email = authState.user?['email'] as String? ?? '';
-    final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
+    final mode = ref.watch(modeProvider).mode;
+    final serverEmail = authState.user?['email'] as String?;
+    final label = AccountDisplayHelper.sidebarLabel(
+      mode: mode,
+      serverEmail: serverEmail,
+    );
+    final initial = AccountDisplayHelper.sidebarInitial(
+      mode: mode,
+      serverEmail: serverEmail,
+    );
+    final isLocal = mode == AppMode.local;
 
     if (!extended) {
       return Tooltip(
-        message: email.isNotEmpty ? email : '账号',
+        message: label,
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
           onTap: () => _showAccountMenu(context, ref),
           child: CircleAvatar(
             radius: 18,
-            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-            child: Text(initial,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
-                )),
+            backgroundColor: isLocal
+                ? Colors.green.shade100
+                : Theme.of(context).colorScheme.primaryContainer,
+            child: isLocal
+                ? Icon(Icons.computer, size: 18, color: Colors.green.shade700)
+                : Text(initial,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    )),
           ),
         ),
       );
@@ -1074,18 +1102,22 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           children: [
             CircleAvatar(
               radius: 16,
-              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-              child: Text(initial,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  )),
+              backgroundColor: isLocal
+                  ? Colors.green.shade100
+                  : Theme.of(context).colorScheme.primaryContainer,
+              child: isLocal
+                  ? Icon(Icons.computer, size: 16, color: Colors.green.shade700)
+                  : Text(initial,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      )),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                email.isNotEmpty ? email : '未登录',
+                label,
                 style: const TextStyle(fontSize: 12),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1098,6 +1130,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   }
 
   void _showAccountMenu(BuildContext context, WidgetRef ref) {
+    final mode = ref.read(modeProvider).mode;
     final authState = ref.read(authProvider);
     final currentEmail = authState.user?['email'] as String? ?? '';
 
@@ -1106,90 +1139,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (ctx) => _AccountMenuSheet(
-        currentEmail: currentEmail,
-        onLogout: () {
-          Navigator.pop(ctx);
-          _showLogoutDialog(context, ref);
-        },
-        onSwitchAccount: (email) async {
-          Navigator.pop(ctx);
-          final result = await ApiClient.switchToAccount(email);
-          if (!context.mounted) return;
-          switch (result) {
-            case ApiClient.switchOk:
-              resetAccountScopedState(ref);
-              ref.invalidate(authProvider);
-              ref.read(authProvider.notifier).checkAuthStatus();
-              ref.read(workspaceProvider.notifier).loadWorkspaces();
-            case ApiClient.switchNeedLogin:
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('请重新登录 $email'),
-                  duration: const Duration(seconds: 3),
-                ),
-              );
-              context.go('/login');
-            case ApiClient.switchFailed:
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('切换账号失败，已回滚到原账号'),
-                  duration: Duration(seconds: 3),
-                ),
-              );
-          }
-        },
-      ),
-    );
-  }
-
-  void _showLogoutDialog(BuildContext context, WidgetRef ref) {
-    final authState = ref.read(authProvider);
-    final userEmail = authState.user?['email'] as String? ?? '';
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('退出登录'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (userEmail.isNotEmpty) ...[
-              Text('当前账号: $userEmail',
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-              const SizedBox(height: 16),
-            ],
-            const Text('请选择退出方式：'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          OutlinedButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              resetAccountScopedState(ref);
-              ref.read(authProvider.notifier).logout(clearData: true);
-              context.go('/login');
-            },
-            icon: const Icon(Icons.delete_outline, size: 18),
-            label: const Text('退出并清除数据'),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              resetAccountScopedState(ref);
-              ref.read(authProvider.notifier).logout();
-              context.go('/login');
-            },
-            icon: const Icon(Icons.logout, size: 18),
-            label: const Text('退出登录'),
-          ),
-        ],
-      ),
+      builder: (ctx) => mode == AppMode.local
+          ? const LocalModeAccountSheet()
+          : ServerModeAccountSheet(currentEmail: currentEmail),
     );
   }
 
@@ -1362,9 +1314,15 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               ),
             if (!canRetry)
               FilledButton.icon(
-                onPressed: () {
-                  ref.read(authProvider.notifier).logout();
-                  context.go('/login');
+                onPressed: () async {
+                  await ref.read(authProvider.notifier).logout();
+                  if (!mounted) return;
+                  final mode = ref.read(modeProvider).mode;
+                  if (mode == AppMode.local) {
+                    context.go('/local-startup');
+                  } else {
+                    context.go('/login');
+                  }
                 },
                 icon: const Icon(Icons.login),
                 label: Text(s.reLogin),
@@ -1635,265 +1593,4 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   }
 }
 
-class _AccountMenuSheet extends StatefulWidget {
-  final String currentEmail;
-  final VoidCallback onLogout;
-  final ValueChanged<String> onSwitchAccount;
 
-  const _AccountMenuSheet({
-    required this.currentEmail,
-    required this.onLogout,
-    required this.onSwitchAccount,
-  });
-
-  @override
-  State<_AccountMenuSheet> createState() => _AccountMenuSheetState();
-}
-
-class _AccountMenuSheetState extends State<_AccountMenuSheet> {
-  List<String> _savedAccounts = [];
-  Set<String> _accountsWithToken = {};
-
-  static const _localEmail = LocalBootstrap.localAccountId;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadAccounts();
-  }
-
-  Future<void> _loadAccounts() async {
-    final accounts = await ApiClient.getSavedAccounts();
-    final withToken = <String>{};
-    for (final email in accounts) {
-      if (await ApiClient.hasTokenForAccount(email)) {
-        withToken.add(email);
-      }
-    }
-    if (mounted) {
-      setState(() {
-        _savedAccounts = accounts;
-        _accountsWithToken = withToken;
-      });
-    }
-  }
-
-  bool _isLocalAccount(String email) => email == _localEmail;
-
-  String _displayName(String email) {
-    if (_isLocalAccount(email)) return '本地模式';
-    return email;
-  }
-
-  String _statusLabel(String email) {
-    if (email == widget.currentEmail) return '当前活跃';
-    if (_accountsWithToken.contains(email)) return '可切换';
-    return '需重新登录';
-  }
-
-  Color _statusColor(String email) {
-    if (email == widget.currentEmail) return Colors.green;
-    if (_accountsWithToken.contains(email)) return Colors.blue;
-    return Colors.orange;
-  }
-
-  IconData _statusIcon(String email) {
-    if (email == widget.currentEmail) return Icons.check_circle;
-    if (_accountsWithToken.contains(email)) return Icons.swap_horiz;
-    return Icons.key;
-  }
-
-  Future<void> _confirmDeleteAccount(String email) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('移除账号'),
-        content: Text('确定要从列表中移除 $email 吗？\n这不会删除远程账号，只会清除本地保存的登录状态。'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('移除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await ApiClient.removeAccount(email);
-      if (BackendManager.shouldRunEmbedded) {
-        await BackendManager().deleteAccountData(email);
-      }
-      _loadAccounts();
-    }
-  }
-
-  static const _avatarColors = [
-    Colors.blue, Colors.purple, Colors.teal, Colors.orange,
-    Colors.indigo, Colors.pink, Colors.cyan, Colors.deepOrange,
-  ];
-
-  Color _colorForEmail(String email) {
-    final hash = email.codeUnits.fold<int>(0, (prev, c) => prev + c);
-    return _avatarColors[hash % _avatarColors.length];
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-    final otherAccounts = _savedAccounts
-        .where((e) => e != widget.currentEmail)
-        .toList();
-
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 8),
-          Container(
-            width: 40, height: 4,
-            decoration: BoxDecoration(
-              color: cs.onSurfaceVariant.withAlpha(60),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text('账号管理', style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-            )),
-          ),
-          const SizedBox(height: 12),
-          if (widget.currentEmail.isNotEmpty) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 12),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: cs.primaryContainer.withAlpha(30),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: cs.primary.withAlpha(40)),
-              ),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 22,
-                    backgroundColor: _isLocalAccount(widget.currentEmail)
-                        ? Colors.grey
-                        : _colorForEmail(widget.currentEmail),
-                    child: _isLocalAccount(widget.currentEmail)
-                        ? const Icon(Icons.computer, color: Colors.white, size: 20)
-                        : Text(
-                            widget.currentEmail[0].toUpperCase(),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                              color: Colors.white,
-                            ),
-                          ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_displayName(widget.currentEmail),
-                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (_isLocalAccount(widget.currentEmail))
-                          Text(widget.currentEmail,
-                            style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
-                          ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            const Icon(Icons.check_circle, color: Colors.green, size: 14),
-                            const SizedBox(width: 4),
-                            Text('当前活跃', style: TextStyle(
-                              fontSize: 12, color: Colors.green.shade600,
-                              fontWeight: FontWeight.w500,
-                            )),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-          if (otherAccounts.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('其他账号',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500,
-                        color: cs.onSurfaceVariant)),
-              ),
-            ),
-            ...otherAccounts.map((email) {
-              final color = _statusColor(email);
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: ListTile(
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  leading: CircleAvatar(
-                    radius: 18,
-                    backgroundColor: _isLocalAccount(email)
-                        ? Colors.grey.withAlpha(40)
-                        : _colorForEmail(email).withAlpha(40),
-                    child: _isLocalAccount(email)
-                        ? Icon(Icons.computer, size: 18, color: Colors.grey.shade600)
-                        : Text(email[0].toUpperCase(),
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: _colorForEmail(email),
-                            )),
-                  ),
-                  title: Text(_displayName(email), style: const TextStyle(fontSize: 14),
-                      overflow: TextOverflow.ellipsis),
-                  subtitle: Row(
-                    children: [
-                      Icon(_statusIcon(email), size: 12, color: color),
-                      const SizedBox(width: 3),
-                      Text(_statusLabel(email),
-                          style: TextStyle(fontSize: 11, color: color)),
-                    ],
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.delete_outline, size: 18, color: Colors.red.shade300),
-                        tooltip: '移除账号',
-                        onPressed: () => _confirmDeleteAccount(email),
-                      ),
-                      Icon(Icons.swap_horiz, size: 18, color: cs.onSurfaceVariant),
-                    ],
-                  ),
-                  onTap: () => widget.onSwitchAccount(email),
-                ),
-              );
-            }),
-            const SizedBox(height: 4),
-          ],
-          const Divider(indent: 16, endIndent: 16),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: ListTile(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              leading: Icon(Icons.logout, color: Colors.red.shade400),
-              title: Text('退出登录', style: TextStyle(color: Colors.red.shade400)),
-              onTap: widget.onLogout,
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
-}

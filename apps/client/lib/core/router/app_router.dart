@@ -5,7 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/auth/pages/login_page.dart';
 import '../../features/auth/pages/register_page.dart';
 import '../../features/dashboard/pages/dashboard_page.dart';
+import '../../features/local/pages/local_startup_page.dart';
 import '../../features/onboarding/pages/onboarding_page.dart';
+import '../api/api_client.dart';
 import '../../main.dart' show rootNavigatorKey;
 
 CustomTransitionPage<void> _fadeTransition(
@@ -36,9 +38,14 @@ final appRouter = GoRouter(
           _fadeTransition(state, const OnboardingPage()),
     ),
     GoRoute(
+      path: '/local-startup',
+      pageBuilder: (context, state) =>
+          _fadeTransition(state, const LocalStartupPage()),
+    ),
+    GoRoute(
       path: '/login',
       pageBuilder: (context, state) =>
-          _fadeTransition(state, const LoginPage()),
+          _fadeTransition(state, LoginPage(prefillEmail: state.uri.queryParameters['email'])),
     ),
     GoRoute(
       path: '/register',
@@ -54,7 +61,6 @@ final appRouter = GoRouter(
 );
 
 /// Reads the persisted app_mode and redirects accordingly.
-/// This avoids coupling the router to Riverpod at the top level.
 class _RootRedirector extends StatefulWidget {
   const _RootRedirector();
 
@@ -70,15 +76,22 @@ class _RootRedirectorState extends State<_RootRedirector> {
   }
 
   Future<void> _redirect() async {
+    await ApiClient.purgeInternalLocalFromSavedAccounts();
     final prefs = await SharedPreferences.getInstance();
     final mode = prefs.getString('app_mode');
 
     if (!mounted) return;
 
     if (mode == 'local') {
-      context.go('/login');
+      context.go('/local-startup');
     } else if (mode == 'server') {
-      context.go('/login');
+      final token = await ApiClient.getToken();
+      if (!mounted) return;
+      if (token != null && token.isNotEmpty) {
+        context.go('/dashboard');
+      } else {
+        context.go('/login');
+      }
     } else {
       context.go('/onboarding');
     }
@@ -91,4 +104,3 @@ class _RootRedirectorState extends State<_RootRedirector> {
     );
   }
 }
-

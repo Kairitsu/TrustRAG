@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/services/backend_manager.dart';
-import '../../../core/services/local_bootstrap.dart';
 import '../../../core/services/mode_manager.dart';
 import '../../auth/providers/auth_provider.dart';
 
@@ -39,22 +38,11 @@ class _OnboardingPageState extends ConsumerState<OnboardingPage> {
 
     try {
       await ref.read(modeProvider.notifier).setLocalMode();
-
-      final api = ref.read(apiClientProvider);
-      final result = await LocalBootstrap.bootstrap(api, widgetRef: ref);
-
       if (!mounted) return;
-
-      if (result.isSuccess) {
-        ref.invalidate(authProvider);
-        context.go('/dashboard');
-        return;
-      }
-
-      setState(() => _localError = result.message);
+      context.go('/local-startup');
     } catch (e) {
       if (mounted) {
-        setState(() => _localError = '本地服务启动失败，请重试');
+        setState(() => _localError = '无法进入本地模式，请重试');
       }
     } finally {
       if (mounted) setState(() => _startingLocal = false);

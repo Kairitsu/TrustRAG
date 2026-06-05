@@ -52,11 +52,20 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
+#[derive(Deserialize)]
+pub struct DeleteAccountRequest {
+    pub password: String,
+    pub confirm_email: String,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
-        .route("/auth/me", get(me).put(update_profile))
+        .route(
+            "/auth/me",
+            get(me).put(update_profile).delete(delete_account),
+        )
         .route("/auth/me/password", put(change_password))
 }
 
@@ -179,7 +188,7 @@ async fn me(
     State(state): State<AppState>,
 ) -> Result<Json<UserResponse>, AppError> {
     let row = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, email, display_name, role FROM users WHERE id = $1",
+        "SELECT id, email, display_name, role FROM users WHERE id = $1 AND status = 'active'",
     )
     .bind(auth.id.to_string())
     .fetch_one(&state.pool)
@@ -252,6 +261,48 @@ async fn change_password(
         .bind(auth.id.to_string())
         .execute(&state.pool)
         .await?;
+
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+async fn delete_account(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<DeleteAccountRequest>,
+) -> Result<axum::http::StatusCode, AppError> {
+    let confirm_email = req.confirm_email.trim().to_lowercase();
+
+    let row = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT email, password_hash, status FROM users WHERE id = $1",
+    )
+    .bind(auth.id.to_string())
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+
+    let (email, stored_hash, status) = row;
+
+    if status != "active" {
+        return Err(AppError::Auth("Account is not active".into()));
+    }
+
+    if confirm_email != email.trim().to_lowercase() {
+        return Err(AppError::BadRequest("Email confirmation does not match".into()));
+    }
+
+    let parsed_hash = PasswordHash::new(&stored_hash)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Hash parse error: {e}")))?;
+
+    Argon2::default()
+        .verify_password(req.password.as_bytes(), &parsed_hash)
+        .map_err(|_| AppError::Auth("Invalid email or password".into()))?;
+
+    crate::services::account_deletion::delete_user_account(
+        &state.pool,
+        &state.storage,
+        auth.id,
+    )
+    .await?;
 
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

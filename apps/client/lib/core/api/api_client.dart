@@ -3,8 +3,10 @@ import 'package:dio_cache_interceptor/dio_cache_interceptor.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../account/account_display_helper.dart';
 import '../providers/dev_mode_provider.dart';
 import '../services/backend_manager.dart';
+import '../services/local_bootstrap.dart';
 
 class ApiClient {
   late final Dio dio;
@@ -12,6 +14,7 @@ class ApiClient {
   static const _tokenKey = 'auth_token';
   static const _activeAccountKey = 'active_account_email';
   static const _accountListKey = 'account_list';
+  static const _lastLoginEmailKey = 'last_login_email';
 
   ApiClient({String? baseUrl})
       : baseUrl = baseUrl ?? _resolveBaseUrl() {
@@ -106,15 +109,26 @@ class ApiClient {
     await prefs.remove(_tokenKey);
   }
 
+  /// Active account for embedded token storage; internal local id is not listed.
   static Future<void> setActiveAccount(String email) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_activeAccountKey, email);
+
+    if (AccountDisplayHelper.isInternalLocalAccount(email)) {
+      return;
+    }
 
     final accounts = prefs.getStringList(_accountListKey) ?? [];
     if (!accounts.contains(email)) {
       accounts.add(email);
       await prefs.setStringList(_accountListKey, accounts);
     }
+  }
+
+  /// Internal local embedded identity only (not in saved server account list).
+  static Future<void> setInternalLocalActiveAccount() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_activeAccountKey, LocalBootstrap.localAccountId);
   }
 
   static Future<String?> getActiveAccount() async {
@@ -124,7 +138,42 @@ class ApiClient {
 
   static Future<List<String>> getSavedAccounts() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList(_accountListKey) ?? [];
+    final raw = prefs.getStringList(_accountListKey) ?? [];
+    return raw
+        .where((e) => !AccountDisplayHelper.isInternalLocalAccount(e))
+        .toList();
+  }
+
+  static Future<void> purgeInternalLocalFromSavedAccounts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final accounts = prefs.getStringList(_accountListKey) ?? [];
+    final filtered = accounts
+        .where((e) => !AccountDisplayHelper.isInternalLocalAccount(e))
+        .toList();
+    if (filtered.length != accounts.length) {
+      await prefs.setStringList(_accountListKey, filtered);
+    }
+  }
+
+  static Future<void> clearCurrentServerSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey);
+    await prefs.remove(_activeAccountKey);
+  }
+
+  static Future<void> removeSavedServerAccount(String email) async {
+    if (AccountDisplayHelper.isInternalLocalAccount(email)) return;
+    await removeAccount(email);
+  }
+
+  static Future<void> setLastLoginEmail(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastLoginEmailKey, email.trim().toLowerCase());
+  }
+
+  static Future<String?> getLastLoginEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_lastLoginEmailKey);
   }
 
   static Future<bool> hasTokenForAccount(String email) async {
@@ -150,6 +199,10 @@ class ApiClient {
     // Save current account token before switching
     if (previousEmail != null && previousEmail.isNotEmpty && previousToken != null) {
       await prefs.setString(_accountTokenKey(previousEmail), previousToken);
+    }
+
+    if (AccountDisplayHelper.isInternalLocalAccount(email)) {
+      return switchFailed;
     }
 
     // Switch active account
@@ -202,6 +255,7 @@ class ApiClient {
   }
 
   static Future<void> removeAccount(String email) async {
+    if (AccountDisplayHelper.isInternalLocalAccount(email)) return;
     final prefs = await SharedPreferences.getInstance();
     final accounts = prefs.getStringList(_accountListKey) ?? [];
     accounts.remove(email);
