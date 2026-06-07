@@ -7,6 +7,7 @@ class EmbeddingConfig {
   final String name;
   final String provider;
   final String? apiBaseUrl;
+  final String endpointMode;
   final bool hasApiKey;
   final String modelName;
   final int dimensions;
@@ -18,6 +19,7 @@ class EmbeddingConfig {
     required this.name,
     required this.provider,
     this.apiBaseUrl,
+    required this.endpointMode,
     required this.hasApiKey,
     required this.modelName,
     required this.dimensions,
@@ -31,6 +33,7 @@ class EmbeddingConfig {
       name: json['name'] ?? '',
       provider: json['provider'] ?? '',
       apiBaseUrl: json['api_base_url'],
+      endpointMode: json['endpoint_mode'] ?? 'base_url',
       hasApiKey: json['has_api_key'] ?? false,
       modelName: json['model_name'] ?? '',
       dimensions: json['dimensions'] ?? 1536,

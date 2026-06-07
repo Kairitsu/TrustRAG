@@ -9,7 +9,12 @@ use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
-use crate::services::reranker::RerankerProvider;
+use crate::services::endpoint_resolver::{
+    effective_endpoint_mode, redact_api_key, EndpointMode, ModelType,
+};
+use crate::services::reranker::{build_http_reranker, RerankerProvider};
+
+use super::models::{extract_http_status, normalize_endpoint_mode};
 
 use super::AppState;
 
@@ -42,8 +47,14 @@ pub struct CreateRerankConfigRequest {
     pub timeout_secs: i32,
     #[serde(default)]
     pub is_default: bool,
+    #[serde(default = "default_endpoint_mode")]
+    pub endpoint_mode: String,
     #[serde(default)]
     pub workspace_id: Option<Uuid>,
+}
+
+fn default_endpoint_mode() -> String {
+    EndpointMode::BaseUrl.as_str().to_string()
 }
 
 fn default_top_n() -> i32 { 5 }
@@ -63,6 +74,7 @@ pub struct UpdateRerankConfigRequest {
     pub fallback_enabled: Option<bool>,
     pub timeout_secs: Option<i32>,
     pub is_default: Option<bool>,
+    pub endpoint_mode: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -73,6 +85,7 @@ pub struct RerankConfigResponse {
     pub name: String,
     pub provider: String,
     pub api_base_url: String,
+    pub endpoint_mode: String,
     pub has_api_key: bool,
     pub model_name: String,
     pub top_n: i32,
@@ -84,11 +97,18 @@ pub struct RerankConfigResponse {
     pub updated_at: String,
 }
 
-const RERANK_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, timeout_secs, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
+const RERANK_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, COALESCE(endpoint_mode, 'base_url'), top_n, initial_recall_k, fallback_enabled, timeout_secs, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
 
-type RerankRow = (String, Option<String>, String, String, String, String, Option<String>, String, i32, i32, bool, i32, bool, String, String);
+type RerankRow = (String, Option<String>, String, String, String, String, Option<String>, String, String, i32, i32, bool, i32, bool, String, String);
 
 fn row_to_response(r: RerankRow) -> RerankConfigResponse {
+    let endpoint_mode = if r.8.is_empty() {
+        effective_endpoint_mode(ModelType::Rerank, None, &r.5)
+            .as_str()
+            .to_string()
+    } else {
+        r.8.clone()
+    };
     RerankConfigResponse {
         id: r.0,
         workspace_id: r.1,
@@ -96,15 +116,16 @@ fn row_to_response(r: RerankRow) -> RerankConfigResponse {
         name: r.3,
         provider: r.4,
         api_base_url: r.5,
+        endpoint_mode,
         has_api_key: r.6.is_some(),
         model_name: r.7,
-        top_n: r.8,
-        initial_recall_k: r.9,
-        fallback_enabled: r.10,
-        timeout_secs: r.11,
-        is_default: r.12,
-        created_at: r.13,
-        updated_at: r.14,
+        top_n: r.9,
+        initial_recall_k: r.10,
+        fallback_enabled: r.11,
+        timeout_secs: r.12,
+        is_default: r.13,
+        created_at: r.14,
+        updated_at: r.15,
     }
 }
 
@@ -140,9 +161,15 @@ async fn create_config(
 
     let ws_id = req.workspace_id.map(|w| w.to_string());
 
+    let endpoint_mode = normalize_endpoint_mode(
+        &req.endpoint_mode,
+        ModelType::Rerank,
+        &req.api_base_url,
+    );
+
     sqlx::query(
-        "INSERT INTO rerank_configs (id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, timeout_secs, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+        "INSERT INTO rerank_configs (id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, endpoint_mode, top_n, initial_recall_k, fallback_enabled, timeout_secs, is_default)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
     )
     .bind(id.to_string())
     .bind(&ws_id)
@@ -152,6 +179,7 @@ async fn create_config(
     .bind(&req.api_base_url)
     .bind(&req.api_key)
     .bind(&req.model_name)
+    .bind(&endpoint_mode)
     .bind(req.top_n)
     .bind(req.initial_recall_k)
     .bind(req.fallback_enabled as i32)
@@ -204,6 +232,7 @@ async fn update_config(
     if req.api_base_url.is_some() { set_clauses.push("api_base_url"); }
     if req.api_key.is_some() { set_clauses.push("api_key_enc"); }
     if req.model_name.is_some() { set_clauses.push("model_name"); }
+    if req.endpoint_mode.is_some() { set_clauses.push("endpoint_mode"); }
     if req.top_n.is_some() { set_clauses.push("top_n"); }
     if req.initial_recall_k.is_some() { set_clauses.push("initial_recall_k"); }
     if req.fallback_enabled.is_some() { set_clauses.push("fallback_enabled"); }
@@ -236,6 +265,11 @@ async fn update_config(
             "api_base_url" => { query = query.bind(req.api_base_url.as_deref().unwrap_or_default()); }
             "api_key_enc" => { query = query.bind(req.api_key.as_deref().unwrap_or_default()); }
             "model_name" => { query = query.bind(req.model_name.as_deref().unwrap_or_default()); }
+            "endpoint_mode" => {
+                let mode = req.endpoint_mode.as_deref().unwrap_or("base_url");
+                let endpoint = req.api_base_url.as_deref().unwrap_or("");
+                query = query.bind(normalize_endpoint_mode(mode, ModelType::Rerank, endpoint));
+            }
             "top_n" => { query = query.bind(req.top_n.unwrap_or(5)); }
             "initial_recall_k" => { query = query.bind(req.initial_recall_k.unwrap_or(30)); }
             "fallback_enabled" => { query = query.bind(req.fallback_enabled.unwrap_or(true) as i32); }
@@ -279,26 +313,31 @@ async fn test_connection(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let row = sqlx::query_as::<_, (String, String, Option<String>, String, i32)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name, timeout_secs FROM rerank_configs WHERE id = $1 AND user_id = $2",
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, endpoint_mode, timeout_secs FROM rerank_configs WHERE id = $1 AND user_id = $2",
     )
     .bind(id.to_string())
     .bind(auth.id.to_string())
     .fetch_optional(&_state.pool)
     .await?;
 
-    let (provider, api_base_url, api_key, model_name, timeout_secs) = match row {
+    let (provider, api_base_url, api_key, model_name, endpoint_mode, timeout_secs) = match row {
         Some(r) => r,
         None => return Err(AppError::NotFound("Rerank config not found".into())),
     };
 
-    let base = api_base_url.trim_end_matches('/');
-    let url = if base.ends_with("/rerank") { base.to_string() } else { format!("{}/rerank", base) };
-    let reranker = crate::services::reranker::HttpRerankerProvider::with_timeout(
-        url,
-        api_key.unwrap_or_default(),
+    let api_key_str = api_key.unwrap_or_default();
+    let mode = effective_endpoint_mode(
+        ModelType::Rerank,
+        endpoint_mode.as_deref(),
+        &api_base_url,
+    );
+    let (resolved, reranker) = build_http_reranker(
+        &provider,
+        &api_base_url,
+        endpoint_mode.as_deref(),
+        api_key_str.clone(),
         model_name.clone(),
-        provider.clone(),
         timeout_secs as u64,
     );
 
@@ -306,18 +345,30 @@ async fn test_connection(
     match reranker.score("What is the capital of France?", test_docs).await {
         Ok(scores) => Ok(Json(serde_json::json!({
             "success": true,
+            "model_type": "rerank",
             "provider": provider,
+            "endpoint_mode": mode.as_str(),
+            "user_endpoint": api_base_url,
+            "final_url": resolved.final_url,
             "model": model_name,
             "scores": scores,
             "message": "连接成功"
         }))),
-        Err(e) => Ok(Json(serde_json::json!({
-            "success": false,
-            "provider": provider,
-            "model": model_name,
-            "error": e.to_string(),
-            "message": format!("连接失败: {}", e)
-        }))),
+        Err(e) => {
+            let err_str = redact_api_key(&e.to_string(), Some(&api_key_str));
+            Ok(Json(serde_json::json!({
+                "success": false,
+                "model_type": "rerank",
+                "provider": provider,
+                "endpoint_mode": mode.as_str(),
+                "user_endpoint": api_base_url,
+                "final_url": resolved.final_url,
+                "model": model_name,
+                "http_status": extract_http_status(&err_str),
+                "error": err_str,
+                "message": format!("连接失败: {}", err_str)
+            })))
+        }
     }
 }
 
@@ -433,6 +484,7 @@ mod tests {
             name: "Test".into(),
             provider: "jina".into(),
             api_base_url: "https://api.jina.ai".into(),
+            endpoint_mode: "base_url".into(),
             has_api_key: true,
             model_name: "reranker-v2".into(),
             top_n: 5,
@@ -461,6 +513,7 @@ mod tests {
             "https://api.jina.ai".into(),
             Some("encrypted-key".into()),
             "reranker-v2".into(),
+            "base_url".into(),
             5,
             30,
             true,
@@ -478,6 +531,34 @@ mod tests {
     }
 
     #[test]
+    fn test_and_runtime_use_same_rerank_final_url() {
+        use crate::services::endpoint_resolver::{EndpointMode, ModelType};
+        use crate::services::reranker::build_http_reranker;
+
+        let url = "https://dashscope.aliyuncs.com/compatible-api/v1/reranks";
+        let (resolved, provider) = build_http_reranker(
+            "dashscope",
+            url,
+            Some(EndpointMode::FullEndpoint.as_str()),
+            "test-key".into(),
+            "qwen3-rerank".into(),
+            30,
+        );
+        assert_eq!(resolved.final_url, url);
+        assert_eq!(provider.api_url(), url);
+        assert!(!resolved.final_url.contains("/reranks/rerank"));
+
+        let legacy = crate::services::endpoint_resolver::resolve_stored_endpoint(
+            ModelType::Rerank,
+            "dashscope",
+            None,
+            url,
+            "qwen3-rerank",
+        );
+        assert_eq!(legacy.final_url, url);
+    }
+
+    #[test]
     fn row_to_response_no_api_key() {
         let row: RerankRow = (
             "id-2".into(),
@@ -488,6 +569,7 @@ mod tests {
             "http://localhost:8080".into(),
             None,
             "model-x".into(),
+            "full_endpoint".into(),
             3,
             20,
             false,

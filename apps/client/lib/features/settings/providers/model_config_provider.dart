@@ -8,6 +8,7 @@ class ModelConfig {
   final String provider;
   final String modelName;
   final String apiBaseUrl;
+  final String endpointMode;
   final bool hasApiKey;
   final bool isDefault;
 
@@ -17,6 +18,7 @@ class ModelConfig {
     required this.provider,
     required this.modelName,
     required this.apiBaseUrl,
+    required this.endpointMode,
     required this.hasApiKey,
     required this.isDefault,
   });
@@ -28,6 +30,7 @@ class ModelConfig {
       provider: json['provider'],
       modelName: json['model_name'],
       apiBaseUrl: json['api_base_url'] ?? '',
+      endpointMode: json['endpoint_mode'] ?? 'base_url',
       hasApiKey: json['has_api_key'] ?? false,
       isDefault: json['is_default'] ?? false,
     );

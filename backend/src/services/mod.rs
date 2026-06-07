@@ -11,13 +11,17 @@ pub mod evidence;
 pub mod rag;
 pub mod llm;
 pub mod embedding;
+pub mod endpoint_resolver;
 #[cfg(sqlite_mode)]
 pub mod local_doc_processor;
 pub mod metadata;
 pub mod query_planner;
 pub mod reranker;
+pub mod graph_generation;
 pub mod knowledge_extraction;
 pub mod ocr_executor;
+#[cfg(sqlite_mode)]
+pub mod ocr_install;
 pub mod retrieval_pipeline;
 pub mod retrieval_trace_store;
 pub mod search;

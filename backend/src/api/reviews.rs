@@ -8,7 +8,10 @@ use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
-use crate::services::review::{self, CreateReviewInput, ReviewRecord, ReviewReportData, ReviewStats};
+use crate::services::review::{
+    self, CreateReviewInput, ReviewListResponse, ReviewRecord, ReviewReportData, ReviewStats,
+    ReviewTarget,
+};
 
 #[derive(Debug, Deserialize)]
 struct ListReviewsQuery {
@@ -16,9 +19,16 @@ struct ListReviewsQuery {
     offset: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ReviewTargetByCitationQuery {
+    citation_id: Uuid,
+}
+
 pub fn router() -> Router<crate::api::AppState> {
     Router::new()
         .route("/reviews", get(list_all_reviews))
+        .route("/reviews/target", get(get_review_target_by_citation))
+        .route("/reviews/{review_id}/target", get(get_review_target_by_id))
         .route("/reviews/report", get(get_review_report))
         .route("/reviews/report/markdown", get(get_review_report_markdown))
         .route(
@@ -35,11 +45,33 @@ async fn list_all_reviews(
     _auth: AuthUser,
     State(state): State<crate::api::AppState>,
     Query(params): Query<ListReviewsQuery>,
-) -> Result<Json<Vec<ReviewRecord>>, AppError> {
+) -> Result<Json<ReviewListResponse>, AppError> {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
-    let reviews = review::list_all_reviews(&state.pool, limit, offset).await?;
-    Ok(Json(reviews))
+    let response = review::list_all_reviews_enriched(&state.pool, limit, offset).await?;
+    Ok(Json(response))
+}
+
+async fn get_review_target_by_id(
+    _auth: AuthUser,
+    State(state): State<crate::api::AppState>,
+    Path(review_id): Path<Uuid>,
+) -> Result<Json<ReviewTarget>, AppError> {
+    let target = review::get_review_target_by_id(&state.pool, review_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Review record not found".into()))?;
+    Ok(Json(target))
+}
+
+async fn get_review_target_by_citation(
+    _auth: AuthUser,
+    State(state): State<crate::api::AppState>,
+    Query(params): Query<ReviewTargetByCitationQuery>,
+) -> Result<Json<ReviewTarget>, AppError> {
+    let target = review::get_review_target_by_citation_id(&state.pool, params.citation_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Citation not found".into()))?;
+    Ok(Json(target))
 }
 
 async fn create_review(

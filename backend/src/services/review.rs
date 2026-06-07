@@ -128,6 +128,282 @@ pub async fn list_all_reviews(
 }
 
 #[derive(Debug, Serialize)]
+pub struct ReviewCounts {
+    pub approved: i64,
+    pub rejected: i64,
+    pub suspicious: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewRecordEnriched {
+    pub id: String,
+    pub status: String,
+    pub text_excerpt: Option<String>,
+    pub citation_id: String,
+    pub citation_short_id: String,
+    pub conversation_id: Option<String>,
+    pub message_id: Option<String>,
+    pub document_id: Option<String>,
+    pub chunk_id: Option<String>,
+    pub document_title: Option<String>,
+    pub conversation_title: Option<String>,
+    pub comment: Option<String>,
+    pub corrected_text: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub target_available: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewListResponse {
+    pub records: Vec<ReviewRecordEnriched>,
+    pub counts: ReviewCounts,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewTarget {
+    pub audit_record_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub message_id: Option<String>,
+    pub citation_id: Option<String>,
+    pub document_id: Option<String>,
+    pub chunk_id: Option<String>,
+    pub target_available: bool,
+}
+
+type EnrichedRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+);
+
+fn citation_short_id(id: &str) -> String {
+    if id.len() > 8 {
+        format!("{}...", &id[..8])
+    } else {
+        id.to_string()
+    }
+}
+
+fn build_text_excerpt(
+    quoted_text: &Option<String>,
+    comment: &Option<String>,
+    corrected_text: &Option<String>,
+) -> Option<String> {
+    let source = quoted_text
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .or(comment.as_ref().filter(|s| !s.is_empty()))
+        .or(corrected_text.as_ref().filter(|s| !s.is_empty()))?;
+    let excerpt = if source.len() > 200 {
+        format!("{}...", &source[..200])
+    } else {
+        source.clone()
+    };
+    Some(excerpt)
+}
+
+fn target_available(
+    conversation_id: &Option<String>,
+    message_id: &Option<String>,
+    citation_id: &str,
+) -> bool {
+    !citation_id.is_empty()
+        && conversation_id.as_ref().is_some_and(|s| !s.is_empty())
+        && message_id.as_ref().is_some_and(|s| !s.is_empty())
+}
+
+pub async fn get_review_counts(pool: &DbPool) -> anyhow::Result<ReviewCounts> {
+    let rows = sqlx::query_as::<_, (String, i64)>(
+        "SELECT status, COUNT(*) FROM review_records GROUP BY status",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut approved = 0i64;
+    let mut rejected = 0i64;
+    let mut suspicious = 0i64;
+    let mut pending = 0i64;
+
+    for (status, count) in rows {
+        match status.as_str() {
+            "approved" => approved = count,
+            "rejected" => rejected = count,
+            "flagged" => suspicious = count,
+            "pending" => pending = count,
+            _ => {}
+        }
+    }
+
+    Ok(ReviewCounts {
+        approved,
+        rejected,
+        suspicious,
+        pending: if pending > 0 { Some(pending) } else { None },
+    })
+}
+
+pub async fn list_all_reviews_enriched(
+    pool: &DbPool,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<ReviewListResponse> {
+    let counts = get_review_counts(pool).await?;
+
+    let rows = sqlx::query_as::<_, EnrichedRow>(
+        r#"
+        SELECT
+            rr.id,
+            rr.status,
+            c.quoted_text,
+            rr.citation_id,
+            m.conversation_id,
+            m.id,
+            c.document_id,
+            c.chunk_id,
+            d.title,
+            conv.title,
+            rr.comment,
+            rr.corrected_text,
+            CAST(rr.created_at AS TEXT),
+            CAST(rr.updated_at AS TEXT)
+        FROM review_records rr
+        LEFT JOIN citations c ON rr.citation_id = c.id
+        LEFT JOIN messages m ON c.message_id = m.id
+        LEFT JOIN conversations conv ON m.conversation_id = conv.id
+        LEFT JOIN documents d ON c.document_id = d.id
+        ORDER BY rr.created_at DESC
+        LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let records = rows
+        .into_iter()
+        .map(|r| {
+            let citation_id = r.3.clone();
+            let conversation_id = r.4.clone();
+            let message_id = r.5.clone();
+            ReviewRecordEnriched {
+                id: r.0,
+                status: r.1,
+                text_excerpt: build_text_excerpt(&r.2, &r.10, &r.11),
+                citation_short_id: citation_short_id(&citation_id),
+                citation_id: citation_id.clone(),
+                conversation_id: conversation_id.clone(),
+                message_id: message_id.clone(),
+                document_id: r.6,
+                chunk_id: r.7,
+                document_title: r.8,
+                conversation_title: r.9,
+                comment: r.10,
+                corrected_text: r.11,
+                created_at: r.12,
+                updated_at: r.13,
+                target_available: target_available(&conversation_id, &message_id, &citation_id),
+            }
+        })
+        .collect();
+
+    Ok(ReviewListResponse { records, counts })
+}
+
+type TargetRow = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+fn parse_target_row(r: TargetRow, audit_record_id: Option<String>) -> ReviewTarget {
+    let citation_id = r.3.clone().unwrap_or_default();
+    let conversation_id = r.1.clone();
+    let message_id = r.2.clone();
+    ReviewTarget {
+        audit_record_id,
+        conversation_id: conversation_id.clone(),
+        message_id: message_id.clone(),
+        citation_id: if citation_id.is_empty() {
+            None
+        } else {
+            Some(citation_id.clone())
+        },
+        document_id: r.4,
+        chunk_id: r.5,
+        target_available: target_available(&conversation_id, &message_id, &citation_id),
+    }
+}
+
+pub async fn get_review_target_by_id(
+    pool: &DbPool,
+    review_id: Uuid,
+) -> anyhow::Result<Option<ReviewTarget>> {
+    let row = sqlx::query_as::<_, TargetRow>(
+        r#"
+        SELECT
+            rr.id,
+            m.conversation_id,
+            m.id,
+            c.id,
+            c.document_id,
+            c.chunk_id
+        FROM review_records rr
+        LEFT JOIN citations c ON rr.citation_id = c.id
+        LEFT JOIN messages m ON c.message_id = m.id
+        WHERE rr.id = $1
+        "#,
+    )
+    .bind(review_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| parse_target_row(r, Some(review_id.to_string()))))
+}
+
+pub async fn get_review_target_by_citation_id(
+    pool: &DbPool,
+    citation_id: Uuid,
+) -> anyhow::Result<Option<ReviewTarget>> {
+    let row = sqlx::query_as::<_, TargetRow>(
+        r#"
+        SELECT
+            NULL,
+            m.conversation_id,
+            m.id,
+            c.id,
+            c.document_id,
+            c.chunk_id
+        FROM citations c
+        LEFT JOIN messages m ON c.message_id = m.id
+        WHERE c.id = $1
+        "#,
+    )
+    .bind(citation_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| parse_target_row(r, None)))
+}
+
+#[derive(Debug, Serialize)]
 pub struct ReviewStats {
     pub total_citations: i64,
     pub approved: i64,
@@ -569,6 +845,38 @@ mod tests {
         assert!(md.contains("Correct reference"));
         assert!(md.contains("Hallucinated"));
         assert!(md.contains("The actual text is..."));
+    }
+
+    #[test]
+    fn test_citation_short_id() {
+        assert_eq!(citation_short_id("87cf84b9-abcd-ef01"), "87cf84b9...");
+        assert_eq!(citation_short_id("short"), "short");
+    }
+
+    #[test]
+    fn test_target_available() {
+        assert!(target_available(
+            &Some("conv".to_string()),
+            &Some("msg".to_string()),
+            "cit"
+        ));
+        assert!(!target_available(&None, &Some("msg".to_string()), "cit"));
+        assert!(!target_available(&Some("conv".to_string()), &None, "cit"));
+        assert!(!target_available(
+            &Some("conv".to_string()),
+            &Some("msg".to_string()),
+            ""
+        ));
+    }
+
+    #[test]
+    fn test_build_text_excerpt_prefers_quoted_text() {
+        let excerpt = build_text_excerpt(
+            &Some("quoted".to_string()),
+            &Some("comment".to_string()),
+            &None,
+        );
+        assert_eq!(excerpt, Some("quoted".to_string()));
     }
 
     #[test]

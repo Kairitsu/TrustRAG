@@ -2,28 +2,48 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+use crate::services::endpoint_resolver::{
+    resolve_stored_endpoint, EndpointMode, ModelType, ResolvedEndpoint,
+};
 use crate::traits::llm_provider::{LlmMessage, LlmProvider, LlmRequest, LlmResponse, StreamEvent};
 
 /// OpenAI-compatible LLM provider (works with OpenAI, Ollama, vLLM, etc.)
 pub struct OpenAILlmProvider {
     client: reqwest::Client,
-    api_base_url: String,
+    chat_completions_url: String,
     api_key: Option<String>,
     model: String,
 }
 
 impl OpenAILlmProvider {
-    pub fn new(
-        api_base_url: &str,
-        api_key: Option<&str>,
-        model: &str,
-    ) -> Self {
+    pub fn from_resolved(resolved: &ResolvedEndpoint, api_key: Option<&str>, model: &str) -> Self {
         Self {
             client: reqwest::Client::new(),
-            api_base_url: crate::services::embedding::normalize_api_base(api_base_url),
+            chat_completions_url: resolved.final_url.clone(),
             api_key: api_key.map(|s| s.to_string()),
             model: model.to_string(),
         }
+    }
+
+    pub fn new(
+        provider: &str,
+        api_base_url: &str,
+        endpoint_mode: Option<&str>,
+        api_key: Option<&str>,
+        model: &str,
+    ) -> Self {
+        let resolved = resolve_stored_endpoint(
+            ModelType::Llm,
+            provider,
+            endpoint_mode,
+            api_base_url,
+            model,
+        );
+        Self::from_resolved(&resolved, api_key, model)
+    }
+
+    pub fn resolved_url(&self) -> &str {
+        &self.chat_completions_url
     }
 }
 
@@ -93,7 +113,6 @@ impl From<&LlmMessage> for ChatMessage {
 #[async_trait]
 impl LlmProvider for OpenAILlmProvider {
     async fn generate(&self, request: &LlmRequest) -> anyhow::Result<LlmResponse> {
-        let url = format!("{}/chat/completions", self.api_base_url);
         let body = ChatRequest {
             model: self.model.clone(),
             messages: request.messages.iter().map(ChatMessage::from).collect(),
@@ -102,7 +121,7 @@ impl LlmProvider for OpenAILlmProvider {
             stream: false,
         };
 
-        let mut req = self.client.post(&url).json(&body);
+        let mut req = self.client.post(&self.chat_completions_url).json(&body);
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
         }
@@ -144,7 +163,6 @@ impl LlmProvider for OpenAILlmProvider {
         request: &LlmRequest,
         tx: mpsc::Sender<StreamEvent>,
     ) -> anyhow::Result<()> {
-        let url = format!("{}/chat/completions", self.api_base_url);
         let body = ChatRequest {
             model: self.model.clone(),
             messages: request.messages.iter().map(ChatMessage::from).collect(),
@@ -153,7 +171,7 @@ impl LlmProvider for OpenAILlmProvider {
             stream: true,
         };
 
-        let mut req = self.client.post(&url).json(&body);
+        let mut req = self.client.post(&self.chat_completions_url).json(&body);
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
         }
@@ -270,24 +288,49 @@ mod tests {
     #[test]
     fn test_provider_creation() {
         let provider = OpenAILlmProvider::new(
+            "ollama",
             "http://localhost:11434/v1",
+            Some(EndpointMode::BaseUrl.as_str()),
             None,
             "qwen2.5:72b",
         );
         assert_eq!(provider.model_name(), "qwen2.5:72b");
-        assert_eq!(provider.api_base_url, "http://localhost:11434/v1");
+        assert_eq!(
+            provider.resolved_url(),
+            "http://localhost:11434/v1/chat/completions"
+        );
         assert!(provider.api_key.is_none());
     }
 
     #[test]
     fn test_provider_with_api_key() {
         let provider = OpenAILlmProvider::new(
+            "openai",
             "https://api.openai.com/v1/",
+            Some(EndpointMode::BaseUrl.as_str()),
             Some("sk-test"),
             "gpt-4o",
         );
-        assert_eq!(provider.api_base_url, "https://api.openai.com/v1");
+        assert_eq!(
+            provider.resolved_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
         assert_eq!(provider.api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn test_provider_full_endpoint() {
+        let provider = OpenAILlmProvider::new(
+            "custom",
+            "https://example.com/v1/chat/completions",
+            Some(EndpointMode::FullEndpoint.as_str()),
+            None,
+            "gpt-4o",
+        );
+        assert_eq!(
+            provider.resolved_url(),
+            "https://example.com/v1/chat/completions"
+        );
     }
 
     #[test]

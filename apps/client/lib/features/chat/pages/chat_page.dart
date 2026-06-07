@@ -23,6 +23,8 @@ import '../../settings/providers/model_config_provider.dart';
 import '../../settings/providers/rerank_config_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/review_provider.dart';
+import '../services/chat_sse_parser.dart';
+import '../../review/providers/review_navigation_provider.dart';
 
 enum SendMode { enter, ctrlEnter }
 
@@ -46,7 +48,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+  final _messageKeys = <String, GlobalKey>{};
   Citation? _selectedCitation;
+  String? _highlightMessageId;
+  String? _highlightCitationId;
+  Timer? _highlightTimer;
   bool _isSending = false;
   double _convPanelWidth = 260;
   double _citationPanelWidth = 340;
@@ -69,6 +75,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (ws != null) {
       ref.read(conversationProvider.notifier).loadConversations(ws.id);
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final target = ref.read(reviewNavigationTargetProvider);
+      if (target != null) {
+        _handleReviewNavigation(target);
+      }
+    });
   }
 
   Future<void> _restorePanelWidths() async {
@@ -94,8 +107,132 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _controller.dispose();
     _scrollController.dispose();
     _firstTokenTimer?.cancel();
+    _highlightTimer?.cancel();
     _activeClient?.close();
     super.dispose();
+  }
+
+  GlobalKey _keyForMessage(String messageId) =>
+      _messageKeys.putIfAbsent(messageId, GlobalKey.new);
+
+  void _clearHighlight() {
+    _highlightTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _highlightMessageId = null;
+        _highlightCitationId = null;
+      });
+    }
+  }
+
+  void _startHighlight({String? messageId, String? citationId}) {
+    _highlightTimer?.cancel();
+    setState(() {
+      _highlightMessageId = messageId;
+      _highlightCitationId = citationId;
+    });
+    _highlightTimer = Timer(const Duration(seconds: 3), _clearHighlight);
+  }
+
+  Future<void> _handleReviewNavigation(ReviewNavigationTarget target) async {
+    ref.read(reviewNavigationTargetProvider.notifier).state = null;
+
+    final ws = ref.read(selectedWorkspaceProvider);
+    if (ws == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请先选择工作区')),
+        );
+      }
+      return;
+    }
+
+    if (!target.hasMinimumTarget) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('该审核记录缺少定位信息，无法跳转到原始上下文。'),
+          ),
+        );
+      }
+      return;
+    }
+
+    var convs = ref.read(conversationProvider).valueOrNull ?? [];
+    var conv = convs.where((c) => c.id == target.conversationId).firstOrNull;
+    if (conv == null) {
+      await ref.read(conversationProvider.notifier).loadConversations(ws.id);
+      convs = ref.read(conversationProvider).valueOrNull ?? [];
+      conv = convs.where((c) => c.id == target.conversationId).firstOrNull;
+    }
+
+    if (conv == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('无法定位该审核记录，对应对话、消息或引用可能已被删除。'),
+          ),
+        );
+      }
+      return;
+    }
+
+    await _selectConversation(conv);
+
+    final messages = ref.read(messagesProvider);
+    final msg =
+        messages.where((m) => m.id == target.messageId).firstOrNull;
+    if (msg == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('无法定位该审核记录，对应对话、消息或引用可能已被删除。'),
+          ),
+        );
+      }
+      return;
+    }
+
+    _startHighlight(
+      messageId: target.messageId,
+      citationId: target.citationId,
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToMessage(target.messageId!);
+      if (target.citationId != null && target.citationId!.isNotEmpty) {
+        final cit = msg.citations
+            .where((c) => c.id == target.citationId)
+            .firstOrNull;
+        if (cit != null) {
+          setState(() => _selectedCitation = cit);
+        }
+      }
+    });
+  }
+
+  void _scrollToMessage(String messageId) {
+    final ctx = _messageKeys[messageId]?.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+        alignment: 0.3,
+      );
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final retryCtx = _messageKeys[messageId]?.currentContext;
+      if (retryCtx != null) {
+        Scrollable.ensureVisible(
+          retryCtx,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+          alignment: 0.3,
+        );
+      }
+    });
   }
 
   void _stopGenerating() {
@@ -202,6 +339,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         }
       });
 
+      final streamOutcome = ChatStreamOutcome();
+
       try {
         final response = await client.send(request);
 
@@ -213,131 +352,150 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         if (mounted) setState(() => _streamingPhase = '正在检索资料库...');
 
         String assistantId = '';
-        String currentEventType = '';
+        final lineBuffer = SseLineBuffer();
+        final eventParser = SseEventParser();
 
-        await for (final chunk
-            in response.stream.transform(utf8.decoder)) {
-          for (final line in chunk.split('\n')) {
-            final trimmed = line.trim();
-            if (trimmed.isEmpty) {
-              currentEventType = '';
-              continue;
+        Future<void> handleParsedEvent(ParsedSseEvent parsed) async {
+          final eventType = parsed.eventType;
+          final jsonStr = parsed.data;
+
+          if (eventType == 'error') {
+            streamOutcome.receivedStreamError = true;
+            final message = parseStreamErrorMessage(jsonStr);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('AI 错误: $message'),
+                  backgroundColor: Colors.red,
+                  duration: const Duration(seconds: 6),
+                ),
+              );
             }
-            if (trimmed.startsWith('event: ')) {
-              currentEventType = trimmed.substring(7).trim();
-              continue;
+            return;
+          }
+
+          Map<String, dynamic> event;
+          try {
+            final decoded = jsonDecode(jsonStr);
+            if (decoded is! Map) return;
+            event = Map<String, dynamic>.from(decoded);
+          } catch (e) {
+            DebugLogBuffer().add('WARN CHAT SSE JSON 解析失败: $e');
+            return;
+          }
+
+          if (eventType == 'message_start') {
+            assistantId = event['message_id']?.toString() ?? '';
+            if (mounted) setState(() => _streamingPhase = '正在分析问题...');
+          } else if (eventType == 'retrieval_started') {
+            if (mounted) setState(() => _streamingPhase = '正在检索资料库...');
+          } else if (eventType == 'retrieval_finished') {
+            final count = event['sources_count'] ?? 0;
+            if (mounted) setState(() => _streamingPhase = '已检索到 $count 条相关资料');
+          } else if (eventType == 'llm_started') {
+            if (mounted) setState(() => _streamingPhase = '正在生成回答...');
+          } else if (eventType == 'citation') {
+            setState(() {
+              _streamingCitations.add(Citation.fromJson(event));
+            });
+          } else if (eventType == 'text_delta') {
+            _firstTokenTimer?.cancel();
+            _firstTokenTimer = null;
+            final delta = parseTextDelta(jsonStr) ?? '';
+            if (delta.isNotEmpty) {
+              streamOutcome.receivedAnyText = true;
             }
-            if (!trimmed.startsWith('data:')) continue;
-            final jsonStr = trimmed.substring(5).trim();
-            if (jsonStr.isEmpty) continue;
-
-            final eventType = currentEventType;
-
-            if (eventType == 'error') {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('AI 错误: $jsonStr'),
-                    backgroundColor: Colors.red,
-                    duration: const Duration(seconds: 6),
-                  ),
-                );
-              }
-              continue;
+            setState(() {
+              _streamingContent += delta;
+            });
+            if (delta.isNotEmpty) {
+              _streamingTextController?.add(delta);
             }
-
-            try {
-              final event = jsonDecode(jsonStr);
-              if (eventType == 'message_start') {
-                assistantId = event['message_id'] ?? '';
-                if (mounted) setState(() => _streamingPhase = '正在分析问题...');
-              } else if (eventType == 'retrieval_started') {
-                if (mounted) setState(() => _streamingPhase = '正在检索资料库...');
-              } else if (eventType == 'retrieval_finished') {
-                final count = event['sources_count'] ?? 0;
-                if (mounted) setState(() => _streamingPhase = '已检索到 $count 条相关资料');
-              } else if (eventType == 'llm_started') {
-                if (mounted) setState(() => _streamingPhase = '正在生成回答...');
-              } else if (eventType == 'citation') {
-                setState(() {
-                  _streamingCitations.add(Citation.fromJson(event));
-                });
-              } else if (eventType == 'text_delta') {
-                _firstTokenTimer?.cancel();
-                _firstTokenTimer = null;
-                final delta = event['delta'] ?? event['text'] ?? '';
-                setState(() {
-                  _streamingContent += delta;
-                });
-                _streamingTextController?.add(delta);
-                _scrollToBottom();
-              } else if (eventType == 'suggestions') {
-                final questions = (event['questions'] as List?)
+            _scrollToBottom();
+          } else if (eventType == 'suggestions') {
+            final questions = (event['questions'] as List?)
                     ?.map((e) => e.toString())
-                    .toList() ?? [];
-                final msgs = ref.read(messagesProvider);
-                if (msgs.isNotEmpty && msgs.last.role == 'assistant') {
-                  final updated = msgs.last.copyWith(suggestions: questions);
-                  ref.read(messagesProvider.notifier).state = [
-                    ...msgs.sublist(0, msgs.length - 1),
-                    updated,
-                  ];
-                }
-              } else if (eventType == 'citations_stored') {
-                final stored = event['stored'] as List? ?? [];
-                setState(() {
-                  for (final item in stored) {
-                    final idx = item['index'] as int? ?? 0;
-                    final citId = item['citation_id']?.toString() ?? '';
-                    for (int i = 0; i < _streamingCitations.length; i++) {
-                      if (_streamingCitations[i].index == idx && _streamingCitations[i].id.isEmpty) {
-                        _streamingCitations[i] = Citation(
-                          id: citId,
-                          index: _streamingCitations[i].index,
-                          chunkId: _streamingCitations[i].chunkId,
-                          documentId: _streamingCitations[i].documentId,
-                          heading: _streamingCitations[i].heading,
-                          page: _streamingCitations[i].page,
-                          score: _streamingCitations[i].score,
-                          text: _streamingCitations[i].text,
-                          embeddingRank: _streamingCitations[i].embeddingRank,
-                          rerankScore: _streamingCitations[i].rerankScore,
-                        );
-                        break;
-                      }
-                    }
+                    .toList() ??
+                [];
+            final msgs = ref.read(messagesProvider);
+            if (msgs.isNotEmpty && msgs.last.role == 'assistant') {
+              final updated = msgs.last.copyWith(suggestions: questions);
+              ref.read(messagesProvider.notifier).state = [
+                ...msgs.sublist(0, msgs.length - 1),
+                updated,
+              ];
+            }
+          } else if (eventType == 'citations_stored') {
+            final stored = event['stored'] as List? ?? [];
+            setState(() {
+              for (final item in stored) {
+                final idx = item['index'] as int? ?? 0;
+                final citId = item['citation_id']?.toString() ?? '';
+                for (int i = 0; i < _streamingCitations.length; i++) {
+                  if (_streamingCitations[i].index == idx &&
+                      _streamingCitations[i].id.isEmpty) {
+                    _streamingCitations[i] = Citation(
+                      id: citId,
+                      index: _streamingCitations[i].index,
+                      chunkId: _streamingCitations[i].chunkId,
+                      documentId: _streamingCitations[i].documentId,
+                      heading: _streamingCitations[i].heading,
+                      page: _streamingCitations[i].page,
+                      score: _streamingCitations[i].score,
+                      text: _streamingCitations[i].text,
+                      embeddingRank: _streamingCitations[i].embeddingRank,
+                      rerankScore: _streamingCitations[i].rerankScore,
+                    );
+                    break;
                   }
-                });
-              } else if (eventType == 'message_end') {
-                final fullContent = _streamingContent;
-                if (fullContent.isNotEmpty) {
-                  final aiMsg = ChatMessage(
-                    id: assistantId,
-                    role: 'assistant',
-                    content: fullContent,
-                    citations: List.from(_streamingCitations),
-                    createdAt: DateTime.now(),
-                  );
-                  ref.read(messagesProvider.notifier).state = [
-                    ...ref.read(messagesProvider),
-                    aiMsg,
-                  ];
                 }
-                _streamingTextController?.close();
-                _streamingTextController = null;
-                setState(() {
-                  _streamingContent = '';
-                  _streamingCitations = [];
-                });
               }
-            } catch (_) {}
+            });
+          } else if (eventType == 'message_end') {
+            streamOutcome.receivedMessageEnd = true;
+            final fullContent = _streamingContent;
+            if (fullContent.isNotEmpty) {
+              final aiMsg = ChatMessage(
+                id: assistantId,
+                role: 'assistant',
+                content: fullContent,
+                citations: List.from(_streamingCitations),
+                createdAt: DateTime.now(),
+              );
+              ref.read(messagesProvider.notifier).state = [
+                ...ref.read(messagesProvider),
+                aiMsg,
+              ];
+              streamOutcome.assistantMessageCommitted = true;
+            }
+            _streamingTextController?.close();
+            _streamingTextController = null;
+            setState(() {
+              _streamingContent = '';
+              _streamingCitations = [];
+            });
+          }
+        }
+
+        await for (final chunk in response.stream.transform(utf8.decoder)) {
+          for (final line in lineBuffer.drainLines(chunk)) {
+            final parsed = eventParser.feedLine(line);
+            if (parsed != null) {
+              await handleParsedEvent(parsed);
+            }
+          }
+        }
+        for (final line in lineBuffer.flushRemaining()) {
+          final parsed = eventParser.feedLine(line);
+          if (parsed != null) {
+            await handleParsedEvent(parsed);
           }
         }
       } finally {
         client.close();
       }
 
-      if (_streamingContent.isEmpty && mounted) {
+      if (streamOutcome.shouldShowNoContentWarning && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('AI 未返回任何内容，请检查 LLM 模型配置和资料库状态'),
@@ -404,6 +562,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final convs = ref.watch(conversationProvider);
     final messages = ref.watch(messagesProvider);
     final selectedConv = ref.watch(selectedConversationProvider);
+
+    ref.listen<ReviewNavigationTarget?>(reviewNavigationTargetProvider,
+        (prev, next) {
+      if (next != null) {
+        _handleReviewNavigation(next);
+      }
+    });
 
     if (ws == null) {
       return Center(
@@ -733,7 +898,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           itemBuilder: (context, i) {
             if (i < messages.length) {
               return RepaintBoundary(
-                key: ValueKey(messages[i].id),
+                key: _keyForMessage(messages[i].id),
                 child: _buildMessageBubble(messages[i]),
               );
             }
@@ -790,8 +955,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           )
         : msg.content;
 
-    return Container(
+    final isHighlighted = _highlightMessageId == msg.id;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
       margin: const EdgeInsets.symmetric(vertical: 12),
+      padding: isHighlighted
+          ? const EdgeInsets.all(8)
+          : EdgeInsets.zero,
+      decoration: isHighlighted
+          ? BoxDecoration(
+              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: theme.colorScheme.primary,
+                width: 2,
+              ),
+            )
+          : null,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -838,7 +1019,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ),
                 ),
                 _buildMessageActions(msg, isUser: false),
-                if (msg.citations.isNotEmpty) _buildCollapsibleCitations(msg.citations),
+                if (msg.citations.isNotEmpty)
+                  _buildCollapsibleCitations(msg.citations, messageId: msg.id),
                 if (msg.suggestions.isNotEmpty) _buildSuggestionPills(msg.suggestions),
               ],
             ),
@@ -1042,15 +1224,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  Widget _buildCollapsibleCitations(List<Citation> citations) {
+  Widget _buildCollapsibleCitations(List<Citation> citations, {String? messageId}) {
+    final shouldExpand = messageId != null &&
+        _highlightMessageId == messageId &&
+        _highlightCitationId != null &&
+        citations.any((c) => c.id == _highlightCitationId);
+
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
+          key: shouldExpand ? ValueKey('cite-expand-$messageId') : null,
           tilePadding: const EdgeInsets.only(left: 4, right: 4),
           childrenPadding: const EdgeInsets.only(left: 4, bottom: 8),
-          initiallyExpanded: false,
+          initiallyExpanded: shouldExpand,
           dense: true,
           title: Text(
             S.of(context).citationSources(citations.length),
@@ -1077,6 +1265,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final previewText = citation.text.length > 80
         ? '${citation.text.substring(0, 80)}...'
         : citation.text;
+    final theme = Theme.of(context);
+    final isHighlighted =
+        _highlightCitationId != null && _highlightCitationId == citation.id;
+
     return Tooltip(
       message: previewText,
       preferBelow: true,
@@ -1084,14 +1276,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: () => _showCitationDetail(citation),
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
           constraints: const BoxConstraints(maxWidth: 280),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+            color: isHighlighted
+                ? theme.colorScheme.primaryContainer.withValues(alpha: 0.55)
+                : theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+              color: isHighlighted
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.primary.withValues(alpha: 0.2),
+              width: isHighlighted ? 2 : 1,
             ),
           ),
           child: Row(

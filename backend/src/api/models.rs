@@ -10,6 +10,11 @@ use uuid::Uuid;
 use crate::auth::middleware::AuthUser;
 use crate::db::compat;
 use crate::error::AppError;
+use crate::services::endpoint_resolver::{
+    effective_endpoint_mode, redact_api_key, resolve_stored_endpoint, EndpointMode, ModelType,
+};
+use crate::services::llm::OpenAILlmProvider;
+use crate::traits::llm_provider::LlmProvider;
 
 use super::workspace_members::require_admin_access;
 use super::AppState;
@@ -43,8 +48,14 @@ pub struct CreateConfigRequest {
     pub max_tokens: i32,
     #[serde(default)]
     pub is_default: bool,
+    #[serde(default = "default_endpoint_mode")]
+    pub endpoint_mode: String,
     #[serde(default)]
     pub workspace_id: Option<Uuid>,
+}
+
+fn default_endpoint_mode() -> String {
+    EndpointMode::BaseUrl.as_str().to_string()
 }
 
 fn default_temperature() -> f32 {
@@ -64,6 +75,7 @@ pub struct UpdateConfigRequest {
     pub temperature: Option<f32>,
     pub max_tokens: Option<i32>,
     pub is_default: Option<bool>,
+    pub endpoint_mode: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -74,6 +86,7 @@ pub struct ModelConfigResponse {
     pub name: String,
     pub provider: String,
     pub api_base_url: String,
+    pub endpoint_mode: String,
     pub has_api_key: bool,
     pub model_name: String,
     pub temperature: Option<f64>,
@@ -83,9 +96,16 @@ pub struct ModelConfigResponse {
     pub updated_at: String,
 }
 
-type ConfigRow = (String, Option<String>, String, String, String, String, Option<String>, String, Option<f64>, Option<i32>, Option<bool>, String, String);
+type ConfigRow = (String, Option<String>, String, String, String, String, Option<String>, String, String, Option<f64>, Option<i32>, Option<bool>, String, String);
 
 fn parse_config_row(r: ConfigRow) -> Result<ModelConfigResponse, AppError> {
+    let endpoint_mode = if r.8.is_empty() {
+        effective_endpoint_mode(ModelType::Llm, None, &r.5)
+            .as_str()
+            .to_string()
+    } else {
+        r.8.clone()
+    };
     Ok(ModelConfigResponse {
         id: compat::parse_uuid(&r.0).map_err(|e| AppError::Internal(e.into()))?,
         workspace_id: r.1.as_deref().and_then(|s| compat::parse_uuid(s).ok()),
@@ -93,23 +113,38 @@ fn parse_config_row(r: ConfigRow) -> Result<ModelConfigResponse, AppError> {
         name: r.3,
         provider: r.4,
         api_base_url: r.5,
+        endpoint_mode,
         has_api_key: r.6.is_some(),
         model_name: r.7,
-        temperature: r.8,
-        max_tokens: r.9,
-        is_default: r.10,
-        created_at: r.11,
-        updated_at: r.12,
+        temperature: r.9,
+        max_tokens: r.10,
+        is_default: r.11,
+        created_at: r.12,
+        updated_at: r.13,
     })
 }
 
-const CONFIG_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, temperature, max_tokens, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
+const CONFIG_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, COALESCE(endpoint_mode, 'base_url'), temperature, max_tokens, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
 
 #[derive(Serialize)]
 pub struct TestConnectionResponse {
     pub success: bool,
     pub message: String,
     pub latency_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // ── Simple XOR-based obfuscation for API keys ──
@@ -204,8 +239,10 @@ async fn create_config(
             .await?;
     }
 
+    let endpoint_mode = normalize_endpoint_mode(&req.endpoint_mode, ModelType::Llm, &api_base_url);
+
     let q = format!(
-        "INSERT INTO model_configs (workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, temperature, max_tokens, is_default) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING {}",
+        "INSERT INTO model_configs (workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, endpoint_mode, temperature, max_tokens, is_default) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING {}",
         CONFIG_SELECT
     );
     let row = sqlx::query_as::<_, ConfigRow>(&q)
@@ -216,6 +253,7 @@ async fn create_config(
         .bind(&api_base_url)
         .bind(&api_key_enc)
         .bind(&model_name)
+        .bind(&endpoint_mode)
         .bind(req.temperature as f64)
         .bind(req.max_tokens)
         .bind(req.is_default)
@@ -282,8 +320,12 @@ async fn update_config(
         .await?;
     }
 
+    let endpoint_mode = req.endpoint_mode.as_deref().map(|m| {
+        normalize_endpoint_mode(m, ModelType::Llm, api_base_url.as_deref().unwrap_or(""))
+    });
+
     let q = format!(
-        "UPDATE model_configs SET name = COALESCE($1, name), provider = COALESCE($2, provider), api_base_url = COALESCE($3, api_base_url), api_key_enc = COALESCE($4, api_key_enc), model_name = COALESCE($5, model_name), temperature = COALESCE($6, temperature), max_tokens = COALESCE($7, max_tokens), is_default = COALESCE($8, is_default) WHERE id = $9 AND user_id = $10 RETURNING {}",
+        "UPDATE model_configs SET name = COALESCE($1, name), provider = COALESCE($2, provider), api_base_url = COALESCE($3, api_base_url), api_key_enc = COALESCE($4, api_key_enc), model_name = COALESCE($5, model_name), endpoint_mode = COALESCE($6, endpoint_mode), temperature = COALESCE($7, temperature), max_tokens = COALESCE($8, max_tokens), is_default = COALESCE($9, is_default) WHERE id = $10 AND user_id = $11 RETURNING {}",
         CONFIG_SELECT
     );
     let row = sqlx::query_as::<_, ConfigRow>(&q)
@@ -292,6 +334,7 @@ async fn update_config(
         .bind(api_base_url)
         .bind(api_key_enc)
         .bind(model_name)
+        .bind(endpoint_mode)
         .bind(req.temperature.map(|t| t as f64))
         .bind(req.max_tokens)
         .bind(req.is_default)
@@ -326,8 +369,8 @@ async fn test_connection(
     auth: AuthUser,
     Path(config_id): Path<Uuid>,
 ) -> Result<Json<TestConnectionResponse>, AppError> {
-    let row = sqlx::query_as::<_, (String, String, Option<String>, String)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, endpoint_mode
          FROM model_configs
          WHERE id = $1 AND user_id = $2",
     )
@@ -336,15 +379,34 @@ async fn test_connection(
     .fetch_optional(&state.pool)
     .await?;
 
-    let (provider, api_base_url, api_key_enc, model_name) = match row {
+    let (provider, api_base_url, api_key_enc, model_name, endpoint_mode) = match row {
         Some(r) => r,
         None => return Err(AppError::NotFound("Model config not found".into())),
     };
 
     let api_key = api_key_enc.and_then(|enc| decrypt_api_key(&enc, &state.jwt_secret));
+    let mode = effective_endpoint_mode(
+        ModelType::Llm,
+        endpoint_mode.as_deref(),
+        &api_base_url,
+    );
+    let resolved = resolve_stored_endpoint(
+        ModelType::Llm,
+        &provider,
+        Some(mode.as_str()),
+        &api_base_url,
+        &model_name,
+    );
 
     let start = std::time::Instant::now();
-    let result = test_provider_connection(&provider, &api_base_url, api_key.as_deref(), &model_name).await;
+    let result = test_provider_connection(
+        &provider,
+        &api_base_url,
+        endpoint_mode.as_deref(),
+        api_key.as_deref(),
+        &model_name,
+    )
+    .await;
     let latency = start.elapsed().as_millis() as u64;
 
     match result {
@@ -352,13 +414,51 @@ async fn test_connection(
             success: true,
             message: msg,
             latency_ms: Some(latency),
+            model_type: Some("llm".into()),
+            provider: Some(provider),
+            endpoint_mode: Some(mode.as_str().into()),
+            user_endpoint: Some(api_base_url),
+            final_url: Some(resolved.final_url),
+            http_status: None,
+            error: None,
         })),
-        Err(e) => Ok(Json(TestConnectionResponse {
-            success: false,
-            message: format!("Connection failed: {}", e),
-            latency_ms: Some(latency),
-        })),
+        Err(e) => {
+            let err_str = redact_api_key(&e.to_string(), api_key.as_deref());
+            Ok(Json(TestConnectionResponse {
+                success: false,
+                message: format!("Connection failed: {}", err_str),
+                latency_ms: Some(latency),
+                model_type: Some("llm".into()),
+                provider: Some(provider),
+                endpoint_mode: Some(mode.as_str().into()),
+                user_endpoint: Some(api_base_url),
+                final_url: Some(resolved.final_url),
+                http_status: extract_http_status(&err_str),
+                error: Some(err_str),
+            }))
+        }
     }
+}
+
+pub fn normalize_endpoint_mode(mode: &str, model_type: ModelType, user_endpoint: &str) -> String {
+    match mode {
+        "full_endpoint" => EndpointMode::FullEndpoint.as_str().to_string(),
+        "base_url" => EndpointMode::BaseUrl.as_str().to_string(),
+        _ => effective_endpoint_mode(model_type, None, user_endpoint)
+            .as_str()
+            .to_string(),
+    }
+}
+
+pub fn extract_http_status(err: &str) -> Option<u16> {
+    for token in err.split_whitespace() {
+        if let Ok(code) = token.trim_matches(|c: char| !c.is_ascii_digit()).parse::<u16>() {
+            if (100..600).contains(&code) {
+                return Some(code);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -603,61 +703,34 @@ async fn hf_search_models(
 async fn test_provider_connection(
     provider: &str,
     api_base_url: &str,
+    endpoint_mode: Option<&str>,
     api_key: Option<&str>,
     model_name: &str,
 ) -> anyhow::Result<String> {
-    let client = reqwest::Client::new();
-    let base = crate::services::embedding::normalize_api_base(api_base_url);
+    let llm = OpenAILlmProvider::new(
+        provider,
+        api_base_url,
+        endpoint_mode,
+        api_key,
+        model_name,
+    );
+    let final_url = llm.resolved_url().to_string();
 
-    let models_url = format!("{}/models", base);
-    let mut req = client.get(&models_url);
-    if let Some(key) = api_key {
-        req = req.bearer_auth(key);
-    }
+    let req = crate::traits::llm_provider::LlmRequest {
+        messages: vec![crate::traits::llm_provider::LlmMessage {
+            role: "user".into(),
+            content: "Hi".into(),
+        }],
+        temperature: 0.0,
+        max_tokens: 5,
+        stream: false,
+    };
 
-    let resp = req
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", base, e))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("API returned status {}: {}", status, body);
-    }
-
-    let chat_url = format!("{}/chat/completions", base);
-    let chat_body = serde_json::json!({
-        "model": model_name,
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 5,
-    });
-
-    let mut chat_req = client.post(&chat_url).json(&chat_body);
-    if let Some(key) = api_key {
-        chat_req = chat_req.bearer_auth(key);
-    }
-
-    let chat_resp = chat_req
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("Chat request failed: {}", e))?;
-
-    if !chat_resp.status().is_success() {
-        let status = chat_resp.status();
-        let body = chat_resp.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "Model '{}' chat test failed (status {}): {}",
-            model_name,
-            status,
-            body
-        );
-    }
-
+    llm.generate(&req).await.map_err(|e| {
+        anyhow::anyhow!("Request to {} failed: {}", final_url, e)
+    })?;
     Ok(format!(
-        "Connected to {} and model '{}' responded successfully",
-        provider, model_name
+        "Connected to {} at {} and model '{}' responded successfully",
+        provider, final_url, model_name
     ))
 }

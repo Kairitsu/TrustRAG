@@ -1,9 +1,11 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../main.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../dashboard/providers/workspace_provider.dart';
+import 'graph_filter_provider.dart';
+import 'graph_generation_controller.dart';
 
 class GraphNode {
   final String id;
@@ -11,6 +13,12 @@ class GraphNode {
   final String entityType;
   final String? documentId;
   final String? graphLayer;
+  final String? originalName;
+  final String? displayName;
+  final String? originalLanguage;
+  final List<String>? aliases;
+  final String? description;
+  final String? jurisdiction;
   Offset position;
   Offset velocity;
 
@@ -20,6 +28,12 @@ class GraphNode {
     required this.entityType,
     this.documentId,
     this.graphLayer,
+    this.originalName,
+    this.displayName,
+    this.originalLanguage,
+    this.aliases,
+    this.description,
+    this.jurisdiction,
     this.position = Offset.zero,
     this.velocity = Offset.zero,
   });
@@ -31,17 +45,36 @@ class GraphNode {
       entityType: json['entity_type'] ?? '',
       documentId: json['document_id'],
       graphLayer: json['graph_layer'],
+      originalName: json['original_name'],
+      displayName: json['display_name'],
+      originalLanguage: json['original_language'],
+      aliases: (json['aliases'] as List?)?.map((e) => e.toString()).toList(),
+      description: json['description'],
+      jurisdiction: json['jurisdiction'],
     );
   }
 
   Color get color {
     return switch (entityType.toLowerCase()) {
+      'regulator' => Colors.indigo,
+      'law' => Colors.deepPurple,
+      'jurisdiction' => Colors.teal,
+      'stablecoin' => Colors.blue,
+      'issuer' || 'exchange' => Colors.purple,
+      'bank' => Colors.cyan,
+      'license' => Colors.amber.shade700,
+      'reserve_asset' => Colors.green,
+      'requirement' || 'reporting_obligation' => Colors.orange,
+      'prohibition' || 'sanction' => Colors.red,
+      'risk' => Colors.deepOrange,
+      'aml_cft_rule' || 'consumer_protection' => Colors.brown,
+      'supervision_measure' => Colors.blueGrey,
+      'document' => Colors.teal.shade300,
+      'event' => Colors.pink,
       'person' || 'people' => Colors.blue,
       'organization' || 'org' || 'company' => Colors.purple,
       'location' || 'place' => Colors.green,
       'concept' || 'topic' => Colors.orange,
-      'event' => Colors.red,
-      'document' => Colors.teal,
       'technology' || 'tool' => Colors.indigo,
       _ => Colors.grey,
     };
@@ -55,7 +88,9 @@ class GraphEdge {
   final String relation;
   final double weight;
   final String? description;
+  final String? evidenceText;
   final String? sourceDocumentId;
+  final String? sourceChunkId;
   final String? graphLayer;
 
   GraphEdge({
@@ -65,7 +100,9 @@ class GraphEdge {
     required this.relation,
     required this.weight,
     this.description,
+    this.evidenceText,
     this.sourceDocumentId,
+    this.sourceChunkId,
     this.graphLayer,
   });
 
@@ -77,7 +114,9 @@ class GraphEdge {
       relation: json['relation'] ?? '',
       weight: (json['weight'] as num?)?.toDouble() ?? 1.0,
       description: json['description'],
+      evidenceText: json['evidence_text'],
       sourceDocumentId: json['source_document_id'],
+      sourceChunkId: json['source_chunk_id'],
       graphLayer: json['graph_layer'],
     );
   }
@@ -99,6 +138,27 @@ class GraphData {
           .toList(),
     );
   }
+
+  GraphData copyWithPositions() {
+    return GraphData(
+      nodes: nodes.map((n) => GraphNode(
+        id: n.id,
+        label: n.label,
+        entityType: n.entityType,
+        documentId: n.documentId,
+        graphLayer: n.graphLayer,
+        originalName: n.originalName,
+        displayName: n.displayName,
+        originalLanguage: n.originalLanguage,
+        aliases: n.aliases,
+        description: n.description,
+        jurisdiction: n.jurisdiction,
+        position: n.position,
+        velocity: n.velocity,
+      )).toList(),
+      edges: edges,
+    );
+  }
 }
 
 class EntityInfo {
@@ -108,6 +168,12 @@ class EntityInfo {
   final String? documentId;
   final Map<String, dynamic> metadata;
   final String createdAt;
+  final String? entityKey;
+  final String? originalName;
+  final String? displayName;
+  final String? originalLanguage;
+  final List<String>? aliases;
+  final String? graphLayer;
 
   EntityInfo({
     required this.id,
@@ -116,16 +182,28 @@ class EntityInfo {
     this.documentId,
     required this.metadata,
     required this.createdAt,
+    this.entityKey,
+    this.originalName,
+    this.displayName,
+    this.originalLanguage,
+    this.aliases,
+    this.graphLayer,
   });
 
   factory EntityInfo.fromJson(Map<String, dynamic> json) {
     return EntityInfo(
       id: json['id'] ?? '',
-      name: json['name'] ?? '',
+      name: json['name'] ?? json['display_name'] ?? '',
       entityType: json['entity_type'] ?? '',
       documentId: json['document_id'],
       metadata: json['metadata'] is Map ? json['metadata'] as Map<String, dynamic> : {},
       createdAt: json['created_at'] ?? '',
+      entityKey: json['entity_key'],
+      originalName: json['original_name'],
+      displayName: json['display_name'],
+      originalLanguage: json['original_language'],
+      aliases: (json['aliases'] as List?)?.map((e) => e.toString()).toList(),
+      graphLayer: json['graph_layer'],
     );
   }
 }
@@ -137,6 +215,16 @@ final knowledgeGraphServiceProvider = Provider<KnowledgeGraphService>((ref) {
 class KnowledgeGraphService {
   final Ref ref;
   KnowledgeGraphService(this.ref);
+
+  String _targetLanguage() {
+    final locale = ref.read(localeProvider);
+    return switch (locale?.languageCode) {
+      'zh' => 'zh',
+      'ja' => 'ja',
+      'ko' => 'ko',
+      _ => 'en',
+    };
+  }
 
   Future<GraphData> getGraph(String workspaceId, {List<String>? layers}) async {
     final api = ref.read(apiClientProvider);
@@ -159,22 +247,51 @@ class KnowledgeGraphService {
         .toList();
   }
 
-  Future<Map<String, dynamic>> generateForDocument(String workspaceId, String documentId) async {
+  Future<List<EntityInfo>> searchEntities(String workspaceId, String query) async {
     final api = ref.read(apiClientProvider);
-    final resp = await api.dio.post('/workspaces/$workspaceId/knowledge-graph/generate/$documentId');
+    final resp = await api.dio.get(
+      '/workspaces/$workspaceId/knowledge-graph/entities/search',
+      queryParameters: {'q': query, 'limit': 20},
+    );
+    return (resp.data as List)
+        .map((e) => EntityInfo.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> generateForDocument(String workspaceId, String documentId, {String? targetLanguage}) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.post(
+      '/workspaces/$workspaceId/knowledge-graph/generate/$documentId',
+      data: {'target_language': targetLanguage ?? _targetLanguage()},
+    );
     return resp.data as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> generateForAll(String workspaceId) async {
+  Future<Map<String, dynamic>> generateForAll(String workspaceId, {String? targetLanguage}) async {
     final api = ref.read(apiClientProvider);
-    final resp = await api.dio.post('/workspaces/$workspaceId/knowledge-graph/generate-all');
+    final resp = await api.dio.post(
+      '/workspaces/$workspaceId/knowledge-graph/generate-all',
+      data: {'target_language': targetLanguage ?? _targetLanguage()},
+    );
     return resp.data as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> getGenerationStatus(String workspaceId, String taskId) async {
+  Future<GenerationJobState> getGenerationStatus(String workspaceId, String taskId) async {
     final api = ref.read(apiClientProvider);
     final resp = await api.dio.get('/workspaces/$workspaceId/knowledge-graph/generation-status/$taskId');
-    return resp.data as Map<String, dynamic>;
+    return GenerationJobState.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<GenerationJobState?> getActiveGeneration(String workspaceId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get('/workspaces/$workspaceId/knowledge-graph/generation-active');
+    if (resp.data == null) return null;
+    return GenerationJobState.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<void> cancelGeneration(String workspaceId, String taskId) async {
+    final api = ref.read(apiClientProvider);
+    await api.dio.post('/workspaces/$workspaceId/knowledge-graph/generation-status/$taskId/cancel');
   }
 
   Future<List<GenerationLogEntry>> getGenerationHistory(String workspaceId) async {
@@ -196,8 +313,6 @@ class KnowledgeGraphService {
     final resp = await api.dio.get('/workspaces/$workspaceId/knowledge-graph/stats');
     return GraphStats.fromJson(resp.data as Map<String, dynamic>);
   }
-
-  // ── Entity CRUD ──
 
   Future<Map<String, dynamic>> createEntity(String workspaceId, {
     required String name,
@@ -240,8 +355,6 @@ class KnowledgeGraphService {
     );
     return resp.data as Map<String, dynamic>;
   }
-
-  // ── Relation CRUD ──
 
   Future<Map<String, dynamic>> createRelation(String workspaceId, {
     required String sourceEntityId,
@@ -289,8 +402,6 @@ class KnowledgeGraphService {
     return resp.data as Map<String, dynamic>;
   }
 
-  // ── Merge ──
-
   Future<Map<String, dynamic>> mergeEntities(String workspaceId, {
     required String keepEntityId,
     required List<String> mergeEntityIds,
@@ -306,18 +417,20 @@ class KnowledgeGraphService {
     return resp.data as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> buildDocumentLayer(String workspaceId) async {
+  Future<Map<String, dynamic>> buildDocumentLayer(String workspaceId, {String? targetLanguage}) async {
     final api = ref.read(apiClientProvider);
     final resp = await api.dio.post(
       '/workspaces/$workspaceId/knowledge-graph/build-document-layer',
+      data: {'target_language': targetLanguage ?? _targetLanguage()},
     );
     return resp.data as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> buildSemanticLayer(String workspaceId) async {
+  Future<Map<String, dynamic>> buildSemanticLayer(String workspaceId, {String? targetLanguage}) async {
     final api = ref.read(apiClientProvider);
     final resp = await api.dio.post(
       '/workspaces/$workspaceId/knowledge-graph/build-semantic-layer',
+      data: {'target_language': targetLanguage ?? _targetLanguage()},
     );
     return resp.data as Map<String, dynamic>;
   }
@@ -328,12 +441,14 @@ class GraphStats {
   final int totalRelations;
   final List<TypeCount> entityTypes;
   final List<TypeCount> relationTypes;
+  final List<LayerStatEntry> layerStats;
 
   GraphStats({
     required this.totalEntities,
     required this.totalRelations,
     required this.entityTypes,
     required this.relationTypes,
+    this.layerStats = const [],
   });
 
   factory GraphStats.fromJson(Map<String, dynamic> json) {
@@ -346,6 +461,25 @@ class GraphStats {
       relationTypes: (json['relation_types'] as List? ?? [])
           .map((e) => TypeCount.fromJson(e as Map<String, dynamic>))
           .toList(),
+      layerStats: (json['layer_stats'] as List? ?? [])
+          .map((e) => LayerStatEntry.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class LayerStatEntry {
+  final String layer;
+  final int entityCount;
+  final int relationCount;
+
+  LayerStatEntry({required this.layer, required this.entityCount, required this.relationCount});
+
+  factory LayerStatEntry.fromJson(Map<String, dynamic> json) {
+    return LayerStatEntry(
+      layer: json['layer'] ?? '',
+      entityCount: json['entity_count'] ?? 0,
+      relationCount: json['relation_count'] ?? 0,
     );
   }
 }
@@ -368,14 +502,21 @@ class GenerationLogEntry {
   final String id;
   final String status;
   final String triggerType;
+  final String? jobType;
+  final String? layerType;
+  final String? targetLanguage;
   final String? documentId;
   final String? llmProvider;
   final String? llmModel;
   final int totalDocuments;
   final int processedDocuments;
+  final int succeededDocuments;
+  final int failedDocuments;
   final int entitiesCreated;
   final int relationsCreated;
+  final int relationsSkippedMatch;
   final List<String> errors;
+  final List<String> warnings;
   final String startedAt;
   final String? completedAt;
   final int? elapsedMs;
@@ -384,14 +525,21 @@ class GenerationLogEntry {
     required this.id,
     required this.status,
     required this.triggerType,
+    this.jobType,
+    this.layerType,
+    this.targetLanguage,
     this.documentId,
     this.llmProvider,
     this.llmModel,
     required this.totalDocuments,
     required this.processedDocuments,
+    this.succeededDocuments = 0,
+    this.failedDocuments = 0,
     required this.entitiesCreated,
     required this.relationsCreated,
+    this.relationsSkippedMatch = 0,
     required this.errors,
+    this.warnings = const [],
     required this.startedAt,
     this.completedAt,
     this.elapsedMs,
@@ -402,14 +550,21 @@ class GenerationLogEntry {
       id: json['id'] ?? '',
       status: json['status'] ?? '',
       triggerType: json['trigger_type'] ?? 'manual_batch',
+      jobType: json['job_type'],
+      layerType: json['layer_type'],
+      targetLanguage: json['target_language'],
       documentId: json['document_id'],
       llmProvider: json['llm_provider'],
       llmModel: json['llm_model'],
       totalDocuments: json['total_documents'] ?? 0,
       processedDocuments: json['processed_documents'] ?? 0,
+      succeededDocuments: json['succeeded_documents'] ?? 0,
+      failedDocuments: json['failed_documents'] ?? 0,
       entitiesCreated: json['entities_created'] ?? 0,
       relationsCreated: json['relations_created'] ?? 0,
+      relationsSkippedMatch: json['relations_skipped_match'] ?? 0,
       errors: (json['errors'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      warnings: (json['warnings'] as List?)?.map((e) => e.toString()).toList() ?? [],
       startedAt: json['started_at'] ?? '',
       completedAt: json['completed_at'],
       elapsedMs: json['elapsed_ms'],
@@ -425,42 +580,57 @@ final generationHistoryProvider =
   return service.getGenerationHistory(ws.id);
 });
 
-final selectedGraphLayersProvider = StateProvider<Set<String>>((ref) {
-  return {'document', 'semantic', 'knowledge'};
-});
-
-final graphDataProvider =
-    FutureProvider.autoDispose<GraphData?>((ref) async {
+final knowledgeGraphStatsProvider = FutureProvider.autoDispose<GraphStats?>((ref) async {
   final ws = ref.watch(selectedWorkspaceProvider);
   if (ws == null) return null;
-  final layers = ref.watch(selectedGraphLayersProvider);
+  ref.watch(graphGenerationControllerProvider);
   final service = ref.read(knowledgeGraphServiceProvider);
-  final allLayers = {'document', 'semantic', 'knowledge'};
-  final filterLayers = layers.length < allLayers.length ? layers.toList() : null;
-  final data = await service.getGraph(ws.id, layers: filterLayers);
-  _initializePositions(data);
-  return data;
+  return service.getStats(ws.id);
 });
 
-final entityListProvider =
-    FutureProvider.autoDispose<List<EntityInfo>>((ref) async {
+final layerStatsProvider = FutureProvider.autoDispose<LayerStatsMap?>((ref) async {
+  final stats = await ref.watch(knowledgeGraphStatsProvider.future);
+  if (stats == null) return null;
+  final map = <String, LayerStat>{};
+  for (final layer in ['document', 'semantic', 'knowledge']) {
+    final entry = stats.layerStats.where((l) => l.layer == layer).firstOrNull;
+    map[layer] = LayerStat(
+      layer: layer,
+      entityCount: entry?.entityCount ?? 0,
+      relationCount: entry?.relationCount ?? 0,
+      generated: (entry?.entityCount ?? 0) > 0 || (entry?.relationCount ?? 0) > 0,
+    );
+  }
+  return LayerStatsMap(map);
+});
+
+/// Raw graph data — always fetches all layers; filtering applied separately.
+final graphDataProvider = FutureProvider<GraphData?>((ref) async {
+  final ws = ref.watch(selectedWorkspaceProvider);
+  if (ws == null) return null;
+  ref.watch(graphGenerationControllerProvider);
+  final service = ref.read(knowledgeGraphServiceProvider);
+  return service.getGraph(ws.id);
+});
+
+final filteredGraphProvider = Provider<AsyncValue<FilteredGraphData?>>((ref) {
+  final graphAsync = ref.watch(graphDataProvider);
+  final filter = ref.watch(graphFilterProvider);
+  return graphAsync.whenData((data) {
+    if (data == null) return null;
+    return applyFilters(data, filter);
+  });
+});
+
+final entityListProvider = FutureProvider<List<EntityInfo>>((ref) async {
   final ws = ref.watch(selectedWorkspaceProvider);
   if (ws == null) return [];
+  ref.watch(graphGenerationControllerProvider);
   final service = ref.read(knowledgeGraphServiceProvider);
   return service.listEntities(ws.id);
 });
 
-void _initializePositions(GraphData data) {
-  final rng = Random(42);
-  const radius = 300.0;
-  final count = data.nodes.length;
-  for (var i = 0; i < count; i++) {
-    final angle = (2 * pi * i) / count;
-    final r = radius * (0.5 + rng.nextDouble() * 0.5);
-    data.nodes[i].position = Offset(
-      400 + r * cos(angle),
-      300 + r * sin(angle),
-    );
-    data.nodes[i].velocity = Offset.zero;
-  }
-}
+/// Backward-compatible alias
+final selectedGraphLayersProvider = Provider<Set<String>>((ref) {
+  return ref.watch(graphFilterProvider).visibleLayers;
+});

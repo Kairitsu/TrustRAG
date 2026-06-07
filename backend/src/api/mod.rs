@@ -41,4 +41,6 @@ pub struct AppState {
     pub doc_processing_semaphore: Arc<Semaphore>,
     #[cfg(sqlite_mode)]
     pub ocr_tasks: crate::api::system::OcrTaskStore,
+    #[cfg(sqlite_mode)]
+    pub ocr_install_children: crate::api::system::OcrChildStore,
 }

@@ -34,6 +34,139 @@ class ReviewRecord {
   }
 }
 
+class ReviewCounts {
+  final int approved;
+  final int rejected;
+  final int suspicious;
+  final int pending;
+
+  const ReviewCounts({
+    this.approved = 0,
+    this.rejected = 0,
+    this.suspicious = 0,
+    this.pending = 0,
+  });
+
+  factory ReviewCounts.fromJson(Map<String, dynamic> json) {
+    return ReviewCounts(
+      approved: json['approved'] ?? 0,
+      rejected: json['rejected'] ?? 0,
+      suspicious: json['suspicious'] ?? 0,
+      pending: json['pending'] ?? 0,
+    );
+  }
+}
+
+class ReviewRecordEnriched {
+  final String id;
+  final String status;
+  final String? textExcerpt;
+  final String citationId;
+  final String citationShortId;
+  final String? conversationId;
+  final String? messageId;
+  final String? documentId;
+  final String? chunkId;
+  final String? documentTitle;
+  final String? conversationTitle;
+  final String? comment;
+  final String? correctedText;
+  final String createdAt;
+  final String updatedAt;
+  final bool targetAvailable;
+
+  ReviewRecordEnriched({
+    required this.id,
+    required this.status,
+    this.textExcerpt,
+    required this.citationId,
+    required this.citationShortId,
+    this.conversationId,
+    this.messageId,
+    this.documentId,
+    this.chunkId,
+    this.documentTitle,
+    this.conversationTitle,
+    this.comment,
+    this.correctedText,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.targetAvailable,
+  });
+
+  factory ReviewRecordEnriched.fromJson(Map<String, dynamic> json) {
+    return ReviewRecordEnriched(
+      id: json['id'] ?? '',
+      status: json['status'] ?? 'pending',
+      textExcerpt: json['text_excerpt'],
+      citationId: json['citation_id'] ?? '',
+      citationShortId: json['citation_short_id'] ?? '',
+      conversationId: json['conversation_id'],
+      messageId: json['message_id'],
+      documentId: json['document_id'],
+      chunkId: json['chunk_id'],
+      documentTitle: json['document_title'],
+      conversationTitle: json['conversation_title'],
+      comment: json['comment'],
+      correctedText: json['corrected_text'],
+      createdAt: json['created_at'] ?? '',
+      updatedAt: json['updated_at'] ?? '',
+      targetAvailable: json['target_available'] ?? false,
+    );
+  }
+}
+
+class ReviewListResponse {
+  final List<ReviewRecordEnriched> records;
+  final ReviewCounts counts;
+
+  ReviewListResponse({
+    required this.records,
+    required this.counts,
+  });
+
+  factory ReviewListResponse.fromJson(Map<String, dynamic> json) {
+    return ReviewListResponse(
+      records: (json['records'] as List? ?? [])
+          .map((e) => ReviewRecordEnriched.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      counts: ReviewCounts.fromJson(json['counts'] ?? {}),
+    );
+  }
+}
+
+class ReviewTarget {
+  final String? auditRecordId;
+  final String? conversationId;
+  final String? messageId;
+  final String? citationId;
+  final String? documentId;
+  final String? chunkId;
+  final bool targetAvailable;
+
+  ReviewTarget({
+    this.auditRecordId,
+    this.conversationId,
+    this.messageId,
+    this.citationId,
+    this.documentId,
+    this.chunkId,
+    required this.targetAvailable,
+  });
+
+  factory ReviewTarget.fromJson(Map<String, dynamic> json) {
+    return ReviewTarget(
+      auditRecordId: json['audit_record_id'],
+      conversationId: json['conversation_id'],
+      messageId: json['message_id'],
+      citationId: json['citation_id'],
+      documentId: json['document_id'],
+      chunkId: json['chunk_id'],
+      targetAvailable: json['target_available'] ?? false,
+    );
+  }
+}
+
 class ReviewReportData {
   final String generatedAt;
   final ReviewStats stats;
@@ -177,7 +310,7 @@ class ReviewService {
     return ReviewStats.fromJson(resp.data);
   }
 
-  Future<List<ReviewRecord>> listAllReviews({
+  Future<ReviewListResponse> listAllReviewsEnriched({
     int limit = 50,
     int offset = 0,
   }) async {
@@ -186,7 +319,22 @@ class ReviewService {
       '/reviews',
       queryParameters: {'limit': limit, 'offset': offset},
     );
-    return (resp.data as List).map((e) => ReviewRecord.fromJson(e)).toList();
+    return ReviewListResponse.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<ReviewTarget> getReviewTarget(String reviewId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get('/reviews/$reviewId/target');
+    return ReviewTarget.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<ReviewTarget> getReviewTargetByCitation(String citationId) async {
+    final api = ref.read(apiClientProvider);
+    final resp = await api.dio.get(
+      '/reviews/target',
+      queryParameters: {'citation_id': citationId},
+    );
+    return ReviewTarget.fromJson(resp.data as Map<String, dynamic>);
   }
 
   Future<ReviewReportData> getReport() async {

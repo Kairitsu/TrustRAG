@@ -8,6 +8,7 @@ class RerankConfig {
   final String name;
   final String provider;
   final String apiBaseUrl;
+  final String endpointMode;
   final bool hasApiKey;
   final String modelName;
   final int topN;
@@ -21,6 +22,7 @@ class RerankConfig {
     required this.name,
     required this.provider,
     required this.apiBaseUrl,
+    required this.endpointMode,
     required this.hasApiKey,
     required this.modelName,
     required this.topN,
@@ -36,6 +38,7 @@ class RerankConfig {
       name: json['name'] ?? '',
       provider: json['provider'] ?? '',
       apiBaseUrl: json['api_base_url'] ?? '',
+      endpointMode: json['endpoint_mode'] ?? 'base_url',
       hasApiKey: json['has_api_key'] ?? false,
       modelName: json['model_name'] ?? '',
       topN: json['top_n'] ?? 5,

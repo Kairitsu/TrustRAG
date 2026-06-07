@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/settings/providers/server_config_provider.dart';
 import '../../main.dart' show rootNavigatorKey;
-import '../api/api_client.dart';
 import '../services/diagnostic_logger.dart';
 import '../services/local_bootstrap.dart';
 import '../services/mode_manager.dart';

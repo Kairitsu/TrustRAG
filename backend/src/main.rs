@@ -155,6 +155,8 @@ async fn main() -> anyhow::Result<()> {
         doc_processing_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(doc_concurrency)),
         #[cfg(sqlite_mode)]
         ocr_tasks: api::system::new_ocr_task_store(),
+        #[cfg(sqlite_mode)]
+        ocr_install_children: api::system::new_child_store(),
     };
 
     api::embedding_configs::init_embedding_provider(&state).await;

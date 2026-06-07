@@ -427,8 +427,8 @@ async fn load_default_rerank(
     user_id: Uuid,
     jwt_secret: &str,
 ) -> Option<(RagRerank, HttpRerankerProvider)> {
-    let row = sqlx::query_as::<_, (String, String, Option<String>, String, i32, i32, bool, i32)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name, top_n, initial_recall_k, fallback_enabled, timeout_secs \
+    let row = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, i32, i32, bool, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, endpoint_mode, top_n, initial_recall_k, fallback_enabled, timeout_secs \
          FROM rerank_configs WHERE user_id = $1 AND is_default = 1 LIMIT 1",
     )
     .bind(user_id.to_string())
@@ -440,29 +440,25 @@ async fn load_default_rerank(
         .and_then(|enc| crate::api::models::decrypt_api_key(enc, jwt_secret))
         .unwrap_or_default();
 
-    let api_url = format!(
-        "{}/rerank",
-        row.1.trim_end_matches('/')
-    );
+    let timeout_secs = (row.8 as u64).max(5);
 
-    let timeout_secs = (row.7 as u64).max(5);
-
-    let provider = HttpRerankerProvider::with_timeout(
-        api_url,
+    let (_, provider) = crate::services::reranker::build_http_reranker(
+        &row.0,
+        &row.1,
+        row.4.as_deref(),
         api_key,
         row.3.clone(),
-        row.0.clone(),
         timeout_secs,
     );
 
     let rerank_cfg = RagRerank {
         config: ReRankConfig {
             enabled: true,
-            top_n: row.4 as usize,
+            top_n: row.5 as usize,
             method: ReRankMethod::ExternalApi,
         },
-        initial_recall_k: row.5 as usize,
-        fallback_enabled: row.6,
+        initial_recall_k: row.6 as usize,
+        fallback_enabled: row.7,
     };
 
     Some((rerank_cfg, provider))
@@ -535,10 +531,10 @@ async fn send_message(
     let model_config_id = req.model_config_id.or(conv_model_config_id);
 
     // Load model config
-    let (provider_name, api_base_url, api_key_enc, model_name, temperature, max_tokens) =
+    let (provider_name, api_base_url, api_key_enc, model_name, endpoint_mode, temperature, max_tokens) =
         if let Some(mc_id) = model_config_id {
-            sqlx::query_as::<_, (String, String, Option<String>, String, Option<f32>, Option<i32>)>(
-                "SELECT provider, api_base_url, api_key_enc, model_name, temperature, max_tokens
+            sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, Option<f32>, Option<i32>)>(
+                "SELECT provider, api_base_url, api_key_enc, model_name, endpoint_mode, temperature, max_tokens
                  FROM model_configs WHERE id = $1 AND user_id = $2",
             )
             .bind(mc_id.to_string())
@@ -548,8 +544,8 @@ async fn send_message(
             .ok_or_else(|| AppError::NotFound("Model config not found".into()))?
         } else {
             // Try user's default model
-            sqlx::query_as::<_, (String, String, Option<String>, String, Option<f32>, Option<i32>)>(
-                "SELECT provider, api_base_url, api_key_enc, model_name, temperature, max_tokens
+            sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, Option<f32>, Option<i32>)>(
+                "SELECT provider, api_base_url, api_key_enc, model_name, endpoint_mode, temperature, max_tokens
                  FROM model_configs WHERE user_id = $1 AND is_default = 1 LIMIT 1",
             )
             .bind(auth.id.to_string())
@@ -563,7 +559,9 @@ async fn send_message(
     });
 
     let llm_provider = OpenAILlmProvider::new(
+        &provider_name,
         &api_base_url,
+        endpoint_mode.as_deref(),
         api_key.as_deref(),
         &model_name,
     );

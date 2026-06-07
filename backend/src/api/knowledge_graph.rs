@@ -5,35 +5,18 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
-use tokio::sync::RwLock;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
+use crate::services::graph_generation::{
+    self, CreateJobParams, GenerationJobStatus, JobProgressUpdate,
+};
 use crate::services::knowledge_extraction;
 use crate::services::llm::OpenAILlmProvider;
 
 use super::AppState;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct GenerationTask {
-    pub task_id: String,
-    pub workspace_id: String,
-    pub status: String,
-    pub total_documents: usize,
-    pub processed_documents: usize,
-    pub entities_created: usize,
-    pub relations_created: usize,
-    pub errors: Vec<String>,
-    pub started_at: String,
-    pub completed_at: Option<String>,
-}
-
-fn generation_tasks() -> &'static Arc<RwLock<HashMap<String, GenerationTask>>> {
-    static TASKS: OnceLock<Arc<RwLock<HashMap<String, GenerationTask>>>> = OnceLock::new();
-    TASKS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
-}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -53,6 +36,18 @@ pub fn router() -> Router<AppState> {
         .route(
             "/workspaces/{ws_id}/knowledge-graph/generation-status/{task_id}",
             get(generation_status),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/generation-active",
+            get(generation_active),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/generation-status/{task_id}/cancel",
+            post(cancel_generation),
+        )
+        .route(
+            "/workspaces/{ws_id}/knowledge-graph/entities/search",
+            get(search_entities),
         )
         .route(
             "/workspaces/{ws_id}/knowledge-graph/reset",
@@ -96,40 +91,86 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+#[derive(Deserialize)]
+struct LayerBuildRequest {
+    #[serde(default = "default_target_language")]
+    target_language: String,
+}
+
+fn default_target_language() -> String {
+    "zh".to_string()
+}
+
 async fn build_document_layer(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(ws_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, AppError> {
+    body: Option<Json<LayerBuildRequest>>,
+) -> Result<Json<AsyncGenerateResponse>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
-
-    let (entities, relations) = knowledge_extraction::build_document_layer(&state.pool, ws_id).await
-        .map_err(AppError::Internal)?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "entities_created": entities,
-        "relations_created": relations,
-        "layer": "document",
-    })))
+    let target_language = body.map(|b| b.target_language.clone()).unwrap_or_else(default_target_language);
+    start_layer_job(&state, ws_id, auth.id, "document", &target_language).await
 }
 
 async fn build_semantic_layer_api(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(ws_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, AppError> {
+    body: Option<Json<LayerBuildRequest>>,
+) -> Result<Json<AsyncGenerateResponse>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
+    let target_language = body.map(|b| b.target_language.clone()).unwrap_or_else(default_target_language);
+    start_layer_job(&state, ws_id, auth.id, "semantic", &target_language).await
+}
 
-    let (entities, relations) = knowledge_extraction::build_semantic_layer(&state.pool, ws_id).await
-        .map_err(AppError::Internal)?;
+async fn start_layer_job(
+    state: &AppState,
+    ws_id: Uuid,
+    user_id: Uuid,
+    layer_type: &str,
+    target_language: &str,
+) -> Result<Json<AsyncGenerateResponse>, AppError> {
+    if let Some(active) = graph_generation::get_active_job(&state.pool, ws_id).await.map_err(AppError::Internal)? {
+        return Ok(Json(AsyncGenerateResponse {
+            task_id: active.task_id,
+            status: active.status,
+            total_documents: active.total_documents as usize,
+            message: "A generation job is already running".into(),
+        }));
+    }
 
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "entities_created": entities,
-        "relations_created": relations,
-        "layer": "semantic",
-    })))
+    let job_type = if layer_type == "document" { "document_layer" } else { "semantic_layer" };
+    let task_id = graph_generation::create_job(
+        &state.pool,
+        &CreateJobParams {
+            workspace_id: ws_id,
+            user_id,
+            job_type: job_type.into(),
+            layer_type: Some(layer_type.into()),
+            target_language: target_language.into(),
+            total_documents: 1,
+            document_id: None,
+            llm_provider: None,
+            llm_model: None,
+        },
+    )
+    .await
+    .map_err(AppError::Internal)?;
+
+    let pool = state.pool.clone();
+    let bg_task_id = task_id.clone();
+    let layer = layer_type.to_string();
+    let started_at = chrono::Utc::now();
+    tokio::spawn(async move {
+        graph_generation::run_layer_job(pool, bg_task_id, ws_id, &layer, started_at).await;
+    });
+
+    Ok(Json(AsyncGenerateResponse {
+        task_id,
+        status: "running".into(),
+        total_documents: 1,
+        message: format!("Building {} layer started", layer_type),
+    }))
 }
 
 #[derive(Serialize)]
@@ -140,6 +181,18 @@ struct EntityRow {
     document_id: Option<Uuid>,
     metadata: serde_json::Value,
     created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entity_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    original_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    original_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aliases: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph_layer: Option<String>,
 }
 
 struct RelationRow {
@@ -165,6 +218,18 @@ struct GraphNode {
     document_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     graph_layer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    original_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    original_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aliases: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    jurisdiction: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -177,7 +242,11 @@ struct GraphEdge {
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    evidence_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     source_document_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_chunk_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     graph_layer: Option<String>,
 }
@@ -227,32 +296,32 @@ async fn get_graph(
 
     tracing::info!(workspace_id = %ws_id, layers = ?layer_filter, "Fetching knowledge graph");
 
-    type EntityTuple = (String, String, String, Option<String>, Option<String>, String, String);
+    type EntityTuple = (
+        String, String, String, Option<String>, Option<String>, String, String,
+        Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+    );
     type RelationTuple = (String, String, String, String, f64, Option<String>, String);
+
+    let entity_sql_base = "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT), graph_layer, \
+         entity_key, original_name, display_name, original_language, aliases \
+         FROM entities WHERE workspace_id = $1";
 
     let entity_rows: Vec<EntityTuple> = if let Some(ref layers) = layer_filter {
         let placeholders: Vec<String> = layers.iter().enumerate()
             .map(|(i, _)| format!("${}", i + 2))
             .collect();
-        let sql = format!(
-            "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT), graph_layer \
-             FROM entities WHERE workspace_id = $1 AND graph_layer IN ({}) ORDER BY name",
-            placeholders.join(",")
-        );
-        let mut query = sqlx::query_as::<_, EntityTuple>(&sql)
-            .bind(ws_id.to_string());
+        let sql = format!("{} AND graph_layer IN ({}) ORDER BY name", entity_sql_base, placeholders.join(","));
+        let mut query = sqlx::query_as::<_, EntityTuple>(&sql).bind(ws_id.to_string());
         for layer in layers {
             query = query.bind(layer.clone());
         }
         query.fetch_all(&state.pool).await?
     } else {
-        sqlx::query_as::<_, EntityTuple>(
-            "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT), graph_layer
-             FROM entities WHERE workspace_id = $1 ORDER BY name",
-        )
-        .bind(ws_id.to_string())
-        .fetch_all(&state.pool)
-        .await?
+        let sql = format!("{} ORDER BY name", entity_sql_base);
+        sqlx::query_as::<_, EntityTuple>(&sql)
+            .bind(ws_id.to_string())
+            .fetch_all(&state.pool)
+            .await?
     };
 
     let mut entity_layer_map: HashMap<String, String> = HashMap::new();
@@ -261,13 +330,22 @@ async fn get_graph(
         let metadata: serde_json::Value = r.4.as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(serde_json::json!({}));
+        let aliases: Option<Vec<String>> = r.11.as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
+        let display = r.9.clone().or_else(|| Some(r.1.clone()));
         EntityRow {
             id: r.0.parse().unwrap_or_default(),
-            name: r.1,
+            name: display.clone().unwrap_or(r.1.clone()),
             entity_type: r.2,
             document_id: r.3.as_deref().and_then(|s| s.parse().ok()),
             metadata,
             created_at: r.5,
+            entity_key: r.7,
+            original_name: r.8.or_else(|| Some(r.1.clone())),
+            display_name: display,
+            original_language: r.10,
+            aliases,
+            graph_layer: Some(r.6.clone()),
         }
     }).collect();
 
@@ -316,12 +394,26 @@ async fn get_graph(
         .iter()
         .map(|e| {
             let layer = entity_layer_map.get(&e.id.to_string()).cloned();
+            let description = e.metadata.get("description")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let jurisdiction = e.metadata.get("jurisdiction")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
             GraphNode {
                 id: e.id.to_string(),
-                label: e.name.clone(),
+                label: e.display_name.clone().unwrap_or_else(|| e.name.clone()),
                 entity_type: e.entity_type.clone(),
                 document_id: e.document_id,
                 graph_layer: layer,
+                original_name: e.original_name.clone(),
+                display_name: e.display_name.clone(),
+                original_language: e.original_language.clone(),
+                aliases: e.aliases.clone(),
+                description,
+                jurisdiction,
             }
         })
         .collect();
@@ -333,7 +425,15 @@ async fn get_graph(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
+            let evidence_text = r.metadata.get("evidence_text")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
             let source_document_id = r.metadata.get("source_document_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let source_chunk_id = r.metadata.get("source_chunk_id")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
@@ -345,7 +445,9 @@ async fn get_graph(
                 relation: r.relation_type.clone(),
                 weight: r.weight,
                 description,
+                evidence_text,
                 source_document_id,
+                source_chunk_id,
                 graph_layer: layer,
             }
         })
@@ -360,9 +462,13 @@ async fn list_entities(
     Path(ws_id): Path<Uuid>,
 ) -> Result<Json<Vec<EntityRow>>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
-    let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String)>(
-        "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT)
-         FROM entities WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200",
+    let rows = sqlx::query_as::<_, (
+        String, String, String, Option<String>, Option<String>, String,
+        Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+    )>(
+        "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT),
+                entity_key, original_name, display_name, original_language, aliases, graph_layer
+         FROM entities WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 500",
     )
     .bind(ws_id.to_string())
     .fetch_all(&state.pool)
@@ -372,13 +478,88 @@ async fn list_entities(
         let metadata: serde_json::Value = r.4.as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(serde_json::json!({}));
+        let aliases: Option<Vec<String>> = r.10.as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
+        let display = r.8.clone().or_else(|| Some(r.1.clone()));
         EntityRow {
             id: r.0.parse().unwrap_or_default(),
-            name: r.1,
+            name: display.clone().unwrap_or(r.1.clone()),
             entity_type: r.2,
             document_id: r.3.as_deref().and_then(|s| s.parse().ok()),
             metadata,
             created_at: r.5,
+            entity_key: r.6,
+            original_name: r.7.or_else(|| Some(r.1.clone())),
+            display_name: display,
+            original_language: r.9,
+            aliases,
+            graph_layer: r.11,
+        }
+    }).collect();
+
+    Ok(Json(entities))
+}
+
+#[derive(Deserialize)]
+struct EntitySearchQuery {
+    q: String,
+    #[serde(default)]
+    limit: Option<i32>,
+}
+
+async fn search_entities(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(ws_id): Path<Uuid>,
+    Query(params): Query<EntitySearchQuery>,
+) -> Result<Json<Vec<EntityRow>>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+    let q = params.q.trim();
+    if q.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let pattern = format!("%{}%", q.to_lowercase());
+
+    let rows = sqlx::query_as::<_, (
+        String, String, String, Option<String>, Option<String>, String,
+        Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+    )>(
+        "SELECT id, name, entity_type, document_id, CAST(metadata AS TEXT), CAST(created_at AS TEXT),
+                entity_key, original_name, display_name, original_language, aliases, graph_layer
+         FROM entities WHERE workspace_id = $1 AND (
+            LOWER(COALESCE(display_name, name)) LIKE $2 OR
+            LOWER(COALESCE(original_name, name)) LIKE $2 OR
+            LOWER(COALESCE(entity_key, '')) LIKE $2 OR
+            LOWER(aliases) LIKE $2
+         ) ORDER BY name LIMIT $3",
+    )
+    .bind(ws_id.to_string())
+    .bind(&pattern)
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let entities: Vec<EntityRow> = rows.into_iter().map(|r| {
+        let metadata: serde_json::Value = r.4.as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(serde_json::json!({}));
+        let aliases: Option<Vec<String>> = r.10.as_deref()
+            .and_then(|s| serde_json::from_str(s).ok());
+        let display = r.8.clone().or_else(|| Some(r.1.clone()));
+        EntityRow {
+            id: r.0.parse().unwrap_or_default(),
+            name: display.clone().unwrap_or(r.1.clone()),
+            entity_type: r.2,
+            document_id: r.3.as_deref().and_then(|s| s.parse().ok()),
+            metadata,
+            created_at: r.5,
+            entity_key: r.6,
+            original_name: r.7.or_else(|| Some(r.1.clone())),
+            display_name: display,
+            original_language: r.9,
+            aliases,
+            graph_layer: r.11,
         }
     }).collect();
 
@@ -429,8 +610,8 @@ async fn load_default_llm(
     user_id: Uuid,
     jwt_secret: &str,
 ) -> Result<LlmWithMeta, AppError> {
-    let (provider, api_base_url, api_key_enc, model_name) = sqlx::query_as::<_, (String, String, Option<String>, String)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name \
+    let (provider, api_base_url, api_key_enc, model_name, endpoint_mode) = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, endpoint_mode \
          FROM model_configs WHERE user_id = $1 AND is_default = 1 LIMIT 1",
     )
     .bind(user_id.to_string())
@@ -444,7 +625,9 @@ async fn load_default_llm(
 
     Ok(LlmWithMeta {
         provider: OpenAILlmProvider::new(
+            &provider,
             &api_base_url,
+            endpoint_mode.as_deref(),
             api_key.as_deref(),
             &model_name,
         ),
@@ -453,78 +636,102 @@ async fn load_default_llm(
     })
 }
 
+#[derive(Deserialize)]
+struct GenerateRequest {
+    #[serde(default = "default_target_language")]
+    target_language: String,
+}
+
 async fn generate_for_document(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((ws_id, doc_id)): Path<(Uuid, Uuid)>,
+    body: Option<Json<GenerateRequest>>,
 ) -> Result<Json<GenerateResponse>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
 
     let llm = load_default_llm(&state.pool, auth.id, &state.jwt_secret).await?;
+    let target_language = body.map(|b| b.target_language.clone()).unwrap_or_else(default_target_language);
 
-    let log_id = Uuid::new_v4().to_string();
-    let started_at = chrono::Utc::now();
-    let _ = sqlx::query(
-        "INSERT INTO graph_generation_logs (id, workspace_id, user_id, status, trigger_type, document_id, llm_provider, llm_model, total_documents, started_at) \
-         VALUES ($1, $2, $3, 'running', 'manual_single', $4, $5, $6, 1, $7)"
+    let task_id = graph_generation::create_job(
+        &state.pool,
+        &CreateJobParams {
+            workspace_id: ws_id,
+            user_id: auth.id,
+            job_type: "knowledge_single".into(),
+            layer_type: Some("knowledge".into()),
+            target_language: target_language.clone(),
+            total_documents: 1,
+            document_id: Some(doc_id),
+            llm_provider: Some(llm.provider_name.clone()),
+            llm_model: Some(llm.model_name.clone()),
+        },
     )
-    .bind(&log_id)
-    .bind(ws_id.to_string())
-    .bind(auth.id.to_string())
-    .bind(doc_id.to_string())
-    .bind(&llm.provider_name)
-    .bind(&llm.model_name)
-    .bind(started_at.to_rfc3339())
-    .execute(&state.pool)
-    .await;
+    .await
+    .map_err(AppError::Internal)?;
 
+    let started_at = chrono::Utc::now();
     let result = knowledge_extraction::extract_for_document(
         &state.pool,
         &llm.provider,
         ws_id,
         doc_id,
+        &target_language,
     )
     .await;
 
-    let elapsed_ms = (chrono::Utc::now() - started_at).num_milliseconds();
-    let completed_at = chrono::Utc::now().to_rfc3339();
-
     match &result {
-        Ok((entities, relations)) => {
-            let _ = sqlx::query(
-                "UPDATE graph_generation_logs SET status = 'completed', processed_documents = 1, \
-                 entities_created = $1, relations_created = $2, completed_at = $3, elapsed_ms = $4 WHERE id = $5"
+        Ok(stats) => {
+            let _ = graph_generation::complete_job(
+                &state.pool,
+                &task_id,
+                "completed",
+                started_at,
+                &JobProgressUpdate {
+                    processed_documents: Some(1),
+                    succeeded_documents: Some(1),
+                    entities_created: Some(stats.entities_created as i32),
+                    relations_created: Some(stats.relations_created as i32),
+                    relations_llm_returned: Some(stats.relations_llm_returned as i32),
+                    relations_skipped_match: Some(stats.relations_skipped_match as i32),
+                    relations_skipped_duplicate: Some(stats.relations_skipped_duplicate as i32),
+                    relations_db_failed: Some(stats.relations_db_failed as i32),
+                    chunk_parse_failures: Some(stats.chunk_parse_failures as i32),
+                    json_parse_failures: Some(stats.json_parse_failures as i32),
+                    warnings: Some(stats.warnings.clone()),
+                    ..Default::default()
+                },
             )
-            .bind(*entities as i32)
-            .bind(*relations as i32)
-            .bind(&completed_at)
-            .bind(elapsed_ms)
-            .bind(&log_id)
-            .execute(&state.pool)
             .await;
         }
         Err(e) => {
-            let err_json = serde_json::to_string(&vec![e.to_string()]).unwrap_or_default();
-            let _ = sqlx::query(
-                "UPDATE graph_generation_logs SET status = 'failed', errors = $1, completed_at = $2, elapsed_ms = $3 WHERE id = $4"
+            let _ = graph_generation::complete_job(
+                &state.pool,
+                &task_id,
+                "failed",
+                started_at,
+                &JobProgressUpdate {
+                    errors: Some(vec![e.to_string()]),
+                    ..Default::default()
+                },
             )
-            .bind(&err_json)
-            .bind(&completed_at)
-            .bind(elapsed_ms)
-            .bind(&log_id)
-            .execute(&state.pool)
             .await;
         }
     }
 
-    let (entities, relations) = result
+    let stats = result
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Knowledge extraction failed: {}", e)))?;
 
     Ok(Json(GenerateResponse {
         success: true,
-        entities_created: entities,
-        relations_created: relations,
-        message: format!("Extracted {} entities and {} relations", entities, relations),
+        entities_created: stats.entities_created,
+        relations_created: stats.relations_created,
+        message: format!(
+            "Extracted {} entities and {} relations ({} skipped due to match failure)",
+            stats.entities_created,
+            stats.relations_created,
+            stats.relations_skipped_match
+        ),
     }))
 }
 
@@ -540,13 +747,24 @@ async fn generate_for_all_documents(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(ws_id): Path<Uuid>,
+    body: Option<Json<GenerateRequest>>,
 ) -> Result<Json<AsyncGenerateResponse>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
 
-    let llm = load_default_llm(&state.pool, auth.id, &state.jwt_secret).await?;
+    if let Some(active) = graph_generation::get_active_job(&state.pool, ws_id).await.map_err(AppError::Internal)? {
+        return Ok(Json(AsyncGenerateResponse {
+            task_id: active.task_id,
+            status: active.status,
+            total_documents: active.total_documents as usize,
+            message: "A generation job is already running".into(),
+        }));
+    }
 
-    let doc_ids = sqlx::query_as::<_, (String,)>(
-        "SELECT id FROM documents WHERE workspace_id = $1 AND processing_status IN ('ready', 'completed')"
+    let llm = load_default_llm(&state.pool, auth.id, &state.jwt_secret).await?;
+    let target_language = body.map(|b| b.target_language.clone()).unwrap_or_else(default_target_language);
+
+    let doc_ids = sqlx::query_as::<_, (String, String)>(
+        "SELECT id, title FROM documents WHERE workspace_id = $1 AND processing_status IN ('ready', 'completed')",
     )
     .bind(ws_id.to_string())
     .fetch_all(&state.pool)
@@ -561,118 +779,46 @@ async fn generate_for_all_documents(
         }));
     }
 
-    let task_id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
-    let total = doc_ids.len();
-
-    let task = GenerationTask {
-        task_id: task_id.clone(),
-        workspace_id: ws_id.to_string(),
-        status: "running".into(),
-        total_documents: total,
-        processed_documents: 0,
-        entities_created: 0,
-        relations_created: 0,
-        errors: Vec::new(),
-        started_at: now.clone(),
-        completed_at: None,
-    };
-
-    {
-        let mut tasks = generation_tasks().write().await;
-        tasks.insert(task_id.clone(), task);
-    }
-
-    let _ = sqlx::query(
-        "INSERT INTO graph_generation_logs (id, workspace_id, user_id, status, trigger_type, llm_provider, llm_model, total_documents, started_at) \
-         VALUES ($1, $2, $3, 'running', 'manual_batch', $4, $5, $6, $7)"
+    let total = doc_ids.len() as i32;
+    let task_id = graph_generation::create_job(
+        &state.pool,
+        &CreateJobParams {
+            workspace_id: ws_id,
+            user_id: auth.id,
+            job_type: "knowledge_batch".into(),
+            layer_type: Some("knowledge".into()),
+            target_language: target_language.clone(),
+            total_documents: total,
+            document_id: None,
+            llm_provider: Some(llm.provider_name.clone()),
+            llm_model: Some(llm.model_name.clone()),
+        },
     )
-    .bind(&task_id)
-    .bind(ws_id.to_string())
-    .bind(auth.id.to_string())
-    .bind(&llm.provider_name)
-    .bind(&llm.model_name)
-    .bind(total as i32)
-    .bind(&now)
-    .execute(&state.pool)
-    .await;
+    .await
+    .map_err(AppError::Internal)?;
 
     let pool = state.pool.clone();
     let bg_task_id = task_id.clone();
-    let batch_started_at = chrono::Utc::now();
-    let llm_provider = llm.provider;
+    let llm_provider: Arc<dyn crate::traits::llm_provider::LlmProvider> = Arc::new(llm.provider);
+    let started_at = chrono::Utc::now();
 
     tokio::spawn(async move {
-        let mut total_entities = 0usize;
-        let mut total_relations = 0usize;
-        let mut errors = Vec::new();
-        let mut processed = 0usize;
-
-        for (doc_id_str,) in &doc_ids {
-            let doc_id: Uuid = doc_id_str.parse().unwrap_or_default();
-            match knowledge_extraction::extract_for_document(&pool, &llm_provider, ws_id, doc_id).await {
-                Ok((e, r)) => {
-                    total_entities += e;
-                    total_relations += r;
-                }
-                Err(e) => {
-                    let msg = format!("doc {}: {}", doc_id, e);
-                    tracing::warn!(document_id = %doc_id, error = %e, "Failed to extract for document");
-                    errors.push(msg);
-                }
-            }
-            processed += 1;
-
-            let mut tasks = generation_tasks().write().await;
-            if let Some(t) = tasks.get_mut(&bg_task_id) {
-                t.processed_documents = processed;
-                t.entities_created = total_entities;
-                t.relations_created = total_relations;
-                t.errors = errors.clone();
-            }
-        }
-
-        let completed_at = chrono::Utc::now().to_rfc3339();
-        let errors_json = serde_json::to_string(&errors).unwrap_or_else(|_| "[]".to_string());
-
-        let mut tasks = generation_tasks().write().await;
-        if let Some(t) = tasks.get_mut(&bg_task_id) {
-            t.status = "completed".into();
-            t.completed_at = Some(completed_at.clone());
-        }
-
-        let elapsed_ms = (chrono::Utc::now() - batch_started_at).num_milliseconds();
-
-        let _ = sqlx::query(
-            "UPDATE graph_generation_logs SET \
-             status = 'completed', processed_documents = $1, entities_created = $2, \
-             relations_created = $3, errors = $4, completed_at = $5, elapsed_ms = $6 \
-             WHERE id = $7"
+        graph_generation::run_knowledge_batch_job(
+            pool,
+            bg_task_id,
+            ws_id,
+            doc_ids,
+            target_language,
+            llm_provider,
+            started_at,
         )
-        .bind(processed as i32)
-        .bind(total_entities as i32)
-        .bind(total_relations as i32)
-        .bind(&errors_json)
-        .bind(&completed_at)
-        .bind(elapsed_ms)
-        .bind(&bg_task_id)
-        .execute(&pool)
         .await;
-
-        tracing::info!(
-            task_id = %bg_task_id,
-            workspace_id = %ws_id,
-            docs = total,
-            entities = total_entities,
-            relations = total_relations,
-            "Background knowledge graph generation completed"
-        );
     });
 
     Ok(Json(AsyncGenerateResponse {
         task_id,
         status: "running".into(),
-        total_documents: total,
+        total_documents: total as usize,
         message: format!("Generation started for {} documents. Poll the status endpoint for progress.", total),
     }))
 }
@@ -681,18 +827,42 @@ async fn generation_status(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((ws_id, task_id)): Path<(Uuid, String)>,
-) -> Result<Json<GenerationTask>, AppError> {
+) -> Result<Json<GenerationJobStatus>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
 
-    let tasks = generation_tasks().read().await;
-    let task = tasks.get(&task_id)
+    let job = graph_generation::get_job_status(&state.pool, ws_id, &task_id)
+        .await
+        .map_err(AppError::Internal)?
         .ok_or_else(|| AppError::NotFound("Generation task not found".into()))?;
 
-    if task.workspace_id != ws_id.to_string() {
-        return Err(AppError::NotFound("Generation task not found".into()));
-    }
+    Ok(Json(job))
+}
 
-    Ok(Json(task.clone()))
+async fn generation_active(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(ws_id): Path<Uuid>,
+) -> Result<Json<Option<GenerationJobStatus>>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+    let job = graph_generation::get_active_job(&state.pool, ws_id)
+        .await
+        .map_err(AppError::Internal)?;
+    Ok(Json(job))
+}
+
+async fn cancel_generation(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((ws_id, task_id)): Path<(Uuid, String)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    check_workspace_access(&state.pool, ws_id, auth.id).await?;
+    let cancelled = graph_generation::request_cancel(&state.pool, ws_id, &task_id)
+        .await
+        .map_err(AppError::Internal)?;
+    if !cancelled {
+        return Err(AppError::NotFound("Active generation task not found".into()));
+    }
+    Ok(Json(serde_json::json!({ "cancelled": true, "task_id": task_id })))
 }
 
 async fn reset_graph(
@@ -794,14 +964,56 @@ struct GenerationLogEntry {
     id: String,
     status: String,
     trigger_type: String,
+    job_type: Option<String>,
+    layer_type: Option<String>,
+    target_language: Option<String>,
     document_id: Option<String>,
     llm_provider: Option<String>,
     llm_model: Option<String>,
     total_documents: i32,
     processed_documents: i32,
+    succeeded_documents: i32,
+    failed_documents: i32,
     entities_created: i32,
     relations_created: i32,
+    relations_llm_returned: i32,
+    relations_skipped_match: i32,
+    relations_skipped_duplicate: i32,
+    relations_db_failed: i32,
+    chunk_parse_failures: i32,
+    json_parse_failures: i32,
     errors: Vec<String>,
+    warnings: Vec<String>,
+    started_at: String,
+    completed_at: Option<String>,
+    elapsed_ms: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct GenerationLogRow {
+    id: String,
+    status: String,
+    trigger_type: String,
+    job_type: Option<String>,
+    layer_type: Option<String>,
+    target_language: Option<String>,
+    document_id: Option<String>,
+    llm_provider: Option<String>,
+    llm_model: Option<String>,
+    total_documents: i32,
+    processed_documents: i32,
+    succeeded_documents: Option<i32>,
+    failed_documents: Option<i32>,
+    entities_created: i32,
+    relations_created: i32,
+    relations_llm_returned: Option<i32>,
+    relations_skipped_match: Option<i32>,
+    relations_skipped_duplicate: Option<i32>,
+    relations_db_failed: Option<i32>,
+    chunk_parse_failures: Option<i32>,
+    json_parse_failures: Option<i32>,
+    errors: String,
+    warnings: Option<String>,
     started_at: String,
     completed_at: Option<String>,
     elapsed_ms: Option<i64>,
@@ -814,34 +1026,53 @@ async fn generation_history(
 ) -> Result<Json<Vec<GenerationLogEntry>>, AppError> {
     check_workspace_access(&state.pool, ws_id, auth.id).await?;
 
-    let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, Option<String>, i32, i32, i32, i32, String, String, Option<String>, Option<i64>)>(
-        "SELECT id, status, trigger_type, CAST(document_id AS TEXT), llm_provider, llm_model, \
-         total_documents, processed_documents, entities_created, \
-         relations_created, errors, CAST(started_at AS TEXT), CAST(completed_at AS TEXT), elapsed_ms \
-         FROM graph_generation_logs WHERE workspace_id = $1 \
-         ORDER BY started_at DESC LIMIT 20"
+    let rows = sqlx::query_as::<_, GenerationLogRow>(
+        "SELECT id, status, trigger_type, job_type, layer_type, target_language,
+                CAST(document_id AS TEXT) as document_id, llm_provider, llm_model,
+                total_documents, processed_documents, succeeded_documents, failed_documents,
+                entities_created, relations_created,
+                relations_llm_returned, relations_skipped_match, relations_skipped_duplicate, relations_db_failed,
+                chunk_parse_failures, json_parse_failures,
+                errors, warnings, CAST(started_at AS TEXT) as started_at, CAST(completed_at AS TEXT) as completed_at, elapsed_ms
+         FROM graph_generation_logs WHERE workspace_id = $1
+         ORDER BY started_at DESC LIMIT 50",
     )
     .bind(ws_id.to_string())
     .fetch_all(&state.pool)
     .await?;
 
     let entries: Vec<GenerationLogEntry> = rows.into_iter().map(|r| {
-        let errors: Vec<String> = serde_json::from_str(&r.10).unwrap_or_default();
+        let errors: Vec<String> = serde_json::from_str(&r.errors).unwrap_or_default();
+        let warnings: Vec<String> = r.warnings.as_deref()
+            .and_then(|w| serde_json::from_str(w).ok())
+            .unwrap_or_default();
         GenerationLogEntry {
-            id: r.0,
-            status: r.1,
-            trigger_type: r.2,
-            document_id: r.3,
-            llm_provider: r.4,
-            llm_model: r.5,
-            total_documents: r.6,
-            processed_documents: r.7,
-            entities_created: r.8,
-            relations_created: r.9,
+            id: r.id,
+            status: r.status,
+            trigger_type: r.trigger_type,
+            job_type: r.job_type,
+            layer_type: r.layer_type,
+            target_language: r.target_language,
+            document_id: r.document_id,
+            llm_provider: r.llm_provider,
+            llm_model: r.llm_model,
+            total_documents: r.total_documents,
+            processed_documents: r.processed_documents,
+            succeeded_documents: r.succeeded_documents.unwrap_or(0),
+            failed_documents: r.failed_documents.unwrap_or(0),
+            entities_created: r.entities_created,
+            relations_created: r.relations_created,
+            relations_llm_returned: r.relations_llm_returned.unwrap_or(0),
+            relations_skipped_match: r.relations_skipped_match.unwrap_or(0),
+            relations_skipped_duplicate: r.relations_skipped_duplicate.unwrap_or(0),
+            relations_db_failed: r.relations_db_failed.unwrap_or(0),
+            chunk_parse_failures: r.chunk_parse_failures.unwrap_or(0),
+            json_parse_failures: r.json_parse_failures.unwrap_or(0),
             errors,
-            started_at: r.11,
-            completed_at: r.12,
-            elapsed_ms: r.13,
+            warnings,
+            started_at: r.started_at,
+            completed_at: r.completed_at,
+            elapsed_ms: r.elapsed_ms,
         }
     }).collect();
 
@@ -1241,16 +1472,21 @@ mod tests {
         let node = GraphNode {
             id: "n1".into(),
             label: "Test Entity".into(),
-            entity_type: "person".into(),
+            entity_type: "regulator".into(),
             document_id: Some(doc_id),
             graph_layer: Some("knowledge".into()),
+            original_name: Some("SEC".into()),
+            display_name: Some("Test Entity".into()),
+            original_language: Some("en".into()),
+            aliases: Some(vec!["Securities and Exchange Commission".into()]),
+            description: None,
+            jurisdiction: None,
         };
         let json = serde_json::to_value(&node).unwrap();
         assert_eq!(json["id"], "n1");
         assert_eq!(json["label"], "Test Entity");
-        assert_eq!(json["entity_type"], "person");
-        assert_eq!(json["document_id"], doc_id.to_string());
-        assert_eq!(json["graph_layer"], "knowledge");
+        assert_eq!(json["entity_type"], "regulator");
+        assert_eq!(json["original_name"], "SEC");
     }
 
     #[test]
@@ -1261,6 +1497,12 @@ mod tests {
             entity_type: "concept".into(),
             document_id: None,
             graph_layer: None,
+            original_name: None,
+            display_name: None,
+            original_language: None,
+            aliases: None,
+            description: None,
+            jurisdiction: None,
         };
         let json = serde_json::to_value(&node).unwrap();
         assert!(json.get("graph_layer").is_none());
@@ -1272,20 +1514,18 @@ mod tests {
             id: "rel-001".into(),
             source: "n1".into(),
             target: "n2".into(),
-            relation: "works_at".into(),
+            relation: "regulates".into(),
             weight: 0.85,
             description: Some("Employment".into()),
+            evidence_text: Some("SEC regulates".into()),
             source_document_id: Some("doc-xyz".into()),
+            source_chunk_id: Some("chunk-1".into()),
             graph_layer: Some("knowledge".into()),
         };
         let json = serde_json::to_value(&edge).unwrap();
         assert_eq!(json["id"], "rel-001");
-        assert_eq!(json["source"], "n1");
-        assert_eq!(json["target"], "n2");
-        assert_eq!(json["relation"], "works_at");
-        assert!((json["weight"].as_f64().unwrap() - 0.85).abs() < 0.001);
-        assert_eq!(json["description"], "Employment");
-        assert_eq!(json["source_document_id"], "doc-xyz");
+        assert_eq!(json["relation"], "regulates");
+        assert_eq!(json["evidence_text"], "SEC regulates");
     }
 
     #[test]
@@ -1297,12 +1537,13 @@ mod tests {
             relation: "related".into(),
             weight: 1.0,
             description: None,
+            evidence_text: None,
             source_document_id: None,
+            source_chunk_id: None,
             graph_layer: None,
         };
         let json = serde_json::to_value(&edge).unwrap();
         assert!(json.get("description").is_none());
-        assert!(json.get("source_document_id").is_none());
     }
 
     #[test]
@@ -1363,11 +1604,11 @@ mod tests {
     fn graph_response_structure() {
         let data = GraphResponse {
             nodes: vec![
-                GraphNode { id: "n1".into(), label: "A".into(), entity_type: "person".into(), document_id: None, graph_layer: Some("knowledge".into()) },
-                GraphNode { id: "n2".into(), label: "B".into(), entity_type: "concept".into(), document_id: None, graph_layer: Some("document".into()) },
+                GraphNode { id: "n1".into(), label: "A".into(), entity_type: "regulator".into(), document_id: None, graph_layer: Some("knowledge".into()), original_name: None, display_name: None, original_language: None, aliases: None, description: None, jurisdiction: None },
+                GraphNode { id: "n2".into(), label: "B".into(), entity_type: "document".into(), document_id: None, graph_layer: Some("document".into()), original_name: None, display_name: None, original_language: None, aliases: None, description: None, jurisdiction: None },
             ],
             edges: vec![
-                GraphEdge { id: "r1".into(), source: "n1".into(), target: "n2".into(), relation: "related".into(), weight: 0.5, description: None, source_document_id: None, graph_layer: Some("semantic".into()) },
+                GraphEdge { id: "r1".into(), source: "n1".into(), target: "n2".into(), relation: "related".into(), weight: 0.5, description: None, evidence_text: None, source_document_id: None, source_chunk_id: None, graph_layer: Some("semantic".into()) },
             ],
         };
         let json = serde_json::to_value(&data).unwrap();

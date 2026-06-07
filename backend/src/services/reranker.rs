@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::services::endpoint_resolver::{resolve_stored_endpoint, ModelType, ResolvedEndpoint};
 use crate::services::search::SearchResult;
 use crate::traits::llm_provider::{LlmMessage, LlmProvider, LlmRequest};
 
@@ -232,9 +233,38 @@ pub struct HttpRerankerProvider {
     provider_name: String,
 }
 
+pub fn build_http_reranker(
+    provider: &str,
+    api_base_url: &str,
+    endpoint_mode: Option<&str>,
+    api_key: String,
+    model: String,
+    timeout_secs: u64,
+) -> (ResolvedEndpoint, HttpRerankerProvider) {
+    let resolved = resolve_stored_endpoint(
+        ModelType::Rerank,
+        provider,
+        endpoint_mode,
+        api_base_url,
+        &model,
+    );
+    let reranker = HttpRerankerProvider::with_timeout(
+        resolved.final_url.clone(),
+        api_key,
+        model,
+        provider.to_string(),
+        timeout_secs,
+    );
+    (resolved, reranker)
+}
+
 impl HttpRerankerProvider {
     pub fn new(api_url: String, api_key: String, model: String, provider_name: String) -> Self {
         Self::with_timeout(api_url, api_key, model, provider_name, 30)
+    }
+
+    pub fn api_url(&self) -> &str {
+        &self.api_url
     }
 
     pub fn with_timeout(api_url: String, api_key: String, model: String, provider_name: String, timeout_secs: u64) -> Self {

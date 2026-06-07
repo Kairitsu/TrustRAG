@@ -100,26 +100,25 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON document_chunks (document_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc_embedding ON document_chunks (document_id) WHERE embedding IS NOT NULL;
 
--- FTS5 virtual table for full-text search
+-- FTS5 virtual table for full-text search (rowid maps to document_chunks.rowid)
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     content,
-    chunk_id UNINDEXED,
     content='document_chunks',
     content_rowid='rowid'
 );
 
 -- Triggers to keep FTS5 in sync
 CREATE TRIGGER IF NOT EXISTS chunks_fts_insert AFTER INSERT ON document_chunks BEGIN
-    INSERT INTO chunks_fts(rowid, content, chunk_id) VALUES (new.rowid, new.content, new.id);
+    INSERT INTO chunks_fts(rowid, content) VALUES (new.rowid, new.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS chunks_fts_delete AFTER DELETE ON document_chunks BEGIN
-    INSERT INTO chunks_fts(chunks_fts, rowid, content, chunk_id) VALUES ('delete', old.rowid, old.content, old.id);
+    INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS chunks_fts_update AFTER UPDATE OF content ON document_chunks BEGIN
-    INSERT INTO chunks_fts(chunks_fts, rowid, content, chunk_id) VALUES ('delete', old.rowid, old.content, old.id);
-    INSERT INTO chunks_fts(rowid, content, chunk_id) VALUES (new.rowid, new.content, new.id);
+    INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+    INSERT INTO chunks_fts(rowid, content) VALUES (new.rowid, new.content);
 END;
 
 CREATE TABLE IF NOT EXISTS model_configs (
@@ -131,6 +130,7 @@ CREATE TABLE IF NOT EXISTS model_configs (
     api_base_url    TEXT NOT NULL,
     api_key_enc     TEXT,
     model_name      TEXT NOT NULL,
+    endpoint_mode   TEXT NOT NULL DEFAULT 'base_url',
     temperature     REAL DEFAULT 0.1,
     max_tokens      INTEGER DEFAULT 4096,
     is_default      INTEGER DEFAULT 0,
@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS embedding_configs (
     api_base_url    TEXT,
     api_key_enc     TEXT,
     model_name      TEXT NOT NULL,
+    endpoint_mode   TEXT NOT NULL DEFAULT 'base_url',
     dimensions      INTEGER NOT NULL DEFAULT 1536,
     batch_size      INTEGER NOT NULL DEFAULT 10,
     is_default      INTEGER DEFAULT 0,
@@ -232,6 +233,11 @@ CREATE TABLE IF NOT EXISTS entities (
     document_id     TEXT REFERENCES documents(id) ON DELETE SET NULL,
     chunk_id        TEXT REFERENCES document_chunks(id) ON DELETE SET NULL,
     graph_layer     TEXT NOT NULL DEFAULT 'knowledge',
+    entity_key      TEXT,
+    original_name   TEXT,
+    display_name    TEXT,
+    original_language TEXT,
+    aliases         TEXT DEFAULT '[]',
     metadata        TEXT DEFAULT '{}',
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -251,6 +257,8 @@ CREATE TABLE IF NOT EXISTS entity_relations (
 CREATE INDEX IF NOT EXISTS idx_entities_workspace ON entities(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(workspace_id, name);
 CREATE INDEX IF NOT EXISTS idx_entities_layer ON entities(workspace_id, graph_layer);
+CREATE INDEX IF NOT EXISTS idx_entities_entity_key ON entities(workspace_id, entity_key);
+CREATE INDEX IF NOT EXISTS idx_entities_display_name ON entities(workspace_id, display_name);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_source ON entity_relations(source_entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_relations_workspace ON entity_relations(workspace_id);
@@ -522,10 +530,11 @@ CREATE TABLE IF NOT EXISTS rerank_configs (
     workspace_id    TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name            TEXT NOT NULL,
-    provider        TEXT NOT NULL CHECK (provider IN ('jina', 'cohere', 'openai', 'custom')),
+    provider        TEXT NOT NULL CHECK (provider IN ('jina', 'cohere', 'openai', 'dashscope', 'custom')),
     api_base_url    TEXT NOT NULL,
     api_key_enc     TEXT,
     model_name      TEXT NOT NULL,
+    endpoint_mode   TEXT NOT NULL DEFAULT 'base_url',
     top_n           INTEGER NOT NULL DEFAULT 5,
     initial_recall_k INTEGER NOT NULL DEFAULT 30,
     fallback_enabled INTEGER NOT NULL DEFAULT 1,
@@ -548,17 +557,33 @@ CREATE TABLE IF NOT EXISTS graph_generation_logs (
     user_id             TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'running',
     trigger_type        TEXT NOT NULL DEFAULT 'manual_batch',
+    job_type            TEXT NOT NULL DEFAULT 'knowledge_batch',
+    layer_type          TEXT,
+    target_language     TEXT DEFAULT 'zh',
     document_id         TEXT REFERENCES documents(id) ON DELETE SET NULL,
+    current_document_id TEXT,
+    current_document_title TEXT,
     llm_provider        TEXT,
     llm_model           TEXT,
     total_documents     INTEGER NOT NULL DEFAULT 0,
     processed_documents INTEGER NOT NULL DEFAULT 0,
+    succeeded_documents INTEGER NOT NULL DEFAULT 0,
+    failed_documents    INTEGER NOT NULL DEFAULT 0,
     entities_created    INTEGER NOT NULL DEFAULT 0,
     relations_created   INTEGER NOT NULL DEFAULT 0,
+    relations_llm_returned INTEGER NOT NULL DEFAULT 0,
+    relations_skipped_match INTEGER NOT NULL DEFAULT 0,
+    relations_skipped_duplicate INTEGER NOT NULL DEFAULT 0,
+    relations_db_failed INTEGER NOT NULL DEFAULT 0,
+    chunk_parse_failures INTEGER NOT NULL DEFAULT 0,
+    json_parse_failures INTEGER NOT NULL DEFAULT 0,
     errors              TEXT NOT NULL DEFAULT '[]',
+    warnings            TEXT NOT NULL DEFAULT '[]',
+    cancel_requested    INTEGER NOT NULL DEFAULT 0,
     started_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     completed_at        TEXT,
     elapsed_ms          INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_graph_gen_logs_workspace ON graph_generation_logs (workspace_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_graph_gen_logs_active ON graph_generation_logs (workspace_id, status, started_at);

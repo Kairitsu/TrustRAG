@@ -153,7 +153,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
           duration: const Duration(seconds: 4),
         ));
       } else {
-        _showErrorDialog('LLM 连接测试失败', message);
+        _showErrorDialog('LLM 连接测试失败', _formatTestError(result));
       }
     }
   }
@@ -238,7 +238,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
           duration: const Duration(seconds: 4),
         ));
       } else {
-        _showErrorDialog('嵌入模型连接测试失败', message);
+        _showErrorDialog('嵌入模型连接测试失败', _formatTestError(result));
       }
     }
   }
@@ -429,7 +429,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
           duration: const Duration(seconds: 4),
         ));
       } else {
-        _showErrorDialog('Rerank 模型连接测试失败', message);
+        _showErrorDialog('Rerank 模型连接测试失败', _formatTestError(result));
       }
     }
   }
@@ -547,8 +547,58 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
     }
   }
 
+  String _llmEndpointHelper(String endpointMode, String provider) {
+    if (endpointMode == 'full_endpoint') {
+      return '填写完整 LLM 接口地址，程序将原样请求，不再追加路径。\n'
+          '示例：https://dashscope.aliyuncs.com/compatible-api/v1/chat/completions';
+    }
+    return '填写服务基础地址（Base URL），程序将自动追加 /chat/completions。\n'
+        '示例：${_endpointHint(provider)}';
+  }
+
+  String _embeddingEndpointHelper(String endpointMode, String provider) {
+    if (endpointMode == 'full_endpoint') {
+      return '填写完整 Embedding 接口地址，程序将原样请求，不再追加路径。\n'
+          '示例：https://dashscope.aliyuncs.com/compatible-api/v1/embeddings';
+    }
+    return '填写服务基础地址（Base URL），程序将自动追加 /embeddings。\n'
+        '示例：${_endpointHint(provider)}';
+  }
+
+  String _rerankEndpointHelper(String endpointMode, String provider) {
+    if (endpointMode == 'full_endpoint') {
+      return '填写完整 Rerank 接口地址，程序将原样请求，不再追加路径。\n'
+          '示例：https://dashscope.aliyuncs.com/compatible-api/v1/reranks';
+    }
+    return '填写服务基础地址（Base URL），程序将按 Provider 自动追加默认路径。\n'
+        'DashScope 示例：https://dashscope.aliyuncs.com/compatible-api/v1\n'
+        'Jina 示例：${_rerankEndpointHint(provider)}';
+  }
+
+  String _formatTestError(Map<String, dynamic> result) {
+    final buffer = StringBuffer();
+    buffer.writeln(result['message'] ?? result['error'] ?? '未知错误');
+    for (final key in [
+      'model_type',
+      'provider',
+      'endpoint_mode',
+      'user_endpoint',
+      'final_url',
+      'http_status',
+    ]) {
+      if (result[key] != null) {
+        buffer.writeln('$key: ${result[key]}');
+      }
+    }
+    if (result['error'] != null && result['error'] != result['message']) {
+      buffer.writeln('error: ${result['error']}');
+    }
+    return buffer.toString().trim();
+  }
+
   void _showLlmDialog({ModelConfig? config}) {
     String selectedProvider = config?.provider ?? 'openai';
+    String endpointMode = config?.endpointMode ?? 'base_url';
     final modelCtl = TextEditingController(text: config?.modelName ?? '');
     final endpointCtl =
         TextEditingController(text: config?.apiBaseUrl ?? '');
@@ -590,13 +640,35 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   ),
                 ),
                 const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: endpointMode,
+                  decoration: const InputDecoration(labelText: 'Endpoint 类型'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'base_url',
+                      child: Text('Base URL（自动追加路径）'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'full_endpoint',
+                      child: Text('Full Endpoint（完整接口地址）'),
+                    ),
+                  ],
+                  onChanged: (v) =>
+                      setDialogState(() => endpointMode = v ?? 'base_url'),
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: endpointCtl,
                   decoration: InputDecoration(
-                    labelText: 'API Endpoint',
-                    hintText: _endpointHint(selectedProvider),
-                    helperText: '填写到 /v1 即可，无需加 /chat/completions',
-                    helperMaxLines: 2,
+                    labelText: endpointMode == 'full_endpoint'
+                        ? 'Full Endpoint'
+                        : 'Base URL',
+                    hintText: endpointMode == 'full_endpoint'
+                        ? '${_endpointHint(selectedProvider)}/chat/completions'
+                        : _endpointHint(selectedProvider),
+                    helperText:
+                        _llmEndpointHelper(endpointMode, selectedProvider),
+                    helperMaxLines: 4,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -633,6 +705,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   'provider': selectedProvider,
                   'model_name': modelCtl.text,
                   'api_base_url': endpointCtl.text,
+                  'endpoint_mode': endpointMode,
                   'is_default': isDefault,
                 };
                 if (apiKeyCtl.text.isNotEmpty) {
@@ -662,6 +735,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
 
   void _showEmbeddingDialog({EmbeddingConfig? config}) {
     String selectedProvider = config?.provider ?? 'openai';
+    String endpointMode = config?.endpointMode ?? 'base_url';
     final modelCtl = TextEditingController(text: config?.modelName ?? '');
     final endpointCtl =
         TextEditingController(text: config?.apiBaseUrl ?? '');
@@ -709,13 +783,35 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   ),
                 ),
                 const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: endpointMode,
+                  decoration: const InputDecoration(labelText: 'Endpoint 类型'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'base_url',
+                      child: Text('Base URL（自动追加路径）'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'full_endpoint',
+                      child: Text('Full Endpoint（完整接口地址）'),
+                    ),
+                  ],
+                  onChanged: (v) =>
+                      setDialogState(() => endpointMode = v ?? 'base_url'),
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: endpointCtl,
                   decoration: InputDecoration(
-                    labelText: 'API Endpoint',
-                    hintText: _endpointHint(selectedProvider),
-                    helperText: '兼容 OpenAI /v1/embeddings 接口即可',
-                    helperMaxLines: 2,
+                    labelText: endpointMode == 'full_endpoint'
+                        ? 'Full Endpoint'
+                        : 'Base URL',
+                    hintText: endpointMode == 'full_endpoint'
+                        ? '${_endpointHint(selectedProvider)}/embeddings'
+                        : _endpointHint(selectedProvider),
+                    helperText: _embeddingEndpointHelper(
+                        endpointMode, selectedProvider),
+                    helperMaxLines: 4,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -773,6 +869,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   'provider': selectedProvider,
                   'model_name': modelCtl.text,
                   'api_base_url': endpointCtl.text,
+                  'endpoint_mode': endpointMode,
                   'dimensions':
                       int.tryParse(dimensionsCtl.text) ?? 1536,
                   'batch_size':
@@ -812,6 +909,8 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
         return 'https://api.cohere.ai/v1';
       case 'openai':
         return 'https://api.openai.com/v1';
+      case 'dashscope':
+        return 'https://dashscope.aliyuncs.com/compatible-api/v1';
       default:
         return 'https://your-rerank-api.com/v1';
     }
@@ -825,6 +924,8 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
         return '如 rerank-v3.5';
       case 'openai':
         return '如 gpt-4o-mini (chat-based rerank)';
+      case 'dashscope':
+        return '如 qwen3-rerank';
       default:
         return '如 BAAI/bge-reranker-v2-m3';
     }
@@ -832,6 +933,10 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
 
   void _showRerankDialog({RerankConfig? config}) {
     String selectedProvider = config?.provider ?? 'jina';
+    String endpointMode = config?.endpointMode ??
+        (config == null && selectedProvider == 'dashscope'
+            ? 'full_endpoint'
+            : 'base_url');
     final modelCtl = TextEditingController(text: config?.modelName ?? '');
     final endpointCtl =
         TextEditingController(text: config?.apiBaseUrl ?? '');
@@ -859,11 +964,16 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   DropdownButtonFormField<String>(
                     initialValue: selectedProvider,
                     decoration: const InputDecoration(labelText: 'Provider'),
-                    items: ['jina', 'cohere', 'openai', 'custom']
+                    items: ['jina', 'cohere', 'openai', 'dashscope', 'custom']
                         .map((p) => DropdownMenuItem(value: p, child: Text(p)))
                         .toList(),
                     onChanged: (v) {
-                      setDialogState(() => selectedProvider = v ?? 'jina');
+                      setDialogState(() {
+                        selectedProvider = v ?? 'jina';
+                        if (selectedProvider == 'dashscope') {
+                          endpointMode = 'full_endpoint';
+                        }
+                      });
                       if (endpointCtl.text.isEmpty) {
                         endpointCtl.text =
                             _rerankEndpointHint(selectedProvider);
@@ -879,13 +989,38 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                     ),
                   ),
                   const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: endpointMode,
+                    decoration:
+                        const InputDecoration(labelText: 'Endpoint 类型'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'base_url',
+                        child: Text('Base URL（自动追加路径）'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'full_endpoint',
+                        child: Text('Full Endpoint（完整接口地址）'),
+                      ),
+                    ],
+                    onChanged: (v) =>
+                        setDialogState(() => endpointMode = v ?? 'base_url'),
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: endpointCtl,
                     decoration: InputDecoration(
-                      labelText: 'API Endpoint',
-                      hintText: _rerankEndpointHint(selectedProvider),
-                      helperText: '兼容 /v1/rerank 或 /rerank 接口',
-                      helperMaxLines: 2,
+                      labelText: endpointMode == 'full_endpoint'
+                          ? 'Full Endpoint'
+                          : 'Base URL',
+                      hintText: endpointMode == 'full_endpoint'
+                          ? (selectedProvider == 'dashscope'
+                              ? 'https://dashscope.aliyuncs.com/compatible-api/v1/reranks'
+                              : '${_rerankEndpointHint(selectedProvider)}/rerank')
+                          : _rerankEndpointHint(selectedProvider),
+                      helperText: _rerankEndpointHelper(
+                          endpointMode, selectedProvider),
+                      helperMaxLines: 5,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -980,6 +1115,7 @@ class _ModelConfigPageState extends ConsumerState<ModelConfigPage>
                   'provider': selectedProvider,
                   'model_name': modelCtl.text,
                   'api_base_url': endpointCtl.text,
+                  'endpoint_mode': endpointMode,
                   'top_n': (int.tryParse(topNCtl.text) ?? 5).clamp(1, 100),
                   'initial_recall_k': (int.tryParse(recallKCtl.text) ?? 30).clamp(5, 200),
                   'timeout_secs': (int.tryParse(timeoutCtl.text) ?? 30).clamp(5, 300),

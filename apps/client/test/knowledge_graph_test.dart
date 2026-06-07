@@ -47,11 +47,10 @@ void main() {
     test('color mapping for known entity types', () {
       expect(GraphNode(id: '', label: '', entityType: 'person').color, Colors.blue);
       expect(GraphNode(id: '', label: '', entityType: 'organization').color, Colors.purple);
-      expect(GraphNode(id: '', label: '', entityType: 'location').color, Colors.green);
-      expect(GraphNode(id: '', label: '', entityType: 'concept').color, Colors.orange);
-      expect(GraphNode(id: '', label: '', entityType: 'event').color, Colors.red);
-      expect(GraphNode(id: '', label: '', entityType: 'document').color, Colors.teal);
-      expect(GraphNode(id: '', label: '', entityType: 'technology').color, Colors.indigo);
+      expect(GraphNode(id: '', label: '', entityType: 'regulator').color, Colors.indigo);
+      expect(GraphNode(id: '', label: '', entityType: 'stablecoin').color, Colors.blue);
+      expect(GraphNode(id: '', label: '', entityType: 'prohibition').color, Colors.red);
+      expect(GraphNode(id: '', label: '', entityType: 'document').color, Colors.teal.shade300);
       expect(GraphNode(id: '', label: '', entityType: 'unknown').color, Colors.grey);
     });
   });

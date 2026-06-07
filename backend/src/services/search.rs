@@ -487,7 +487,7 @@ pub async fn fulltext_search(
                       CAST(rank AS REAL) as score
                FROM document_chunks dc
                JOIN documents d ON dc.document_id = d.id
-               JOIN chunks_fts ON chunks_fts.chunk_id = dc.id
+               JOIN chunks_fts ON chunks_fts.rowid = dc.rowid
                WHERE d.workspace_id = ?1
                  AND dc.document_id IN ({})
                  AND chunks_fts MATCH ?2
@@ -502,7 +502,7 @@ pub async fn fulltext_search(
                   CAST(rank AS REAL) as score
            FROM document_chunks dc
            JOIN documents d ON dc.document_id = d.id
-           JOIN chunks_fts ON chunks_fts.chunk_id = dc.id
+           JOIN chunks_fts ON chunks_fts.rowid = dc.rowid
            WHERE d.workspace_id = ?1
              AND chunks_fts MATCH ?2
            ORDER BY rank

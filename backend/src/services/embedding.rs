@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_openai::{
     config::OpenAIConfig,
     types::{CreateEmbeddingRequest, EmbeddingInput},
@@ -7,17 +9,15 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::db::DbPool;
+use crate::services::endpoint_resolver::{
+    resolve_stored_endpoint, EndpointMode, ModelType, ResolvedEndpoint,
+};
 use crate::traits::embedding_provider::EmbeddingProvider;
 
 /// Ensure api_base ends with /v1 for OpenAI-compatible APIs.
 /// async_openai appends /embeddings (etc.) to the base, so it must end with /v1.
 pub fn normalize_api_base(url: &str) -> String {
-    let trimmed = url.trim_end_matches('/');
-    if trimmed.ends_with("/v1") {
-        trimmed.to_string()
-    } else {
-        format!("{}/v1", trimmed)
-    }
+    crate::services::endpoint_resolver::normalize_openai_base(url)
 }
 
 pub const DEFAULT_EMBEDDING_BATCH_SIZE: usize = 10;
@@ -30,19 +30,56 @@ pub struct OpenAIEmbeddingProvider {
 }
 
 impl OpenAIEmbeddingProvider {
-    pub fn new(api_base_url: &str, api_key: Option<&str>, model: &str, dimensions: usize) -> Self {
-        Self::with_batch_size(api_base_url, api_key, model, dimensions, DEFAULT_EMBEDDING_BATCH_SIZE)
+    pub fn new(
+        provider: &str,
+        api_base_url: &str,
+        endpoint_mode: Option<&str>,
+        api_key: Option<&str>,
+        model: &str,
+        dimensions: usize,
+    ) -> Self {
+        Self::with_batch_size(
+            provider,
+            api_base_url,
+            endpoint_mode,
+            api_key,
+            model,
+            dimensions,
+            DEFAULT_EMBEDDING_BATCH_SIZE,
+        )
     }
 
     pub fn with_batch_size(
+        provider: &str,
         api_base_url: &str,
+        endpoint_mode: Option<&str>,
         api_key: Option<&str>,
         model: &str,
         dimensions: usize,
         batch_size: usize,
     ) -> Self {
-        let base = normalize_api_base(api_base_url);
-        let mut config = OpenAIConfig::new().with_api_base(&base);
+        let resolved = resolve_stored_endpoint(
+            ModelType::Embedding,
+            provider,
+            endpoint_mode,
+            api_base_url,
+            model,
+        );
+        Self::from_resolved(&resolved, api_key, model, dimensions, batch_size)
+    }
+
+    fn from_resolved(
+        resolved: &ResolvedEndpoint,
+        api_key: Option<&str>,
+        model: &str,
+        dimensions: usize,
+        batch_size: usize,
+    ) -> Self {
+        let base = resolved
+            .final_url
+            .trim_end_matches("/embeddings")
+            .trim_end_matches('/');
+        let mut config = OpenAIConfig::new().with_api_base(base);
         if let Some(key) = api_key {
             config = config.with_api_key(key);
         }
@@ -53,6 +90,160 @@ impl OpenAIEmbeddingProvider {
             dimensions,
             batch_size: batch_size.clamp(1, 2048),
         }
+    }
+}
+
+/// Direct HTTP embedding provider for full_endpoint mode.
+pub struct HttpEmbeddingProvider {
+    client: reqwest::Client,
+    embeddings_url: String,
+    api_key: Option<String>,
+    model: String,
+    dimensions: usize,
+    batch_size: usize,
+}
+
+impl HttpEmbeddingProvider {
+    pub fn new(
+        provider: &str,
+        api_base_url: &str,
+        endpoint_mode: Option<&str>,
+        api_key: Option<&str>,
+        model: &str,
+        dimensions: usize,
+        batch_size: usize,
+    ) -> Self {
+        let resolved = resolve_stored_endpoint(
+            ModelType::Embedding,
+            provider,
+            endpoint_mode,
+            api_base_url,
+            model,
+        );
+        Self {
+            client: reqwest::Client::new(),
+            embeddings_url: resolved.final_url,
+            api_key: api_key.map(|s| s.to_string()),
+            model: model.to_string(),
+            dimensions,
+            batch_size: batch_size.clamp(1, 2048),
+        }
+    }
+
+    pub fn resolved_url(&self) -> &str {
+        &self.embeddings_url
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for HttpEmbeddingProvider {
+    async fn embed_texts(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut all_embeddings = Vec::with_capacity(texts.len());
+
+        for batch in texts.chunks(self.batch_size) {
+            let body = serde_json::json!({
+                "model": self.model,
+                "input": batch,
+                "dimensions": self.dimensions,
+            });
+
+            let mut req = self.client.post(&self.embeddings_url).json(&body);
+            if let Some(key) = &self.api_key {
+                req = req.bearer_auth(key);
+            }
+
+            let resp = req
+                .timeout(std::time::Duration::from_secs(60))
+                .send()
+                .await?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                anyhow::bail!("Embedding API error ({}): {}", status, text);
+            }
+
+            let json: serde_json::Value = resp.json().await?;
+            let data = json["data"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("Missing data array in embedding response"))?;
+
+            let mut batch_embeddings: Vec<(usize, Vec<f32>)> = data
+                .iter()
+                .filter_map(|item| {
+                    let idx = item["index"].as_u64()? as usize;
+                    let emb: Vec<f32> = item["embedding"]
+                        .as_array()?
+                        .iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect();
+                    Some((idx, emb))
+                })
+                .collect();
+
+            batch_embeddings.sort_by_key(|(idx, _)| *idx);
+            all_embeddings.extend(batch_embeddings.into_iter().map(|(_, emb)| emb));
+        }
+
+        Ok(all_embeddings)
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+}
+
+pub fn build_embedding_provider(
+    provider: &str,
+    api_base_url: &str,
+    endpoint_mode: Option<&str>,
+    api_key: Option<&str>,
+    model: &str,
+    dimensions: usize,
+    batch_size: usize,
+) -> Arc<dyn EmbeddingProvider> {
+    let mode = crate::services::endpoint_resolver::effective_endpoint_mode(
+        ModelType::Embedding,
+        endpoint_mode,
+        api_base_url,
+    );
+
+    if provider == "ollama" {
+        return Arc::new(OllamaEmbeddingProvider::new(
+            api_base_url,
+            model,
+            dimensions,
+        ));
+    }
+
+    if mode == EndpointMode::FullEndpoint {
+        Arc::new(HttpEmbeddingProvider::new(
+            provider,
+            api_base_url,
+            endpoint_mode,
+            api_key,
+            model,
+            dimensions,
+            batch_size,
+        ))
+    } else {
+        Arc::new(OpenAIEmbeddingProvider::with_batch_size(
+            provider,
+            api_base_url,
+            endpoint_mode,
+            api_key,
+            model,
+            dimensions,
+            batch_size,
+        ))
     }
 }
 
@@ -264,7 +455,9 @@ mod tests {
     #[test]
     fn test_provider_new() {
         let provider = OpenAIEmbeddingProvider::new(
+            "openai",
             "http://localhost:11434/v1",
+            Some(EndpointMode::BaseUrl.as_str()),
             None,
             "nomic-embed-text",
             768,
@@ -277,7 +470,9 @@ mod tests {
     #[test]
     fn test_provider_with_custom_batch_size() {
         let provider = OpenAIEmbeddingProvider::with_batch_size(
+            "openai",
             "http://localhost:11434/v1",
+            Some(EndpointMode::BaseUrl.as_str()),
             None,
             "nomic-embed-text",
             768,
@@ -286,7 +481,9 @@ mod tests {
         assert_eq!(provider.batch_size, 5);
 
         let clamped = OpenAIEmbeddingProvider::with_batch_size(
+            "openai",
             "http://localhost:11434/v1",
+            Some(EndpointMode::BaseUrl.as_str()),
             None,
             "nomic-embed-text",
             768,
@@ -295,13 +492,32 @@ mod tests {
         assert_eq!(clamped.batch_size, 1);
 
         let clamped_high = OpenAIEmbeddingProvider::with_batch_size(
+            "openai",
             "http://localhost:11434/v1",
+            Some(EndpointMode::BaseUrl.as_str()),
             None,
             "nomic-embed-text",
             768,
             9999,
         );
         assert_eq!(clamped_high.batch_size, 2048);
+    }
+
+    #[test]
+    fn test_http_embedding_provider_full_endpoint() {
+        let provider = HttpEmbeddingProvider::new(
+            "custom",
+            "https://example.com/v1/embeddings",
+            Some(EndpointMode::FullEndpoint.as_str()),
+            None,
+            "text-embedding-3-small",
+            1536,
+            10,
+        );
+        assert_eq!(
+            provider.resolved_url(),
+            "https://example.com/v1/embeddings"
+        );
     }
 
     #[test]

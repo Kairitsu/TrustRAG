@@ -11,11 +11,14 @@ use uuid::Uuid;
 use crate::auth::middleware::AuthUser;
 use crate::db::compat;
 use crate::error::AppError;
-use crate::services::embedding::{OpenAIEmbeddingProvider, OllamaEmbeddingProvider};
+use crate::services::embedding::build_embedding_provider;
+use crate::services::endpoint_resolver::{
+    effective_endpoint_mode, redact_api_key, resolve_stored_endpoint, EndpointMode, ModelType,
+};
 use crate::traits::embedding_provider::EmbeddingProvider;
 
 use super::AppState;
-use super::models::{decrypt_api_key, encrypt_api_key};
+use super::models::{decrypt_api_key, encrypt_api_key, extract_http_status};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -41,8 +44,14 @@ pub struct CreateEmbeddingConfigRequest {
     pub batch_size: i32,
     #[serde(default)]
     pub is_default: bool,
+    #[serde(default = "default_endpoint_mode")]
+    pub endpoint_mode: String,
     #[serde(default)]
     pub workspace_id: Option<Uuid>,
+}
+
+fn default_endpoint_mode() -> String {
+    EndpointMode::BaseUrl.as_str().to_string()
 }
 
 fn default_dimensions() -> i32 {
@@ -63,6 +72,7 @@ pub struct UpdateEmbeddingConfigRequest {
     pub dimensions: Option<i32>,
     pub batch_size: Option<i32>,
     pub is_default: Option<bool>,
+    pub endpoint_mode: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -73,6 +83,7 @@ pub struct EmbeddingConfigResponse {
     pub name: String,
     pub provider: String,
     pub api_base_url: Option<String>,
+    pub endpoint_mode: String,
     pub has_api_key: bool,
     pub model_name: String,
     pub dimensions: i32,
@@ -87,13 +98,35 @@ pub struct TestEmbeddingResponse {
     pub success: bool,
     pub message: String,
     pub latency_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
-type EmbRow = (String, Option<String>, String, String, String, Option<String>, Option<String>, String, i32, i32, Option<bool>, String, String);
+type EmbRow = (String, Option<String>, String, String, String, Option<String>, Option<String>, String, String, i32, i32, Option<bool>, String, String);
 
-const EMB_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, dimensions, batch_size, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
+const EMB_SELECT: &str = "id, workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, COALESCE(endpoint_mode, 'base_url'), dimensions, batch_size, is_default, CAST(created_at AS TEXT), CAST(updated_at AS TEXT)";
 
 fn parse_emb_row(r: EmbRow) -> Result<EmbeddingConfigResponse, AppError> {
+    let api_base = r.5.clone().unwrap_or_default();
+    let endpoint_mode = if r.8.is_empty() {
+        effective_endpoint_mode(ModelType::Embedding, None, &api_base)
+            .as_str()
+            .to_string()
+    } else {
+        r.8.clone()
+    };
     Ok(EmbeddingConfigResponse {
         id: compat::parse_uuid(&r.0).map_err(|e| AppError::Internal(e.into()))?,
         workspace_id: r.1.as_deref().and_then(|s| compat::parse_uuid(s).ok()),
@@ -101,13 +134,14 @@ fn parse_emb_row(r: EmbRow) -> Result<EmbeddingConfigResponse, AppError> {
         name: r.3,
         provider: r.4,
         api_base_url: r.5,
+        endpoint_mode,
         has_api_key: r.6.is_some(),
         model_name: r.7,
-        dimensions: r.8,
-        batch_size: r.9,
-        is_default: r.10,
-        created_at: r.11,
-        updated_at: r.12,
+        dimensions: r.9,
+        batch_size: r.10,
+        is_default: r.11,
+        created_at: r.12,
+        updated_at: r.13,
     })
 }
 
@@ -177,8 +211,14 @@ async fn create_config(
 
     let batch_size = req.batch_size.clamp(1, 2048);
 
+    let endpoint_mode = super::models::normalize_endpoint_mode(
+        &req.endpoint_mode,
+        ModelType::Embedding,
+        &api_base_url,
+    );
+
     let q = format!(
-        "INSERT INTO embedding_configs (workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, dimensions, batch_size, is_default) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING {}",
+        "INSERT INTO embedding_configs (workspace_id, user_id, name, provider, api_base_url, api_key_enc, model_name, endpoint_mode, dimensions, batch_size, is_default) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING {}",
         EMB_SELECT
     );
     let row = sqlx::query_as::<_, EmbRow>(&q)
@@ -189,6 +229,7 @@ async fn create_config(
         .bind(&api_base_url)
         .bind(&api_key_enc)
         .bind(&model_name)
+        .bind(&endpoint_mode)
         .bind(req.dimensions)
         .bind(batch_size)
         .bind(req.is_default)
@@ -263,8 +304,16 @@ async fn update_config(
 
     let batch_size = req.batch_size.map(|b| b.clamp(1, 2048));
 
+    let endpoint_mode = req.endpoint_mode.as_deref().map(|m| {
+        super::models::normalize_endpoint_mode(
+            m,
+            ModelType::Embedding,
+            api_base_url.as_deref().unwrap_or(""),
+        )
+    });
+
     let q = format!(
-        "UPDATE embedding_configs SET name = COALESCE($1, name), provider = COALESCE($2, provider), api_base_url = COALESCE($3, api_base_url), api_key_enc = COALESCE($4, api_key_enc), model_name = COALESCE($5, model_name), dimensions = COALESCE($6, dimensions), batch_size = COALESCE($7, batch_size), is_default = COALESCE($8, is_default) WHERE id = $9 AND user_id = $10 RETURNING {}",
+        "UPDATE embedding_configs SET name = COALESCE($1, name), provider = COALESCE($2, provider), api_base_url = COALESCE($3, api_base_url), api_key_enc = COALESCE($4, api_key_enc), model_name = COALESCE($5, model_name), endpoint_mode = COALESCE($6, endpoint_mode), dimensions = COALESCE($7, dimensions), batch_size = COALESCE($8, batch_size), is_default = COALESCE($9, is_default) WHERE id = $10 AND user_id = $11 RETURNING {}",
         EMB_SELECT
     );
     let row = sqlx::query_as::<_, EmbRow>(&q)
@@ -273,6 +322,7 @@ async fn update_config(
         .bind(api_base_url)
         .bind(api_key_enc)
         .bind(model_name)
+        .bind(endpoint_mode)
         .bind(req.dimensions)
         .bind(batch_size)
         .bind(req.is_default)
@@ -321,8 +371,8 @@ async fn test_connection(
     auth: AuthUser,
     Path(config_id): Path<Uuid>,
 ) -> Result<Json<TestEmbeddingResponse>, AppError> {
-    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, i32, i32)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name, dimensions, batch_size
+    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<String>, i32, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, endpoint_mode, dimensions, batch_size
          FROM embedding_configs
          WHERE id = $1 AND user_id = $2",
     )
@@ -331,31 +381,38 @@ async fn test_connection(
     .fetch_optional(&state.pool)
     .await?;
 
-    let (provider, api_base_url, api_key_enc, model_name, dimensions, batch_size) = match row {
-        Some(r) => r,
-        None => return Err(AppError::NotFound("Embedding config not found".into())),
-    };
+    let (provider, api_base_url, api_key_enc, model_name, endpoint_mode, dimensions, batch_size) =
+        match row {
+            Some(r) => r,
+            None => return Err(AppError::NotFound("Embedding config not found".into())),
+        };
 
     let api_key = api_key_enc.and_then(|enc| decrypt_api_key(&enc, &state.jwt_secret));
     let base_url = api_base_url.unwrap_or_default();
+    let mode = effective_endpoint_mode(
+        ModelType::Embedding,
+        endpoint_mode.as_deref(),
+        &base_url,
+    );
+    let resolved = resolve_stored_endpoint(
+        ModelType::Embedding,
+        &provider,
+        Some(mode.as_str()),
+        &base_url,
+        &model_name,
+    );
 
     let start = std::time::Instant::now();
 
-    let emb_provider: Box<dyn EmbeddingProvider> = if provider == "ollama" {
-        Box::new(OllamaEmbeddingProvider::new(
-            &base_url,
-            &model_name,
-            dimensions as usize,
-        ))
-    } else {
-        Box::new(OpenAIEmbeddingProvider::with_batch_size(
-            &base_url,
-            api_key.as_deref(),
-            &model_name,
-            dimensions as usize,
-            batch_size as usize,
-        ))
-    };
+    let emb_provider = build_embedding_provider(
+        &provider,
+        &base_url,
+        endpoint_mode.as_deref(),
+        api_key.as_deref(),
+        &model_name,
+        dimensions as usize,
+        batch_size as usize,
+    );
 
     match emb_provider.embed_texts(&["Hello, this is a test.".to_string()]).await {
         Ok(embeddings) => {
@@ -364,22 +421,36 @@ async fn test_connection(
                 Ok(Json(TestEmbeddingResponse {
                     success: true,
                     message: format!(
-                        "Connected to {} model '{}'. Embedding dimension: {} (expected: {})",
-                        provider, model_name, emb.len(), dimensions
+                        "Connected to {} at {} model '{}'. Embedding dimension: {} (expected: {})",
+                        provider, resolved.final_url, model_name, emb.len(), dimensions
                     ),
                     latency_ms: Some(latency),
+                    model_type: Some("embedding".into()),
+                    provider: Some(provider),
+                    endpoint_mode: Some(mode.as_str().into()),
+                    user_endpoint: Some(base_url),
+                    final_url: Some(resolved.final_url),
+                    http_status: None,
+                    error: None,
                 }))
             } else {
                 Ok(Json(TestEmbeddingResponse {
                     success: false,
                     message: "API returned empty embeddings".into(),
                     latency_ms: Some(latency),
+                    model_type: Some("embedding".into()),
+                    provider: Some(provider),
+                    endpoint_mode: Some(mode.as_str().into()),
+                    user_endpoint: Some(base_url),
+                    final_url: Some(resolved.final_url),
+                    http_status: None,
+                    error: Some("API returned empty embeddings".into()),
                 }))
             }
         }
         Err(e) => {
             let latency = start.elapsed().as_millis() as u64;
-            let err_str = e.to_string();
+            let err_str = redact_api_key(&e.to_string(), api_key.as_deref());
             let message = if (err_str.contains("Unsupported model") || err_str.contains("unsupported"))
                 && is_likely_rerank_model(&model_name)
             {
@@ -394,14 +465,21 @@ async fn test_connection(
                 success: false,
                 message,
                 latency_ms: Some(latency),
+                model_type: Some("embedding".into()),
+                provider: Some(provider),
+                endpoint_mode: Some(mode.as_str().into()),
+                user_endpoint: Some(base_url),
+                final_url: Some(resolved.final_url),
+                http_status: extract_http_status(&err_str),
+                error: Some(err_str),
             }))
         }
     }
 }
 
 async fn reload_embedding_provider(state: &AppState) {
-    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, i32, i32)>(
-        "SELECT provider, api_base_url, api_key_enc, model_name, dimensions, batch_size
+    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<String>, i32, i32)>(
+        "SELECT provider, api_base_url, api_key_enc, model_name, endpoint_mode, dimensions, batch_size
          FROM embedding_configs
          WHERE is_default = 1
          ORDER BY updated_at DESC
@@ -411,24 +489,18 @@ async fn reload_embedding_provider(state: &AppState) {
     .await;
 
     match row {
-        Ok(Some((provider_type, api_base_url, api_key_enc, model_name, dimensions, batch_size))) => {
+        Ok(Some((provider_type, api_base_url, api_key_enc, model_name, endpoint_mode, dimensions, batch_size))) => {
             let api_key = api_key_enc.and_then(|enc| decrypt_api_key(&enc, &state.jwt_secret));
             let base_url = api_base_url.unwrap_or_default();
-            let provider: Arc<dyn EmbeddingProvider> = if provider_type == "ollama" {
-                Arc::new(OllamaEmbeddingProvider::new(
-                    &base_url,
-                    &model_name,
-                    dimensions as usize,
-                ))
-            } else {
-                Arc::new(OpenAIEmbeddingProvider::with_batch_size(
-                    &base_url,
-                    api_key.as_deref(),
-                    &model_name,
-                    dimensions as usize,
-                    batch_size as usize,
-                ))
-            };
+            let provider: Arc<dyn EmbeddingProvider> = build_embedding_provider(
+                &provider_type,
+                &base_url,
+                endpoint_mode.as_deref(),
+                api_key.as_deref(),
+                &model_name,
+                dimensions as usize,
+                batch_size as usize,
+            );
 
             let mut guard = state.embedding_provider.write().await;
             *guard = Some(provider);

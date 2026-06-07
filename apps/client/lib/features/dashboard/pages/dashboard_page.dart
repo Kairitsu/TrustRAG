@@ -28,6 +28,7 @@ import '../../settings/pages/server_config_page.dart';
 import '../../settings/pages/workspace_members_page.dart';
 import '../../settings/pages/team_management_page.dart';
 import '../../settings/providers/server_config_provider.dart';
+import '../providers/dashboard_provider.dart';
 import '../providers/workspace_provider.dart';
 
 class DashboardPage extends ConsumerStatefulWidget {
@@ -38,7 +39,6 @@ class DashboardPage extends ConsumerStatefulWidget {
 }
 
 class _DashboardPageState extends ConsumerState<DashboardPage> {
-  int _selectedIndex = 0;
   bool _checkingUpdate = false;
   double _sidebarWidth = 220;
   bool _sidebarCollapsed = false;
@@ -99,13 +99,15 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       });
     }
 
+    final selectedIndex = ref.watch(dashboardTabProvider);
+
     final contentArea = AnimatedSwitcher(
       duration: const Duration(milliseconds: 250),
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
       child: KeyedSubtree(
-        key: ValueKey<int>(_selectedIndex),
-        child: _buildContent(),
+        key: ValueKey<int>(selectedIndex),
+        child: _buildContent(selectedIndex),
       ),
     );
 
@@ -114,8 +116,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       return Scaffold(
         body: contentArea,
         bottomNavigationBar: NavigationBar(
-          selectedIndex: _selectedIndex,
-          onDestinationSelected: (i) => setState(() => _selectedIndex = i),
+          selectedIndex: selectedIndex,
+          onDestinationSelected: (i) =>
+              ref.read(dashboardTabProvider.notifier).state = i,
           destinations: List.generate(_navIcons.length, (i) => NavigationDestination(
                     icon: Icon(_navIcons[i].icon),
                     selectedIcon: Icon(_navIcons[i].selectedIcon),
@@ -138,8 +141,9 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             width: effectiveWidth,
             child: NavigationRail(
               extended: extended,
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: (i) => setState(() => _selectedIndex = i),
+              selectedIndex: selectedIndex,
+              onDestinationSelected: (i) =>
+                  ref.read(dashboardTabProvider.notifier).state = i,
               leading: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Column(
@@ -261,8 +265,8 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     );
   }
 
-  Widget _buildContent() {
-    switch (_selectedIndex) {
+  Widget _buildContent(int selectedIndex) {
+    switch (selectedIndex) {
       case 0:
         return _buildChatView();
       case 1:
@@ -441,7 +445,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         onTap: () {
           ref.read(selectedWorkspaceProvider.notifier).state = ws;
           saveLastWorkspaceId(ws.id);
-          setState(() => _selectedIndex = 0);
+          ref.read(dashboardTabProvider.notifier).state = 0;
         },
       ),
     );
