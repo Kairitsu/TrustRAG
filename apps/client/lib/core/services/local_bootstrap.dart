@@ -11,6 +11,7 @@ import '../../features/dashboard/providers/workspace_provider.dart';
 import 'backend_manager.dart';
 import 'desktop_auto_setup.dart';
 import 'local_data_path_guard.dart';
+import 'mode_manager.dart' show ModeNotifier;
 import 'session_reset.dart';
 
 enum LocalBootstrapStatus {
@@ -59,6 +60,7 @@ class LocalBootstrap {
     ApiClient api, {
     Ref? ref,
     WidgetRef? widgetRef,
+    bool forceBackendRestart = false,
   }) async {
     assert(
       ref == null || widgetRef == null,
@@ -74,25 +76,63 @@ class LocalBootstrap {
 
     final bm = BackendManager();
     try {
-      if (!bm.isRunning) {
-        await bm.start(accountId: localAccountId);
-        await bm.ready;
+      final dataDir = await bm.getAccountDataDir(localAccountId);
+      final dbPath = p.join(dataDir, 'trustrag.db');
+      final activeBefore = await ApiClient.getActiveAccount();
+      final tokenBefore = await ApiClient.getToken();
+
+      if (activeBefore != null &&
+          activeBefore.isNotEmpty &&
+          activeBefore != localAccountId) {
+        await DiagnosticLogger.warn(
+          'BOOTSTRAP clearing stale server active account=$activeBefore',
+        );
+        await ModeNotifier.clearServerRuntimePrefs();
       }
+
+      await DiagnosticLogger.info(
+        'BOOTSTRAP begin forceRestart=$forceBackendRestart '
+        'dataDir=$dataDir db=$dbPath activeAccount=$activeBefore '
+        'hasToken=${tokenBefore != null}',
+      );
+
+      if (forceBackendRestart) {
+        await bm.restart(accountId: localAccountId);
+      } else if (!bm.isRunning) {
+        await bm.start(accountId: localAccountId);
+      }
+      await bm.ready;
+
       if (bm.hasFailed) {
+        final msg = bm.startupError ?? '未知错误';
+        await DiagnosticLogger.error('BOOTSTRAP backend failed: $msg');
         return LocalBootstrapResult(
           status: LocalBootstrapStatus.backendFailed,
-          message: '本地服务启动失败：${bm.startupError ?? "未知错误"}',
+          message: _formatError('本地服务启动失败', msg),
         );
       }
-      api.dio.options.baseUrl = bm.baseUrl;
 
-      await DesktopAutoSetup.ensureLocalIdentity(api);
+      api.dio.options.baseUrl = bm.baseUrl;
+      await DiagnosticLogger.info('BOOTSTRAP backend ready baseUrl=${bm.baseUrl}');
+
+      final identityOk = await DesktopAutoSetup.ensureLocalIdentity(api);
+      if (!identityOk) {
+        await DiagnosticLogger.error('BOOTSTRAP identity setup failed');
+        return LocalBootstrapResult(
+          status: LocalBootstrapStatus.identityFailed,
+          message: _formatError(
+            '本地身份初始化失败',
+            DesktopAutoSetup.lastError ?? '无法创建或登录本地用户',
+          ),
+        );
+      }
 
       final token = await ApiClient.getToken();
       if (token == null) {
-        return const LocalBootstrapResult(
+        await DiagnosticLogger.error('BOOTSTRAP token missing after identity setup');
+        return LocalBootstrapResult(
           status: LocalBootstrapStatus.identityFailed,
-          message: '本地身份初始化失败，请重试或清除本地数据后重新初始化',
+          message: _formatError('本地身份初始化失败', '未获得本地会话 Token'),
         );
       }
 
@@ -101,6 +141,9 @@ class LocalBootstrap {
         final user = me.data is Map<String, dynamic>
             ? me.data as Map<String, dynamic>
             : null;
+        await DiagnosticLogger.info(
+          'BOOTSTRAP local user verified id=${user?['id']} email=${user?['email']}',
+        );
         if (ref != null) {
           ref
               .read(authProvider.notifier)
@@ -114,19 +157,24 @@ class LocalBootstrap {
         if (e.response?.statusCode == 401) {
           await ApiClient.clearToken();
         }
-        return const LocalBootstrapResult(
+        final detail = _dioDetail(e);
+        await DiagnosticLogger.error('BOOTSTRAP /auth/me failed: $detail');
+        return LocalBootstrapResult(
           status: LocalBootstrapStatus.identityFailed,
-          message: '本地身份验证失败，请重试',
+          message: _formatError('本地身份验证失败', detail),
         );
       }
 
       final workspace = await _ensureDefaultWorkspace(api);
       if (workspace == null) {
+        await DiagnosticLogger.error('BOOTSTRAP workspace setup failed');
         return const LocalBootstrapResult(
           status: LocalBootstrapStatus.workspaceFailed,
-          message: '无法创建或加载工作区，请重试',
+          message: '无法创建或加载本地工作区，请重试',
         );
       }
+
+      await DiagnosticLogger.info('BOOTSTRAP workspace id=${workspace.id}');
 
       if (ref != null) {
         await _applyWorkspaceForRef(ref, workspace);
@@ -140,12 +188,27 @@ class LocalBootstrap {
         workspace: workspace,
       );
     } catch (e, st) {
+      await DiagnosticLogger.error('BOOTSTRAP failed: $e\n$st');
       debugPrint('[LocalBootstrap] failed: $e\n$st');
       return LocalBootstrapResult(
         status: LocalBootstrapStatus.backendFailed,
-        message: '本地初始化失败：$e',
+        message: _formatError('本地初始化失败', '$e'),
       );
     }
+  }
+
+  static String _formatError(String headline, String detail) {
+    if (kDebugMode) return '$headline：$detail';
+    return '$headline，请重试或清除本地数据后重新初始化';
+  }
+
+  static String _dioDetail(DioException e) {
+    final code = e.response?.statusCode;
+    final body = e.response?.data;
+    if (code != null) {
+      return 'HTTP $code ${body ?? e.message ?? ''}'.trim();
+    }
+    return e.message ?? e.type.name;
   }
 
   static Future<void> _applyWorkspaceForRef(Ref ref, Workspace workspace) async {
@@ -195,11 +258,8 @@ class LocalBootstrap {
 
   static Future<Workspace> _pickWorkspace(List<Workspace> list) async {
     final prefs = await SharedPreferences.getInstance();
-    final activeAccount = await ApiClient.getActiveAccount();
-    final key = activeAccount != null && activeAccount.isNotEmpty
-        ? 'last_workspace_id_$activeAccount'
-        : 'last_workspace_id';
-    final savedId = prefs.getString(key) ?? prefs.getString('last_workspace_id');
+    final localKey = 'last_workspace_id_$localAccountId';
+    final savedId = prefs.getString(localKey);
     if (savedId != null) {
       for (final w in list) {
         if (w.id == savedId) return w;

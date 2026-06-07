@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/services/local_bootstrap.dart';
 import '../../../core/services/mode_manager.dart';
+import '../../../core/services/mode_switch_coordinator.dart';
 import '../../../core/services/session_reset.dart';
 import '../../auth/providers/auth_provider.dart';
 
@@ -17,7 +19,6 @@ class LocalStartupPage extends ConsumerStatefulWidget {
 
 class _LocalStartupPageState extends ConsumerState<LocalStartupPage> {
   bool _inProgress = false;
-  bool _attempted = false;
   String? _error;
 
   @override
@@ -26,17 +27,39 @@ class _LocalStartupPageState extends ConsumerState<LocalStartupPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _runBootstrap());
   }
 
-  Future<void> _runBootstrap() async {
-    if (_inProgress) return;
+  Future<void> _runBootstrap({bool isRetry = false}) async {
+    if (_inProgress || ModeSwitchCoordinator.isSwitchInProgress) return;
+
     setState(() {
       _inProgress = true;
       _error = null;
-      _attempted = true;
     });
 
     try {
-      final api = ref.read(apiClientProvider);
-      final result = await LocalBootstrap.bootstrap(api, widgetRef: ref);
+      if (isRetry) {
+        await ModeSwitchCoordinator.resetPartialLocalState();
+        resetAccountScopedState(ref);
+        ref.read(authProvider.notifier).clearSessionState();
+        ref.invalidate(authProvider);
+      }
+
+      final mode = ref.read(modeProvider).mode;
+      final LocalBootstrapResult result;
+
+      if (mode == AppMode.server) {
+        result = await ModeSwitchCoordinator.migrateServerToLocal(
+          widgetRef: ref,
+          fromRetry: isRetry,
+        );
+      } else {
+        final api = ref.read(apiClientProvider);
+        result = await LocalBootstrap.bootstrap(
+          api,
+          widgetRef: ref,
+          forceBackendRestart: isRetry,
+        );
+      }
+
       if (!mounted) return;
 
       if (result.isSuccess) {
@@ -47,9 +70,11 @@ class _LocalStartupPageState extends ConsumerState<LocalStartupPage> {
       }
 
       setState(() => _error = result.message);
-    } catch (_) {
+    } catch (e, st) {
       if (mounted) {
-        setState(() => _error = '本地初始化失败，请重试');
+        setState(() => _error = kDebugMode
+            ? '本地初始化失败：$e\n$st'
+            : '本地初始化失败，请重试');
       }
     } finally {
       if (mounted) setState(() => _inProgress = false);
@@ -57,8 +82,20 @@ class _LocalStartupPageState extends ConsumerState<LocalStartupPage> {
   }
 
   Future<void> _backToOnboarding() async {
-    await ref.read(modeProvider.notifier).resetMode();
-    if (mounted) context.go('/onboarding');
+    if (_inProgress) return;
+
+    setState(() => _inProgress = true);
+    try {
+      await ModeSwitchCoordinator.resetPartialLocalState();
+      resetAccountScopedState(ref);
+      ref.read(authProvider.notifier).clearSessionState();
+      await ref.read(modeProvider.notifier).resetMode();
+      ref.invalidate(apiClientProvider);
+      ref.invalidate(authProvider);
+      if (mounted) context.go('/onboarding');
+    } finally {
+      if (mounted) setState(() => _inProgress = false);
+    }
   }
 
   @override
@@ -129,12 +166,12 @@ class _LocalStartupPageState extends ConsumerState<LocalStartupPage> {
                   ),
                   const SizedBox(height: 16),
                   FilledButton(
-                    onPressed: _attempted ? _runBootstrap : null,
+                    onPressed: _inProgress ? null : () => _runBootstrap(isRetry: true),
                     child: const Text('重试'),
                   ),
                   const SizedBox(height: 8),
                   OutlinedButton(
-                    onPressed: _backToOnboarding,
+                    onPressed: _inProgress ? null : _backToOnboarding,
                     child: const Text('返回选择使用方式'),
                   ),
                 ],

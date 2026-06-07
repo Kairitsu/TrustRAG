@@ -81,6 +81,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
         state = const AuthState(status: AuthStatus.unauthenticated);
         return;
       }
+      if (!BackendManager().isRunning) {
+        state = const AuthState(status: AuthStatus.unauthenticated);
+        return;
+      }
       final token = await ApiClient.getToken();
       if (token == null) {
         state = const AuthState(status: AuthStatus.unauthenticated);

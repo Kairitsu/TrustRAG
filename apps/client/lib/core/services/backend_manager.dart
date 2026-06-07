@@ -76,15 +76,20 @@ class BackendManager {
   Future<void> start({
     String? accountId,
     bool allowAttachExisting = true,
+    bool forceRestart = false,
   }) async {
     if (!shouldRunEmbedded) return;
+
+    if (forceRestart && (_isRunning || _process != null)) {
+      await stop();
+    }
 
     resetLifecycle();
     _startAttempted = true;
 
     if (_isRunning && _process != null) return;
 
-    if (allowAttachExisting && await _tryAttachExistingBackend()) {
+    if (allowAttachExisting && !forceRestart && await _tryAttachExistingBackend()) {
       _currentAccountId = accountId;
       return;
     }
@@ -207,14 +212,21 @@ class BackendManager {
 
   /// Stop the current backend, then start a new one pointing to
   /// the given account's isolated data directory.
-  Future<void> restart({String? accountId}) async {
+  Future<void> restart({
+    String? accountId,
+    bool allowAttachExisting = false,
+  }) async {
     debugPrint(
         '[BackendManager] Restarting for account: ${accountId ?? "default"}');
     DebugLogBuffer().add('BACKEND 重启中，切换账号: ${accountId ?? "default"}');
     await DiagnosticLogger.info('BACKEND restart account=${accountId ?? "default"}');
     await stop();
     _startAttempted = false;
-    await start(accountId: accountId);
+    await start(
+      accountId: accountId,
+      allowAttachExisting: allowAttachExisting,
+      forceRestart: true,
+    );
   }
 
   /// Get the data directory path for an account (without creating it).

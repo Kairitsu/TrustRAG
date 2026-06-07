@@ -10,6 +10,7 @@ import '../api/api_client.dart';
 import '../services/diagnostic_logger.dart';
 import '../services/local_bootstrap.dart';
 import '../services/mode_manager.dart';
+import '../services/mode_switch_coordinator.dart';
 import '../services/session_reset.dart';
 
 /// Mode switches and local library deletion (await-before-navigate).
@@ -254,14 +255,17 @@ class AccountModeService {
 
     try {
       await _withLoading(ctx, () async {
-        await ref.read(authProvider.notifier).logout();
-        resetAccountScopedState(ref);
-        await ref.read(modeProvider.notifier).setLocalMode();
-        ref.invalidate(apiClientProvider);
-        ref.invalidate(authProvider);
-        if (ctx.mounted) {
-          ctx.go('/local-startup');
+        final result = await ModeSwitchCoordinator.migrateServerToLocal(
+          widgetRef: ref,
+        );
+        if (!ctx.mounted) return;
+
+        if (result.isSuccess) {
+          ctx.go('/dashboard');
           _snack(ctx, '已切换为本地模式');
+        } else {
+          ctx.go('/local-startup');
+          _snack(ctx, result.message, isError: true);
         }
       });
     } catch (e, st) {

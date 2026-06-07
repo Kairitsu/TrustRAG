@@ -69,14 +69,12 @@ class ModeNotifier extends StateNotifier<ModeState> {
     BackendManager().resetLifecycle();
   }
 
-  static Future<void> _clearServerSessionPrefs(SharedPreferences prefs) async {
+  /// Clears only the active server session; preserves saved account tokens for re-login.
+  static Future<void> clearServerRuntimePrefs() async {
+    final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
     await prefs.remove('active_account_email');
     await prefs.remove('last_workspace_id');
-    final accounts = prefs.getStringList('account_list') ?? [];
-    for (final email in accounts) {
-      await prefs.remove('auth_token_$email');
-    }
   }
 
   static Future<void> _clearLocalSessionPrefs(SharedPreferences prefs) async {
@@ -91,8 +89,8 @@ class ModeNotifier extends StateNotifier<ModeState> {
 
   Future<void> setLocalMode() async {
     await _stopEmbeddedBackend();
+    await clearServerRuntimePrefs();
     final prefs = await SharedPreferences.getInstance();
-    await _clearServerSessionPrefs(prefs);
     await prefs.setString(_modeKey, 'local');
     await prefs.setString('server_mode', 'local');
     state = state.copyWith(mode: AppMode.local, isLoading: false);

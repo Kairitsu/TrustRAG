@@ -19,6 +19,26 @@ void main() {
       });
     });
 
+    test('setLocalMode clears active session but keeps saved server tokens', () async {
+      SharedPreferences.setMockInitialValues({
+        'auth_token': 'active-token',
+        'active_account_email': 'user@server.com',
+        'account_list': ['user@server.com'],
+        'auth_token_user@server.com': 'saved-server-token',
+        'app_mode': 'server',
+      });
+
+      final notifier = ModeNotifier();
+      await Future.delayed(const Duration(milliseconds: 50));
+      await notifier.setLocalMode();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('app_mode'), 'local');
+      expect(prefs.getString('auth_token'), isNull);
+      expect(prefs.getString('active_account_email'), isNull);
+      expect(prefs.getString('auth_token_user@server.com'), 'saved-server-token');
+    });
+
     test('setServerMode clears local session keys', () async {
       final notifier = ModeNotifier();
       await Future.delayed(const Duration(milliseconds: 50));

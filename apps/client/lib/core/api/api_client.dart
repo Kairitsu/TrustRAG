@@ -13,6 +13,7 @@ import '../services/app_mode.dart';
 class ApiClient {
   late final Dio dio;
   final String baseUrl;
+  CancelToken _cancelToken = CancelToken();
   static const _tokenKey = 'auth_token';
   static const _activeAccountKey = 'active_account_email';
   static const _accountListKey = 'account_list';
@@ -33,6 +34,7 @@ class ApiClient {
 
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
+        options.cancelToken = _cancelToken;
         final prefs = await SharedPreferences.getInstance();
         final token = prefs.getString(_tokenKey);
         if (token != null) {
@@ -171,9 +173,23 @@ class ApiClient {
   }
 
   static Future<void> clearCurrentServerSession() async {
+    await clearActiveServerSession();
+  }
+
+  /// Clears active session only; keeps per-account tokens for saved server logins.
+  static Future<void> clearActiveServerSession() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
     await prefs.remove(_activeAccountKey);
+    await prefs.remove('last_workspace_id');
+  }
+
+  /// Cancels in-flight HTTP requests (e.g. during mode switch).
+  void cancelAllRequests([String reason = 'cancelled']) {
+    if (!_cancelToken.isCancelled) {
+      _cancelToken.cancel(reason);
+    }
+    _cancelToken = CancelToken();
   }
 
   static Future<void> removeSavedServerAccount(String email) async {
