@@ -23,6 +23,18 @@ pub async fn detect_available_ocr() -> OcrBackend {
     if is_command_available("paddleocr").await {
         return OcrBackend::PaddleOCR;
     }
+    #[cfg(sqlite_mode)]
+    {
+        let config = crate::services::ocr_install::load_ocr_config();
+        if !config.ocr_enabled {
+            return OcrBackend::None;
+        }
+        if let Some(ref p) = crate::services::ocr_install::resolve_tesseract_executable(&config) {
+            if Command::new(p).arg("--version").output().await.map(|o| o.status.success()).unwrap_or(false) {
+                return OcrBackend::Tesseract;
+            }
+        }
+    }
     if is_command_available("tesseract").await {
         return OcrBackend::Tesseract;
     }
@@ -41,10 +53,49 @@ async fn is_command_available(cmd: &str) -> bool {
     }
 }
 
+fn resolve_tesseract_cmd() -> String {
+    #[cfg(sqlite_mode)]
+    {
+        let config = crate::services::ocr_install::load_ocr_config();
+        if let Some(p) = crate::services::ocr_install::resolve_tesseract_executable(&config) {
+            return p;
+        }
+    }
+    "tesseract".to_string()
+}
+
+fn resolve_pdftoppm_cmd() -> String {
+    #[cfg(sqlite_mode)]
+    {
+        let config = crate::services::ocr_install::load_ocr_config();
+        if let Some(bin) = crate::services::ocr_install::resolve_poppler_bin_dir(&config) {
+            let exe = std::path::PathBuf::from(bin).join(if cfg!(windows) {
+                "pdftoppm.exe"
+            } else {
+                "pdftoppm"
+            });
+            if exe.exists() {
+                return exe.display().to_string();
+            }
+        }
+    }
+    "pdftoppm".to_string()
+}
+
 pub async fn run_tesseract(image_path: &Path, lang: &str) -> Result<String> {
     let output_base = image_path.with_extension("ocr_out");
+    let tess_cmd = resolve_tesseract_cmd();
 
-    let status = Command::new("tesseract")
+    let mut cmd = Command::new(&tess_cmd);
+    #[cfg(sqlite_mode)]
+    {
+        let config = crate::services::ocr_install::load_ocr_config();
+        if let Some(td) = crate::services::ocr_install::resolve_tessdata_dir(&config) {
+            cmd.env("TESSDATA_PREFIX", td);
+        }
+    }
+
+    let status = cmd
         .arg(image_path)
         .arg(&output_base)
         .arg("-l")
@@ -127,7 +178,7 @@ pub async fn pdf_to_images(
 ) -> Result<Vec<std::path::PathBuf>> {
     tokio::fs::create_dir_all(output_dir).await?;
 
-    let mut cmd = Command::new("pdftoppm");
+    let mut cmd = Command::new(resolve_pdftoppm_cmd());
     cmd.arg("-png")
         .arg("-r").arg("300");
 

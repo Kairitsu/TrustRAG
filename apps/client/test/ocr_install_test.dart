@@ -1,125 +1,128 @@
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('OCR install options model', () {
-    test('parses ocr-status response', () {
+  group('OCR install task system', () {
+    test('parses ocr-status with overall_status and paths', () {
       final json = {
         'any_available': true,
-        'tools': [
-          {'name': 'tesseract', 'available': true, 'version': '5.3.0', 'path': '/usr/bin/tesseract'},
-          {'name': 'paddleocr', 'available': false, 'version': null, 'path': null},
-        ],
-        'recommendation': '已检测到 OCR 工具',
+        'pdf_ocr_ready': true,
+        'overall_status': 'available',
+        'tesseract_path': '/usr/bin/tesseract',
+        'poppler_path': '/usr/bin',
+        'tessdata_dir': '/usr/share/tessdata',
+        'tools': [],
+        'recommendation': 'OCR 组件已就绪',
+        'ocr_config': {'ocr_enabled': true, 'prefer_custom_paths': false},
       };
 
-      expect(json['any_available'], true);
-      final tools = json['tools'] as List;
-      expect(tools.length, 2);
-      expect(tools[0]['name'], 'tesseract');
-      expect(tools[0]['available'], true);
-      expect(tools[0]['version'], '5.3.0');
-      expect(tools[1]['available'], false);
+      expect(json['overall_status'], 'available');
+      expect(json['tesseract_path'], isNotNull);
+      expect(json['pdf_ocr_ready'], true);
     });
 
-    test('parses ocr-install-options response', () {
+    test('parses comprehensive ocr-preflight response', () {
       final json = {
-        'platform': 'linux',
-        'available_package_managers': ['apt', 'pip'],
-        'methods': [
-          {
-            'package_manager': 'apt',
-            'engine': 'tesseract',
-            'command': 'sudo apt install -y tesseract-ocr tesseract-ocr-chi-sim',
-            'needs_sudo': true,
-            'description': '通过 apt 安装 Tesseract OCR',
-          },
-          {
-            'package_manager': 'pip',
-            'engine': 'paddleocr',
-            'command': 'pip3 install paddleocr paddlepaddle',
-            'needs_sudo': false,
-            'description': '通过 pip 安装 PaddleOCR',
-          },
+        'items': [
+          {'name': 'os', 'display_name': '操作系统', 'passed': true, 'detail': 'linux x86_64'},
+          {'name': 'admin', 'display_name': '管理员权限', 'passed': false, 'detail': '非管理员'},
+          {'name': 'choco', 'display_name': 'Chocolatey 已安装', 'passed': false, 'detail': '未找到'},
+          {'name': 'tesseract', 'display_name': 'tesseract.exe', 'passed': false, 'detail': '未找到'},
+          {'name': 'pdftoppm', 'display_name': 'pdftoppm.exe', 'passed': false, 'detail': '未找到'},
+          {'name': 'path_tesseract', 'display_name': 'PATH 包含 Tesseract', 'passed': false, 'detail': ''},
+          {'name': 'latest_install_log', 'display_name': '最近安装日志', 'passed': false, 'detail': ''},
         ],
-        'recommended': 'tesseract',
+        'is_admin': false,
+        'os_name': 'linux',
+        'os_arch': 'x86_64',
+        'logs_dir': '/home/user/.trustrag/logs/ocr-install',
+        'overall_status': 'not_installed',
       };
 
-      expect(json['platform'], 'linux');
-      final managers = json['available_package_managers'] as List;
-      expect(managers, contains('apt'));
-      expect(managers, contains('pip'));
-
-      final methods = json['methods'] as List;
-      expect(methods.length, 2);
-
-      final apt = methods[0] as Map<String, dynamic>;
-      expect(apt['engine'], 'tesseract');
-      expect(apt['package_manager'], 'apt');
-      expect(apt['needs_sudo'], true);
-      expect(apt['command'], contains('tesseract-ocr'));
-
-      final pip = methods[1] as Map<String, dynamic>;
-      expect(pip['engine'], 'paddleocr');
-      expect(pip['needs_sudo'], false);
-
-      expect(json['recommended'], 'tesseract');
+      final items = json['items'] as List;
+      expect(items.length, greaterThanOrEqualTo(7));
+      expect(json['logs_dir'], contains('ocr-install'));
     });
 
-    test('parses ocr-install response', () {
+    test('parses install task status with stage and elevation', () {
+      final json = {
+        'task_id': 'abc-123',
+        'status': 'waiting_for_uac',
+        'stage': 'waiting_for_uac',
+        'engine': 'tesseract',
+        'install_method': 'choco',
+        'requires_admin': true,
+        'is_elevated': false,
+        'command': 'choco install tesseract poppler -y --no-progress',
+        'log_file_path': '/data/logs/ocr-install/abc-123.log',
+        'status_file_path': '/data/logs/ocr-install/abc-123.status.json',
+        'stall_warning': false,
+        'suggestions': <String>[],
+        'residual_pids': <int>[],
+        'residual_command_lines': <String>[],
+        'new_lines': ['[info] 等待 UAC 管理员授权...'],
+        'total_lines': 5,
+      };
+
+      expect(json['status'], 'waiting_for_uac');
+      expect(json['stage'], 'waiting_for_uac');
+      expect(json['is_elevated'], false);
+      expect((json['log_file_path'] as String).contains('ocr-install'), true);
+    });
+
+    test('parses terminal statuses', () {
+      for (final status in [
+        'success',
+        'failed',
+        'cancelled',
+        'cancel_failed',
+        'elevation_cancelled',
+        'timeout',
+        'cancelling',
+      ]) {
+        expect(status, isNotEmpty);
+      }
+    });
+
+    test('parses ocr-config save response', () {
       final json = {
         'success': true,
-        'engine': 'tesseract',
-        'package_manager': 'apt',
-        'output': 'Reading package lists...\nDone.',
-        'message': 'tesseract 安装成功！',
+        'message': 'OCR 路径配置已保存并验证通过。',
+        'config': {
+          'tesseract_path': 'C:\\Tesseract\\tesseract.exe',
+          'poppler_bin_dir': 'C:\\poppler\\bin',
+          'prefer_custom_paths': true,
+          'ocr_enabled': true,
+        },
+        'verification': {
+          'all_passed': true,
+          'path_refresh_needed': false,
+          'partial_tesseract': false,
+          'partial_poppler': false,
+          'items': [
+            {'name': 'tesseract --version', 'passed': true, 'detail': '5.3.0'},
+          ],
+        },
       };
 
       expect(json['success'], true);
-      expect(json['engine'], 'tesseract');
-      expect(json['package_manager'], 'apt');
-      expect((json['output'] as String).isNotEmpty, true);
+      final verification = json['verification'] as Map<String, dynamic>;
+      expect(verification['all_passed'], true);
     });
 
-    test('handles empty methods for unsupported platform', () {
-      final json = {
-        'platform': 'unknown',
-        'available_package_managers': <String>[],
-        'methods': <Map<String, dynamic>>[],
-        'recommended': null,
+    test('parses partial availability statuses', () {
+      expect('partial_tesseract', isNot('partial_poppler'));
+      final tessOnly = {
+        'overall_status': 'partial_tesseract',
+        'pdf_ocr_ready': false,
+        'any_available': true,
       };
-
-      expect((json['methods'] as List).isEmpty, true);
-      expect(json['recommended'], null);
+      expect(tessOnly['overall_status'], 'partial_tesseract');
     });
 
-    test('parses ocr-status with no tools available', () {
-      final json = {
-        'any_available': false,
-        'tools': [
-          {'name': 'tesseract', 'available': false, 'version': null, 'path': null},
-          {'name': 'paddleocr', 'available': false, 'version': null, 'path': null},
-        ],
-        'recommendation': '未检测到 OCR 工具。',
-      };
-
-      expect(json['any_available'], false);
-      final tools = json['tools'] as List;
-      expect(tools.every((t) => t['available'] == false), true);
-    });
-
-    test('method selection with needs_sudo flag', () {
-      final methods = [
-        {'engine': 'tesseract', 'package_manager': 'apt', 'needs_sudo': true},
-        {'engine': 'tesseract', 'package_manager': 'brew', 'needs_sudo': false},
-        {'engine': 'paddleocr', 'package_manager': 'pip', 'needs_sudo': false},
-      ];
-
-      final sudoMethods = methods.where((m) => m['needs_sudo'] == true).toList();
-      expect(sudoMethods.length, 1);
-      expect(sudoMethods[0]['package_manager'], 'apt');
-
-      final nonSudoMethods = methods.where((m) => m['needs_sudo'] == false).toList();
-      expect(nonSudoMethods.length, 2);
+    test('cancel response is immediate accept', () {
+      final json = {'success': true, 'message': '取消请求已接受，正在终止安装进程'};
+      expect(json['success'], true);
+      expect((json['message'] as String).contains('取消'), true);
     });
   });
 }

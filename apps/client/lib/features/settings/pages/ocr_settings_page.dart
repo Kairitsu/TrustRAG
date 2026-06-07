@@ -1,9 +1,13 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../auth/providers/auth_provider.dart';
 
@@ -15,151 +19,222 @@ class OcrSettingsPage extends ConsumerStatefulWidget {
 }
 
 class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
-  int _currentStep = 0;
-
   Map<String, dynamic>? _ocrStatus;
+  Map<String, dynamic>? _preflight;
   Map<String, dynamic>? _installOptions;
-  bool _loadingStatus = true;
-  bool _loadingOptions = false;
+  Map<String, dynamic>? _ocrConfig;
+
+  bool _loading = true;
   String? _error;
 
-  String? _selectedEngine;
+  // Install task state
+  bool _installing = false;
+  String? _activeTaskId;
+  String _installLog = '';
+  int _lastLogLine = 0;
+  String? _taskStatus;
+  String? _taskStage;
+  String? _installMessage;
+  List<String> _suggestions = [];
+  bool _stallWarning = false;
+  String? _logFilePath;
+  String? _statusFilePath;
+  String? _logsDir;
+  List<int> _residualPids = [];
+  List<String> _residualCommands = [];
+  Timer? _pollTimer;
+
+  // Log panel
+  bool _logExpanded = true;
+  bool _userScrolledUp = false;
+  final ScrollController _logScrollController = ScrollController();
+
+  // Install method selection
+  String _installMode = 'auto'; // auto | manual | custom | portable
   Map<String, dynamic>? _selectedMethod;
 
-  bool _installing = false;
-  String _installLog = '';
-  bool? _installSuccess;
-  String? _activeTaskId;
-  Timer? _pollTimer;
-  int _lastLogLine = 0;
+  // Custom path controllers
+  final _tesseractPathCtl = TextEditingController();
+  final _tessdataDirCtl = TextEditingController();
+  final _popplerBinCtl = TextEditingController();
+  final _defaultLangCtl = TextEditingController(text: 'eng+chi_sim');
+  bool _preferCustomPaths = false;
+  bool _ocrEnabled = true;
+  bool _savingConfig = false;
+  Map<String, dynamic>? _verifyResult;
 
-  bool _verifying = false;
-  bool? _verifySuccess;
+  static const _stages = [
+    ('detecting_environment', '检测环境'),
+    ('waiting_for_uac', '等待 UAC'),
+    ('checking_chocolatey', '检查 Chocolatey'),
+    ('executing_install', '执行安装'),
+    ('waiting_for_output', '等待安装输出'),
+    ('verifying_tesseract', '验证 Tesseract'),
+    ('verifying_languages', '验证语言包'),
+    ('verifying_poppler', '验证 Poppler'),
+    ('refreshing_config', '刷新配置'),
+    ('done', '完成'),
+  ];
 
   @override
   void initState() {
     super.initState();
+    _logScrollController.addListener(_onLogScroll);
     _loadAll();
+  }
+
+  void _onLogScroll() {
+    if (!_logScrollController.hasClients) return;
+    final max = _logScrollController.position.maxScrollExtent;
+    final current = _logScrollController.offset;
+    _userScrolledUp = max - current > 80;
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _logScrollController.dispose();
+    _tesseractPathCtl.dispose();
+    _tessdataDirCtl.dispose();
+    _popplerBinCtl.dispose();
+    _defaultLangCtl.dispose();
     super.dispose();
   }
 
   Future<void> _loadAll() async {
-    await _loadStatus();
-    if (_ocrStatus != null && _ocrStatus!['any_available'] == true) {
-      _currentStep = 0;
-    }
-    await _loadInstallOptions();
-  }
-
-  Future<void> _loadStatus() async {
     setState(() {
-      _loadingStatus = true;
+      _loading = true;
       _error = null;
     });
     try {
       final api = ref.read(apiClientProvider);
-      final resp = await api.dio.get('/system/ocr-status');
-      if (mounted) {
-        setState(() {
-          _ocrStatus = resp.data;
-          _loadingStatus = false;
-        });
-      }
+      final results = await Future.wait([
+        api.dio.get('/system/ocr-status'),
+        api.dio.get('/system/ocr-preflight'),
+        api.dio.get('/system/ocr-install-options'),
+        api.dio.get('/system/ocr-config'),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _ocrStatus = results[0].data as Map<String, dynamic>;
+        _preflight = results[1].data as Map<String, dynamic>;
+        _installOptions = results[2].data as Map<String, dynamic>;
+        _ocrConfig = results[3].data as Map<String, dynamic>;
+        _applyConfigToFields(_ocrConfig!);
+        _loading = false;
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loadingStatus = false;
-        });
-      }
+      if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
   }
 
-  Future<void> _loadInstallOptions() async {
-    setState(() => _loadingOptions = true);
+  void _applyConfigToFields(Map<String, dynamic> cfg) {
+    _tesseractPathCtl.text = cfg['tesseract_path']?.toString() ?? '';
+    _tessdataDirCtl.text = cfg['tessdata_dir']?.toString() ?? '';
+    _popplerBinCtl.text = cfg['poppler_bin_dir']?.toString() ?? '';
+    _defaultLangCtl.text = cfg['default_language']?.toString() ?? 'eng+chi_sim';
+    _preferCustomPaths = cfg['prefer_custom_paths'] == true;
+    _ocrEnabled = cfg['ocr_enabled'] != false;
+  }
+
+  Future<void> _saveCustomPaths() async {
+    setState(() => _savingConfig = true);
     try {
       final api = ref.read(apiClientProvider);
-      final resp = await api.dio.get('/system/ocr-install-options');
-      if (mounted) {
-        setState(() {
-          _installOptions = resp.data;
-          _loadingOptions = false;
-        });
-      }
+      final resp = await api.dio.post('/system/ocr-config/paths', data: {
+        'tesseract_path': _tesseractPathCtl.text.trim(),
+        'tessdata_dir': _tessdataDirCtl.text.trim(),
+        'poppler_bin_dir': _popplerBinCtl.text.trim(),
+        'default_language': _defaultLangCtl.text.trim(),
+        'prefer_custom_paths': _preferCustomPaths,
+        'ocr_enabled': _ocrEnabled,
+      });
+      if (!mounted) return;
+      final data = resp.data as Map<String, dynamic>;
+      setState(() {
+        _ocrConfig = data['config'] as Map<String, dynamic>?;
+        _verifyResult = data['verification'] as Map<String, dynamic>?;
+        _savingConfig = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(data['message']?.toString() ?? '配置已保存')),
+      );
+      await _loadAll();
     } catch (e) {
       if (mounted) {
-        setState(() => _loadingOptions = false);
+        setState(() => _savingConfig = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $e')),
+        );
       }
     }
   }
 
-  String? _installMessage;
-  int? _installExitCode;
+  Future<void> _verifyOcr() async {
+    try {
+      final api = ref.read(apiClientProvider);
+      final resp = await api.dio.post('/system/ocr-verify');
+      if (!mounted) return;
+      setState(() {
+        _verifyResult = resp.data as Map<String, dynamic>?;
+      });
+      await _loadAll();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('验证失败: $e')),
+        );
+      }
+    }
+  }
 
   Future<void> _startInstall() async {
-    if (_selectedMethod == null) return;
+    if (_selectedMethod == null && _installMode == 'auto') return;
+
     setState(() {
       _installing = true;
       _installLog = '';
-      _installSuccess = null;
-      _installMessage = null;
-      _installExitCode = null;
-      _activeTaskId = null;
       _lastLogLine = 0;
+      _taskStatus = null;
+      _taskStage = null;
+      _installMessage = null;
+      _suggestions = [];
+      _stallWarning = false;
+      _residualPids = [];
+      _residualCommands = [];
+      _logExpanded = true;
+      _userScrolledUp = false;
     });
+
     try {
       final api = ref.read(apiClientProvider);
-      final resp = await api.dio.post(
-        '/system/ocr-install/start',
-        data: {
-          'engine': _selectedMethod!['engine'],
-          'package_manager': _selectedMethod!['package_manager'].toString(),
-        },
-      );
+      final resp = await api.dio.post('/system/ocr-install/start', data: {
+        'engine': _selectedMethod?['engine'] ?? 'tesseract',
+        'package_manager': _selectedMethod?['package_manager'] ?? 'choco',
+      });
       final data = resp.data as Map<String, dynamic>;
       final taskId = data['task_id'] as String?;
-
       if (taskId == null) {
-        if (mounted) {
-          setState(() {
-            _installing = false;
-            _installSuccess = false;
-            _installMessage = '后端未返回 task_id';
-          });
-        }
+        setState(() { _installing = false; _installMessage = '后端未返回 task_id'; });
         return;
       }
-
-      if (mounted) {
-        setState(() {
-          _activeTaskId = taskId;
-        });
-      }
-
+      setState(() {
+        _activeTaskId = taskId;
+        _logFilePath = data['log_file_path']?.toString();
+        _logsDir = data['logs_dir']?.toString();
+        _taskStatus = data['status']?.toString() ?? 'running';
+      });
       _pollTimer?.cancel();
-      _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollStatus(taskId));
+      _pollStatus(taskId);
+      _pollTimer = Timer.periodic(
+        const Duration(milliseconds: 500),
+        (_) => _pollStatus(taskId),
+      );
     } on DioException catch (e) {
-      if (mounted) {
-        setState(() {
-          _installing = false;
-          _installSuccess = false;
-          _installLog = e.message ?? e.toString();
-          _installMessage = '安装请求异常';
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _installing = false;
-          _installSuccess = false;
-          _installLog = e.toString();
-        });
-      }
+      setState(() {
+        _installing = false;
+        _installLog = e.message ?? e.toString();
+      });
     }
   }
 
@@ -169,35 +244,47 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
       final resp = await api.dio.get(
         '/system/ocr-install/status/$taskId',
         queryParameters: {'since_line': _lastLogLine},
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
       final data = resp.data as Map<String, dynamic>;
-      final status = data['status'] as String? ?? '';
+      final status = data['status']?.toString() ?? '';
+      final stage = data['stage']?.toString() ?? '';
       final newLines = (data['new_lines'] as List?)?.map((e) => e.toString()).toList() ?? [];
       final totalLines = data['total_lines'] as int? ?? _lastLogLine;
 
       if (!mounted) return;
-
       setState(() {
         if (newLines.isNotEmpty) {
           _installLog += ((_installLog.isNotEmpty ? '\n' : '') + newLines.join('\n'));
         }
         _lastLogLine = totalLines;
+        _taskStatus = status;
+        _taskStage = stage;
+        _installMessage = data['message']?.toString();
+        _logFilePath = data['log_file_path']?.toString() ?? _logFilePath;
+        _statusFilePath = data['status_file_path']?.toString();
+        _logsDir = data['logs_dir']?.toString() ?? _logsDir;
+        _stallWarning = data['stall_warning'] == true;
+        _suggestions = (data['suggestions'] as List?)?.map((e) => e.toString()).toList() ?? [];
+        _residualPids = (data['residual_pids'] as List?)?.map((e) => e as int).toList() ?? [];
+        _residualCommands = (data['residual_command_lines'] as List?)?.map((e) => e.toString()).toList() ?? [];
 
-        if (status == 'completed' || status == 'failed' || status == 'cancelled') {
+        final terminal = {
+          'success', 'failed', 'cancelled', 'cancel_failed',
+          'elevation_cancelled', 'timeout',
+        };
+        if (terminal.contains(status)) {
           _pollTimer?.cancel();
           _pollTimer = null;
           _installing = false;
-          _installSuccess = status == 'completed';
-          _installMessage = data['message']?.toString();
-          _installExitCode = data['exit_code'] as int?;
-          if (_installSuccess == true) {
-            _currentStep = 3;
-          }
+          if (status == 'failed') _logExpanded = true;
+          if (status == 'success') _verifyOcr();
+        } else if (status == 'cancelling') {
+          _installing = true;
         }
       });
-    } catch (_) {
-      // polling error, will retry on next interval
-    }
+      if (!_userScrolledUp) _scrollLogToBottom();
+    } catch (_) {}
   }
 
   Future<void> _cancelInstall() async {
@@ -205,131 +292,195 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
     if (taskId == null) return;
     try {
       final api = ref.read(apiClientProvider);
-      await api.dio.post('/system/ocr-install/cancel/$taskId');
-      _pollTimer?.cancel();
-      _pollTimer = null;
+      await api.dio.post(
+        '/system/ocr-install/cancel/$taskId',
+        options: Options(receiveTimeout: const Duration(seconds: 2)),
+      );
       if (mounted) {
         setState(() {
-          _installing = false;
-          _installSuccess = false;
-          _installMessage = '安装已被取消。';
-          _installLog += '\n--- 安装已取消 ---';
+          _taskStatus = 'cancelling';
+          _installMessage = '正在取消安装...';
         });
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('取消失败: $e')),
+          SnackBar(content: Text('取消请求失败: $e')),
         );
       }
     }
   }
 
-  Future<void> _verifyInstall() async {
-    setState(() {
-      _verifying = true;
-      _verifySuccess = null;
+  void _scrollLogToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollController.hasClients && !_userScrolledUp) {
+        _logScrollController.jumpTo(_logScrollController.position.maxScrollExtent);
+      }
     });
-    await _loadStatus();
-    if (mounted) {
-      setState(() {
-        _verifying = false;
-        _verifySuccess = _ocrStatus?['any_available'] == true;
-      });
+  }
+
+  Future<void> _pickFile(TextEditingController ctl, {bool directory = false}) async {
+    if (kIsWeb) return;
+    if (directory) {
+      final path = await FilePicker.platform.getDirectoryPath();
+      if (path != null) ctl.text = path;
+    } else {
+      final result = await FilePicker.platform.pickFiles();
+      if (result != null && result.files.single.path != null) {
+        ctl.text = result.files.single.path!;
+      }
     }
+    setState(() {});
+  }
+
+  Future<void> _openPath(String? path) async {
+    if (path == null || path.isEmpty) return;
+    final uri = Uri.file(path);
+    if (await canLaunchUrl(uri)) await launchUrl(uri);
+  }
+
+  Future<void> _openLogsDir() async {
+    final dir = _logsDir;
+    if (dir == null) return;
+    final uri = Uri.directory(dir);
+    if (await canLaunchUrl(uri)) await launchUrl(uri);
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('OCR 组件管理'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadAll,
-            tooltip: '刷新状态',
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAll, tooltip: '刷新'),
         ],
       ),
-      body: _loadingStatus
+      body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? _buildError()
+              ? Center(child: Text('加载失败: $_error'))
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    _buildStatusBanner(theme),
+                    _buildStatusBanner(),
                     const SizedBox(height: 20),
-                    _buildWizardStepper(theme),
+                    _buildSectionTitle('环境检测'),
+                    _buildPreflightTable(),
+                    const SizedBox(height: 20),
+                    _buildSectionTitle('安装方式'),
+                    _buildInstallMethods(),
+                    const SizedBox(height: 20),
+                    _buildSectionTitle('安装任务'),
+                    _buildInstallTask(),
+                    const SizedBox(height: 20),
+                    _buildSectionTitle('验证'),
+                    _buildVerification(),
                   ],
                 ),
     );
   }
 
-  Widget _buildError() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline, size: 48, color: Colors.red.shade300),
-          const SizedBox(height: 12),
-          Text('加载失败: $_error',
-              style: TextStyle(color: Colors.grey.shade600)),
-          const SizedBox(height: 12),
-          OutlinedButton(onPressed: _loadAll, child: const Text('重试')),
-        ],
-      ),
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
     );
   }
 
-  Widget _buildStatusBanner(ThemeData theme) {
-    final anyAvailable = _ocrStatus?['any_available'] == true;
-    final pdfReady = _ocrStatus?['pdf_ocr_ready'] == true;
-    final recommendation = _ocrStatus?['recommendation'] as String? ?? '';
+  Widget _buildStatusBanner() {
+    final overall = _ocrStatus?['overall_status']?.toString() ?? 'not_installed';
+    final tessPath = _ocrStatus?['tesseract_path']?.toString();
+    final popplerPath = _ocrStatus?['poppler_path']?.toString();
+    final recommendation = _ocrStatus?['recommendation']?.toString() ?? '';
 
-    final Color bannerColor;
-    final IconData bannerIcon;
-    final String bannerTitle;
-    if (pdfReady) {
-      bannerColor = Colors.green;
-      bannerIcon = Icons.check_circle;
-      bannerTitle = 'OCR 组件已就绪，可处理扫描版 PDF';
-    } else if (anyAvailable) {
-      bannerColor = Colors.orange;
-      bannerIcon = Icons.warning_amber;
-      bannerTitle = 'OCR 部分就绪，扫描版 PDF 可能不可用';
-    } else {
-      bannerColor = Colors.orange;
-      bannerIcon = Icons.warning_amber;
-      bannerTitle = '未检测到 OCR 组件';
+    Color color;
+    IconData icon;
+    String title;
+    switch (overall) {
+      case 'available':
+        color = Colors.green; icon = Icons.check_circle; title = 'OCR 可用';
+        break;
+      case 'partial_tesseract':
+        color = Colors.orange; icon = Icons.warning_amber; title = '部分可用（缺 Poppler）';
+        break;
+      case 'partial_poppler':
+        color = Colors.orange; icon = Icons.warning_amber; title = '部分可用（缺 Tesseract）';
+        break;
+      case 'config_error':
+        color = Colors.red; icon = Icons.error; title = '配置错误';
+        break;
+      case 'partial':
+        color = Colors.orange; icon = Icons.warning_amber; title = '部分可用';
+        break;
+      default:
+        color = Colors.orange; icon = Icons.warning_amber; title = '未安装';
     }
 
     return Card(
-      color: bannerColor.withAlpha(25),
+      color: color.withAlpha(25),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(bannerIcon, color: bannerColor, size: 36),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(bannerTitle,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16,
-                      color: bannerColor.withAlpha(200),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(recommendation,
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                  ),
-                ],
+            Row(children: [
+              Icon(icon, color: color, size: 32),
+              const SizedBox(width: 12),
+              Expanded(child: Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: color.withAlpha(200)))),
+            ]),
+            const SizedBox(height: 8),
+            Text(recommendation, style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+            if (tessPath != null) ...[
+              const SizedBox(height: 4),
+              Text('Tesseract: $tessPath', style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+            ],
+            if (popplerPath != null) ...[
+              const SizedBox(height: 2),
+              Text('Poppler: $popplerPath', style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPreflightTable() {
+    final items = (_preflight?['items'] as List?) ?? [];
+    final isAdmin = _preflight?['is_admin'] == true;
+    final osName = _preflight?['os_name'] ?? _preflight?['os_version'] ?? '';
+    final logsDir = _preflight?['logs_dir']?.toString() ?? '';
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('系统: $osName  |  管理员: ${isAdmin ? "是" : "否"}  |  日志: $logsDir',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            const SizedBox(height: 8),
+            ...items.map((item) {
+              final passed = item['passed'] == true;
+              return ListTile(
+                dense: true,
+                leading: Icon(passed ? Icons.check_circle : Icons.cancel,
+                    color: passed ? Colors.green : Colors.orange, size: 18),
+                title: Text(item['display_name']?.toString() ?? '', style: const TextStyle(fontSize: 13)),
+                subtitle: Text(
+                  [item['detail'], if (item['suggestion'] != null) '建议: ${item['suggestion']}']
+                      .whereType<String>()
+                      .join('\n'),
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+                isThreeLine: item['suggestion'] != null,
+              );
+            }),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _loadAll,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('重新检测'),
               ),
             ),
           ],
@@ -338,719 +489,367 @@ class _OcrSettingsPageState extends ConsumerState<OcrSettingsPage> {
     );
   }
 
-  Widget _buildWizardStepper(ThemeData theme) {
-    return Stepper(
-      currentStep: _currentStep,
-      onStepTapped: (step) {
-        if (step <= _currentStep || _ocrStatus?['any_available'] == true) {
-          setState(() => _currentStep = step);
-        }
-      },
-      controlsBuilder: (context, details) => const SizedBox.shrink(),
-      steps: [
-        Step(
-          title: const Text('检测当前状态'),
-          subtitle: _ocrStatus != null
-              ? Text(_ocrStatus!['any_available'] == true
-                  ? '已检测到 OCR 工具'
-                  : '未检测到 OCR 工具')
-              : null,
-          content: _buildStep1DetectStatus(theme),
-          isActive: _currentStep >= 0,
-          state: _ocrStatus?['any_available'] == true
-              ? StepState.complete
-              : (_currentStep > 0 ? StepState.complete : StepState.indexed),
-        ),
-        Step(
-          title: const Text('选择 OCR 引擎'),
-          subtitle: _selectedEngine != null
-              ? Text(_toolDisplayName(_selectedEngine!))
-              : null,
-          content: _buildStep2SelectEngine(theme),
-          isActive: _currentStep >= 1,
-          state: _selectedMethod != null && _currentStep > 1
-              ? StepState.complete
-              : StepState.indexed,
-        ),
-        Step(
-          title: const Text('安装'),
-          subtitle: _installSuccess == true
-              ? const Text('安装成功')
-              : (_installing ? const Text('安装中...') : null),
-          content: _buildStep3Install(theme),
-          isActive: _currentStep >= 2,
-          state: _installSuccess == true
-              ? StepState.complete
-              : StepState.indexed,
-        ),
-        Step(
-          title: const Text('验证安装'),
-          subtitle: _verifySuccess == true
-              ? const Text('验证通过')
-              : null,
-          content: _buildStep4Verify(theme),
-          isActive: _currentStep >= 3,
-          state: _verifySuccess == true
-              ? StepState.complete
-              : StepState.indexed,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStep1DetectStatus(ThemeData theme) {
-    final tools = (_ocrStatus?['tools'] as List?) ?? [];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ...tools.map((t) {
-          final available = t['available'] == true;
-          final displayName = t['display_name'] as String? ?? t['name'] as String? ?? '';
-          final version = t['version'] as String?;
-          final path = t['path'] as String?;
-          final missingHint = t['missing_hint'] as String?;
-          final languages = (t['languages'] as List?)?.map((e) => e.toString()).toList();
-
-          final subtitleParts = <String>[];
-          if (available) {
-            if (version != null && version.isNotEmpty) subtitleParts.add('版本: $version');
-            if (path != null) subtitleParts.add('路径: $path');
-            if (languages != null && languages.isNotEmpty) {
-              subtitleParts.add('语言包: ${languages.join(", ")}');
-            }
-          } else if (missingHint != null) {
-            subtitleParts.add(missingHint);
-          } else {
-            subtitleParts.add('未安装');
-          }
-
-          return Card(
-            child: ListTile(
-              leading: Icon(
-                available ? Icons.check_circle : Icons.cancel,
-                color: available ? Colors.green : Colors.grey,
-              ),
-              title: Text(displayName,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text(subtitleParts.join('\n'),
-                  style: TextStyle(fontSize: 12, color: available ? Colors.grey.shade600 : Colors.orange.shade700)),
-              isThreeLine: subtitleParts.length > 1,
-              trailing: available
-                  ? _chip('可用', Colors.green)
-                  : _chip('缺失', Colors.orange),
-            ),
-          );
-        }),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            OutlinedButton.icon(
-              onPressed: _loadStatus,
-              icon: const Icon(Icons.refresh, size: 16),
-              label: const Text('重新检测'),
-            ),
-            const SizedBox(width: 12),
-            if (_ocrStatus?['pdf_ocr_ready'] != true)
-              FilledButton(
-                onPressed: () => setState(() => _currentStep = 1),
-                child: const Text('开始安装'),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  // Step 2: Select engine and install method
-  Widget _buildStep2SelectEngine(ThemeData theme) {
-    if (_loadingOptions) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-
+  Widget _buildInstallMethods() {
     final methods = (_installOptions?['methods'] as List?) ?? [];
-    final platform = _installOptions?['platform'] as String? ?? 'unknown';
-    final managers = (_installOptions?['available_package_managers'] as List?) ?? [];
+    final isAdmin = _preflight?['is_admin'] == true;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Card(
-          color: Colors.blue.shade50,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Icon(Icons.computer, color: Colors.blue.shade700),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    '平台: ${_platformDisplayName(platform)}  |  '
-                    '包管理器: ${managers.map((m) => m.toString()).join(", ")}',
-                    style: TextStyle(fontSize: 13, color: Colors.blue.shade800),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (methods.isEmpty)
-          Card(
-            color: Colors.red.shade50,
-            child: const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('未找到可用的自动安装方式，请参考下方手动安装指南。'),
-            ),
-          )
-        else
-          ...methods.map((m) {
-            final engine = m['engine'] as String? ?? '';
-            final pm = m['package_manager'] as String? ?? '';
-            final command = m['command'] as String? ?? '';
-            final desc = m['description'] as String? ?? '';
-            final needsSudo = m['needs_sudo'] == true;
-            final isSelected = _selectedMethod == m;
-
-            return Card(
-              elevation: isSelected ? 2 : 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-                side: BorderSide(
-                  color: isSelected ? theme.colorScheme.primary : Colors.grey.shade300,
-                  width: isSelected ? 2 : 1,
-                ),
-              ),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => setState(() {
-                  _selectedEngine = engine;
-                  _selectedMethod = Map<String, dynamic>.from(m);
-                }),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Radio<String>(
-                            value: '$engine-$pm',
-                            groupValue: _selectedMethod != null
-                                ? '${_selectedMethod!['engine']}-${_selectedMethod!['package_manager']}'
-                                : null,
-                            onChanged: (_) => setState(() {
-                              _selectedEngine = engine;
-                              _selectedMethod = Map<String, dynamic>.from(m);
-                            }),
-                          ),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${_toolDisplayName(engine)} (via $pm)',
-                                  style: const TextStyle(fontWeight: FontWeight.w600),
-                                ),
-                                Text(desc, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                              ],
-                            ),
-                          ),
-                          if (needsSudo)
-                            Tooltip(
-                              message: '需要管理员权限',
-                              child: Chip(
-                                label: const Text('sudo', style: TextStyle(fontSize: 10)),
-                                backgroundColor: Colors.amber.shade100,
-                                padding: EdgeInsets.zero,
-                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      _commandBlock(command),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }),
-        const SizedBox(height: 12),
-        _buildManualInstallGuide(theme),
-        const SizedBox(height: 12),
-        Row(
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            OutlinedButton(
-              onPressed: () => setState(() => _currentStep = 0),
-              child: const Text('上一步'),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'auto', label: Text('自动安装'), icon: Icon(Icons.download)),
+                ButtonSegment(value: 'manual', label: Text('手动安装'), icon: Icon(Icons.terminal)),
+                ButtonSegment(value: 'custom', label: Text('已有路径'), icon: Icon(Icons.folder_open)),
+                ButtonSegment(value: 'portable', label: Text('便携组件'), icon: Icon(Icons.archive)),
+              ],
+              selected: {_installMode},
+              onSelectionChanged: (s) => setState(() => _installMode = s.first),
             ),
-            const SizedBox(width: 12),
-            FilledButton(
-              onPressed: _selectedMethod != null
-                  ? () => setState(() => _currentStep = 2)
-                  : null,
-              child: const Text('下一步'),
-            ),
+            const SizedBox(height: 12),
+            if (_installMode == 'auto') ...[
+              if (!isAdmin &&
+                  !kIsWeb &&
+                  defaultTargetPlatform == TargetPlatform.windows)
+                Card(
+                  color: Colors.amber.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Text(
+                      '自动安装需要管理员权限。点击「开始自动安装」后 Windows 将弹出 UAC 确认窗口。\n'
+                      '若 UAC 未弹出，请以管理员身份运行 TrustRAG 或使用「已有路径」方式。',
+                      style: TextStyle(fontSize: 12, color: Colors.amber.shade900),
+                    ),
+                  ),
+                ),
+              ...methods.map((m) {
+                final isSelected = _selectedMethod == m;
+                return ListTile(
+                  selected: isSelected,
+                  title: Text('${m['engine']} (via ${m['package_manager']})'),
+                  subtitle: Text(m['description']?.toString() ?? ''),
+                  trailing: m['needs_sudo'] == true ? const Chip(label: Text('需管理员')) : null,
+                  onTap: () => setState(() => _selectedMethod = Map<String, dynamic>.from(m)),
+                );
+              }),
+              if (_selectedMethod != null) _commandBlock(_selectedMethod!['command']?.toString() ?? ''),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: _installing ? null : _startInstall,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('开始自动安装'),
+              ),
+            ],
+            if (_installMode == 'manual') ...[
+              const Text('管理员 PowerShell 命令（可复制）:', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              _commandBlock('choco install tesseract poppler -y --no-progress'),
+              const SizedBox(height: 8),
+              const Text('验证命令:', style: TextStyle(fontWeight: FontWeight.w600)),
+              _commandBlock('tesseract --version\ntesseract --list-langs\npdftoppm -v\npdfinfo -v'),
+              const SizedBox(height: 8),
+              const Text('macOS: brew install tesseract tesseract-lang poppler'),
+              const Text('Ubuntu: sudo apt install -y tesseract-ocr tesseract-ocr-chi-sim poppler-utils'),
+              const SizedBox(height: 8),
+              OutlinedButton(onPressed: _loadAll, child: const Text('安装完成后重新检测')),
+            ],
+            if (_installMode == 'custom') ...[
+              _pathField('Tesseract 可执行文件', _tesseractPathCtl, file: true),
+              _pathField('tessdata 目录', _tessdataDirCtl, directory: true),
+              _pathField('Poppler bin 目录', _popplerBinCtl, directory: true),
+              TextField(
+                controller: _defaultLangCtl,
+                decoration: const InputDecoration(labelText: '默认 OCR 语言', isDense: true),
+              ),
+              SwitchListTile(
+                title: const Text('启用 OCR'),
+                value: _ocrEnabled,
+                onChanged: (v) => setState(() => _ocrEnabled = v),
+              ),
+              SwitchListTile(
+                title: const Text('优先使用自定义路径'),
+                value: _preferCustomPaths,
+                onChanged: (v) => setState(() => _preferCustomPaths = v),
+              ),
+              FilledButton(
+                onPressed: _savingConfig ? null : _saveCustomPaths,
+                child: _savingConfig
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('保存并验证路径'),
+              ),
+            ],
+            if (_installMode == 'portable') ...[
+              Card(
+                color: Colors.blue.shade50,
+                child: const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text(
+                    '便携 OCR 组件（ocr-runtime）架构已预留。\n'
+                    '可将 Tesseract/Poppler 放到 TrustRAG 数据目录下的 ocr-runtime/，无需修改系统 PATH。\n'
+                    '完整便携下载功能将在后续版本提供。目前请使用「已有路径」方式指向便携版目录。',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
-      ],
+      ),
     );
   }
 
-  Widget _buildStep3Install(ThemeData theme) {
-    if (_selectedMethod == null) {
-      return const Text('请先选择安装方式');
-    }
-    final engine = _selectedMethod!['engine'] ?? '';
-    final pm = _selectedMethod!['package_manager'] ?? '';
-    final command = _selectedMethod!['command'] ?? '';
-    final needsSudo = _selectedMethod!['needs_sudo'] == true;
+  Widget _pathField(String label, TextEditingController ctl, {bool file = false, bool directory = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: ctl,
+              decoration: InputDecoration(labelText: label, isDense: true),
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
+          ),
+          if (!kIsWeb)
+            IconButton(
+              icon: const Icon(Icons.folder_open, size: 20),
+              onPressed: () => _pickFile(ctl, directory: directory || !file),
+            ),
+        ],
+      ),
+    );
+  }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('即将安装: ${_toolDisplayName(engine)} (via $pm)',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                _commandBlock(command),
-                if (needsSudo) ...[
-                  const SizedBox(height: 8),
-                  Card(
-                    color: Colors.amber.shade50,
-                    child: Padding(
-                      padding: const EdgeInsets.all(10),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(Icons.admin_panel_settings, size: 20, color: Colors.amber.shade700),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(
-                            '此操作需要管理员权限。Windows 下会弹出 UAC 权限确认窗口，请点击"是"以继续安装。\n'
-                            '如果安装卡住，可能是权限不足。建议手动以管理员身份运行命令。',
-                            style: TextStyle(fontSize: 12, color: Colors.amber.shade800),
-                          )),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (_installing)
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const LinearProgressIndicator(),
+  Widget _buildInstallTask() {
+    final stageIdx = _stages.indexWhere((s) => s.$1 == _taskStage);
+    final activeIdx = stageIdx < 0 ? 0 : stageIdx;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_taskStatus != null)
+              Text('任务状态: $_taskStatus', style: const TextStyle(fontWeight: FontWeight.w600)),
+            if (_installing || _taskStatus == 'cancelling')
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: LinearProgressIndicator(),
+              ),
+            if (_installing || _activeTaskId != null) ...[
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Expanded(child: Text('正在安装，实时日志如下...')),
-                  OutlinedButton.icon(
-                    onPressed: _cancelInstall,
-                    icon: const Icon(Icons.stop_circle_outlined, size: 16, color: Colors.red),
-                    label: const Text('取消安装', style: TextStyle(color: Colors.red)),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: Colors.red.shade200),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    ),
-                  ),
-                ],
-              ),
-              if (_installLog.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Container(
-                  width: double.infinity,
-                  constraints: const BoxConstraints(maxHeight: 250),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade900,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: SingleChildScrollView(
-                    reverse: true,
-                    child: SelectableText(
-                      _installLog,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                        color: Colors.white70,
+              SizedBox(
+                height: 56,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _stages.length,
+                  separatorBuilder: (_, _) => const Icon(Icons.chevron_right, size: 16),
+                  itemBuilder: (_, i) {
+                    final (key, label) = _stages[i];
+                    final done = i < activeIdx;
+                    final active = key == _taskStage || (i == activeIdx && _installing);
+                    return Chip(
+                      avatar: Icon(
+                        done ? Icons.check : (active ? Icons.more_horiz : Icons.circle_outlined),
+                        size: 14,
+                        color: done ? Colors.green : (active ? Colors.blue : Colors.grey),
                       ),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          )
-        else if (_installSuccess == true)
-          Card(
-            color: Colors.green.shade50,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    const Icon(Icons.check_circle, color: Colors.green),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(_installMessage ?? '安装成功！')),
-                  ]),
-                ],
-              ),
-            ),
-          )
-        else if (_installSuccess == false)
-          Card(
-            color: Colors.red.shade50,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    const Icon(Icons.error, color: Colors.red),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(_installMessage ?? '安装失败，请查看日志或手动安装。')),
-                  ]),
-                  if (_installExitCode != null) ...[
-                    const SizedBox(height: 4),
-                    Text('退出码: $_installExitCode',
-                        style: TextStyle(fontSize: 12, color: Colors.red.shade300, fontFamily: 'monospace')),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        if (_installLog.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          ExpansionTile(
-            title: const Text('安装日志', style: TextStyle(fontSize: 13)),
-            initiallyExpanded: _installSuccess == false,
-            children: [
-              Container(
-                width: double.infinity,
-                constraints: const BoxConstraints(maxHeight: 300),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade900,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: SingleChildScrollView(
-                  child: SelectableText(
-                    _installLog,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      color: Colors.white70,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: _installLog));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('日志已复制到剪贴板'), duration: Duration(seconds: 1)),
+                      label: Text(label, style: const TextStyle(fontSize: 10)),
+                      backgroundColor: active ? Colors.blue.shade50 : null,
                     );
                   },
-                  icon: const Icon(Icons.copy, size: 14),
-                  label: const Text('复制日志', style: TextStyle(fontSize: 12)),
                 ),
               ),
+            ],
+            if (_installMessage != null) ...[
+              const SizedBox(height: 6),
+              Text(_installMessage!, style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+            ],
+            if (_stallWarning)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '长时间无输出：可能正在等待 UAC、网络下载或 Chocolatey 锁。',
+                  style: TextStyle(fontSize: 11, color: Colors.amber.shade800),
+                ),
+              ),
+            if (_suggestions.isNotEmpty)
+              ..._suggestions.map((s) => Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('• $s', style: TextStyle(fontSize: 11, color: Colors.orange.shade800)),
+                  )),
+            if (_residualPids.isNotEmpty)
+              Text('残留 PID: ${_residualPids.join(", ")}', style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+            if (_residualCommands.isNotEmpty)
+              ..._residualCommands.map((c) => _commandBlock(c)),
+            const SizedBox(height: 8),
+            _buildLogPanel(),
+            if (_installing || _taskStatus == 'cancelling' || _taskStatus == 'running' || _taskStatus == 'waiting_for_uac')
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _cancelInstall,
+                    icon: const Icon(Icons.stop_circle_outlined, color: Colors.red, size: 16),
+                    label: const Text('取消安装', style: TextStyle(color: Colors.red)),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogPanel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _logExpanded = !_logExpanded),
+          child: Row(
+            children: [
+              Icon(_logExpanded ? Icons.expand_less : Icons.expand_more, size: 20),
+              const Text('  安装实时日志', style: TextStyle(fontWeight: FontWeight.w600)),
+              const Spacer(),
+              if (_installing) const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            ],
+          ),
+        ),
+        if (_logFilePath != null)
+          Text('日志: $_logFilePath', style: TextStyle(fontSize: 10, fontFamily: 'monospace', color: Colors.grey.shade600)),
+        if (_statusFilePath != null)
+          Text('状态: $_statusFilePath', style: TextStyle(fontSize: 10, fontFamily: 'monospace', color: Colors.grey.shade600)),
+        if (_logExpanded) ...[
+          Container(
+            width: double.infinity,
+            height: 260,
+            margin: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade900,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: SingleChildScrollView(
+              controller: _logScrollController,
+              child: SelectableText(
+                _installLog.isEmpty
+                    ? (_installing ? '等待安装输出...' : '暂无日志')
+                    : _installLog,
+                style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.white70, height: 1.4),
+              ),
+            ),
+          ),
+          Wrap(
+            spacing: 4,
+            children: [
+              TextButton.icon(
+                onPressed: _installLog.isEmpty ? null : () {
+                  Clipboard.setData(ClipboardData(text: _installLog));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('日志已复制')));
+                },
+                icon: const Icon(Icons.copy, size: 14),
+                label: const Text('复制全部', style: TextStyle(fontSize: 11)),
+              ),
+              TextButton.icon(
+                onPressed: () => setState(() { _installLog = ''; _lastLogLine = 0; }),
+                icon: const Icon(Icons.clear, size: 14),
+                label: const Text('清空显示', style: TextStyle(fontSize: 11)),
+              ),
+              if (_logFilePath != null)
+                TextButton.icon(
+                  onPressed: () => _openPath(_logFilePath),
+                  icon: const Icon(Icons.description, size: 14),
+                  label: const Text('打开日志', style: TextStyle(fontSize: 11)),
+                ),
+              if (_logsDir != null)
+                TextButton.icon(
+                  onPressed: _openLogsDir,
+                  icon: const Icon(Icons.folder_open, size: 14),
+                  label: const Text('打开目录', style: TextStyle(fontSize: 11)),
+                ),
             ],
           ),
         ],
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            OutlinedButton(
-              onPressed: _installing ? null : () => setState(() => _currentStep = 1),
-              child: const Text('上一步'),
-            ),
-            const SizedBox(width: 12),
-            if (_installSuccess != true)
-              FilledButton(
-                onPressed: _installing ? null : _startInstall,
-                child: Text(_installSuccess == false ? '重试安装' : '开始安装'),
-              ),
-            if (_installSuccess == true) ...[
-              FilledButton(
-                onPressed: () => setState(() => _currentStep = 3),
-                child: const Text('验证安装'),
-              ),
-            ],
-          ],
-        ),
       ],
     );
   }
 
-  Widget _buildStep4Verify(ThemeData theme) {
-    final pdfReady = _ocrStatus?['pdf_ocr_ready'] == true;
-    final tools = (_ocrStatus?['tools'] as List?) ?? [];
+  Widget _buildVerification() {
+    final verification = _verifyResult?['verification'] as Map<String, dynamic>?;
+    final items = (verification?['items'] as List?) ?? [];
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('检查 OCR 工具是否已正确安装并可以使用。'),
-        const SizedBox(height: 12),
-        if (_verifying)
-          const Column(
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 8),
-              Text('正在验证...'),
-            ],
-          )
-        else if (_verifySuccess == true)
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Card(
-                color: pdfReady ? Colors.green.shade50 : Colors.orange.shade50,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Icon(
-                        pdfReady ? Icons.check_circle : Icons.warning_amber,
-                        color: pdfReady ? Colors.green : Colors.orange,
-                        size: 48,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        pdfReady ? '安装验证通过！' : 'OCR 部分可用',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(pdfReady
-                        ? 'OCR 组件已就绪，可以处理扫描版 PDF 文档。'
-                        : _ocrStatus?['recommendation'] as String? ?? '部分依赖缺失，请查看下方详情。',
-                      ),
-                    ],
-                  ),
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (verification != null) ...[
+              Text(
+                verification['all_passed'] == true ? '验证通过' : '验证未全部通过',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: verification['all_passed'] == true ? Colors.green : Colors.orange,
                 ),
               ),
-              const SizedBox(height: 12),
-              ...tools.map((t) {
-                final ok = t['available'] == true;
-                final name = t['display_name'] as String? ?? t['name'] as String? ?? '';
-                final hint = t['missing_hint'] as String?;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Row(children: [
-                    Icon(ok ? Icons.check : Icons.close,
-                        size: 16, color: ok ? Colors.green : Colors.red),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(
-                      ok ? name : '$name — ${hint ?? "缺失"}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: ok ? Colors.grey.shade700 : Colors.red.shade700,
-                      ),
-                    )),
-                  ]),
+              if (verification['path_refresh_needed'] == true)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('PATH 可能未刷新，请重启 TrustRAG 或手动配置路径。',
+                      style: TextStyle(fontSize: 12, color: Colors.amber.shade800)),
+                ),
+              ...items.map((item) {
+                final ok = item['passed'] == true;
+                return ListTile(
+                  dense: true,
+                  leading: Icon(ok ? Icons.check : Icons.close, color: ok ? Colors.green : Colors.red, size: 18),
+                  title: Text(item['name']?.toString() ?? '', style: const TextStyle(fontSize: 13)),
+                  subtitle: Text(item['detail']?.toString() ?? '', style: const TextStyle(fontSize: 11)),
                 );
               }),
-            ],
-          )
-        else if (_verifySuccess == false)
-          Card(
-            color: Colors.red.shade50,
-            child: const Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Icon(Icons.error, color: Colors.red, size: 48),
-                  SizedBox(height: 8),
-                  Text('验证失败',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  SizedBox(height: 4),
-                  Text('未检测到 OCR 工具。请确认安装是否成功，或尝试重新安装。'),
-                ],
-              ),
-            ),
-          ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            OutlinedButton(
-              onPressed: () => setState(() => _currentStep = 2),
-              child: const Text('返回安装'),
-            ),
-            const SizedBox(width: 12),
+            ] else
+              const Text('点击「重新验证」检查 Tesseract 和 Poppler 是否可用。'),
+            const SizedBox(height: 8),
             FilledButton.icon(
-              onPressed: _verifying ? null : _verifyInstall,
+              onPressed: _verifyOcr,
               icon: const Icon(Icons.verified, size: 16),
-              label: Text(_verifySuccess != null ? '重新验证' : '开始验证'),
+              label: const Text('重新验证'),
             ),
           ],
         ),
-      ],
-    );
-  }
-
-  Widget _buildManualInstallGuide(ThemeData theme) {
-    return ExpansionTile(
-      title: const Text('手动安装指南', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: const EdgeInsets.symmetric(vertical: 8),
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Tesseract OCR (推荐)',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                const SizedBox(height: 8),
-                _installStep('macOS', 'brew install tesseract tesseract-lang'),
-                const SizedBox(height: 6),
-                _installStep(
-                    'Ubuntu/Debian', 'sudo apt install tesseract-ocr tesseract-ocr-chi-sim'),
-                const SizedBox(height: 6),
-                _installStep(
-                    'Windows', '从 GitHub 下载安装包:\nhttps://github.com/UB-Mannheim/tesseract/wiki'),
-                const SizedBox(height: 16),
-                const Text('PaddleOCR (中文效果好)',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                const SizedBox(height: 8),
-                _installStep('所有平台', 'pip install paddleocr paddlepaddle'),
-              ],
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
   Widget _commandBlock(String command) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(10),
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Colors.grey.shade100,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Colors.grey.shade300),
       ),
       child: Row(
-        children: [
-          Expanded(
-            child: SelectableText(
-              command,
-              style: TextStyle(
-                  fontSize: 12, fontFamily: 'monospace', color: Colors.grey.shade800),
-            ),
-          ),
-          InkWell(
-            onTap: () {
-              Clipboard.setData(ClipboardData(text: command));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已复制到剪贴板'), duration: Duration(seconds: 1)),
-              );
-            },
-            child: Icon(Icons.copy, size: 16, color: Colors.grey.shade500),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _installStep(String platform, String command) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(platform,
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.blue.shade700)),
-          ),
-          const SizedBox(width: 8),
           Expanded(
-            child: SelectableText(command,
-                style: TextStyle(
-                    fontSize: 12, fontFamily: 'monospace', color: Colors.grey.shade800)),
+            child: SelectableText(command, style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.grey.shade800)),
           ),
           InkWell(
             onTap: () {
               Clipboard.setData(ClipboardData(text: command));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text('已复制到剪贴板'), duration: Duration(seconds: 1)),
-              );
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制')));
             },
-            child: Icon(Icons.copy, size: 16, color: Colors.grey.shade400),
+            child: Icon(Icons.copy, size: 14, color: Colors.grey.shade500),
           ),
         ],
       ),
     );
-  }
-
-  Widget _chip(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withAlpha(25),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withAlpha(76)),
-      ),
-      child: Text(label,
-          style: TextStyle(
-              fontSize: 11, color: color, fontWeight: FontWeight.w600)),
-    );
-  }
-
-  String _toolDisplayName(String name) {
-    switch (name) {
-      case 'tesseract':
-        return 'Tesseract OCR';
-      case 'paddleocr':
-        return 'PaddleOCR';
-      default:
-        return name;
-    }
-  }
-
-  String _platformDisplayName(String platform) {
-    switch (platform) {
-      case 'linux':
-        return 'Linux';
-      case 'mac_os':
-        return 'macOS';
-      case 'windows':
-        return 'Windows';
-      default:
-        return platform;
-    }
   }
 }

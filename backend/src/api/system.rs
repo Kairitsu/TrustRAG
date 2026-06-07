@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use tokio::process::Child;
+
 use axum::{
     extract::{Path, Query, State},
     routing::{get, post},
@@ -14,10 +16,13 @@ use crate::error::AppError;
 
 use super::AppState;
 
-pub type OcrTaskStore = Arc<Mutex<HashMap<String, OcrInstallTask>>>;
+pub use crate::services::ocr_install::{
+    new_child_store, new_task_store, OcrChildStore, OcrInstallMethod, OcrInstallStage,
+    OcrInstallTask, OcrTaskStatus, OcrTaskStore,
+};
 
 pub fn new_ocr_task_store() -> OcrTaskStore {
-    Arc::new(Mutex::new(HashMap::new()))
+    new_task_store()
 }
 
 pub fn router() -> Router<AppState> {
@@ -31,7 +36,14 @@ pub fn router() -> Router<AppState> {
         .route("/system/ocr-install", post(ocr_install))
         .route("/system/ocr-install/start", post(ocr_install_start))
         .route("/system/ocr-install/status/{task_id}", get(ocr_install_status))
+        .route("/system/ocr-install/task/{task_id}", get(ocr_install_status))
+        .route("/system/ocr-install/task/{task_id}/logs", get(ocr_install_task_logs))
         .route("/system/ocr-install/cancel/{task_id}", post(ocr_install_cancel))
+        .route("/system/ocr-preflight", get(ocr_preflight))
+        .route("/system/ocr-install/log/latest", get(ocr_install_latest_log))
+        .route("/system/ocr-config", get(ocr_config_get))
+        .route("/system/ocr-config/paths", post(ocr_config_save))
+        .route("/system/ocr-verify", post(ocr_verify))
 }
 
 #[derive(Serialize)]
@@ -190,8 +202,13 @@ struct OcrToolStatus {
 struct OcrStatus {
     any_available: bool,
     pdf_ocr_ready: bool,
+    overall_status: String,
+    tesseract_path: Option<String>,
+    poppler_path: Option<String>,
+    tessdata_dir: Option<String>,
     tools: Vec<OcrToolStatus>,
     recommendation: String,
+    ocr_config: crate::services::ocr_install::OcrConfig,
 }
 
 async fn check_binary(name: &str, args: &[&str]) -> (bool, Option<String>, Option<String>) {
@@ -237,9 +254,26 @@ async fn detect_tesseract_languages(tess_path: &str) -> Vec<String> {
 async fn ocr_status(
     _auth: AuthUser,
 ) -> Result<Json<OcrStatus>, AppError> {
+    let config = crate::services::ocr_install::load_ocr_config();
+    let overall = crate::services::ocr_install::compute_overall_status(&config).await;
     let mut tools = Vec::new();
 
-    let (tess_ok, tess_ver, tess_path) = check_binary("tesseract", &["tesseract", "--version"]).await;
+    let tess_path = crate::services::ocr_install::resolve_tesseract_executable(&config);
+    let (tess_ok, tess_ver, tess_path_check) = if let Some(ref p) = tess_path {
+        if let Ok(output) = tokio::process::Command::new(p).args(["--version"]).output().await {
+            if output.status.success() {
+                let ver = String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("").trim().to_string();
+                (true, Some(ver), Some(p.clone()))
+            } else {
+                (false, None, Some(p.clone()))
+            }
+        } else {
+            (false, None, Some(p.clone()))
+        }
+    } else {
+        check_binary("tesseract", &["tesseract", "--version"]).await
+    };
+    let tess_path = tess_path_check.or(tess_path);
     let mut tess_langs = Vec::new();
     if tess_ok {
         if let Some(ref p) = tess_path {
@@ -289,6 +323,19 @@ async fn ocr_status(
         } else { None },
     });
 
+    let (pdfinfo_ok, pdfinfo_ver, pdfinfo_path) = check_binary("pdfinfo", &["pdfinfo", "-v"]).await;
+    tools.push(OcrToolStatus {
+        name: "pdfinfo".into(),
+        display_name: "Poppler / pdfinfo".into(),
+        available: pdfinfo_ok,
+        version: pdfinfo_ver,
+        path: pdfinfo_path,
+        languages: None,
+        missing_hint: if !pdfinfo_ok {
+            Some("pdfinfo 通常与 pdftoppm 一同随 Poppler 安装".into())
+        } else { None },
+    });
+
     let (paddle_ok, paddle_ver, paddle_path) = check_binary(
         "paddleocr",
         &["python3", "-c", "import paddleocr; print(paddleocr.VERSION)"],
@@ -306,17 +353,17 @@ async fn ocr_status(
     let any_ocr = tess_ok || paddle_ok;
     let pdf_ocr_ready = (tess_ok && pdftoppm_ok) || paddle_ok;
 
-    let recommendation = if pdf_ocr_ready {
-        "OCR 工具已就绪，可处理扫描版 PDF。".into()
-    } else if tess_ok && !pdftoppm_ok {
-        "已检测到 Tesseract，但缺少 pdftoppm (Poppler)，无法处理扫描版 PDF。\n请安装 Poppler 后重试。".into()
-    } else if !any_ocr {
-        "未检测到 OCR 工具。建议安装 Tesseract + Poppler (推荐) 或 PaddleOCR。".into()
-    } else {
-        "OCR 基础工具已安装，建议补全依赖以支持扫描版 PDF。".into()
-    };
-
-    Ok(Json(OcrStatus { any_available: any_ocr, pdf_ocr_ready, tools, recommendation }))
+    Ok(Json(OcrStatus {
+        any_available: any_ocr,
+        pdf_ocr_ready,
+        overall_status: overall.status,
+        tesseract_path: overall.tesseract_path,
+        poppler_path: overall.poppler_path,
+        tessdata_dir: overall.tessdata_dir,
+        tools,
+        recommendation: overall.recommendation,
+        ocr_config: config,
+    }))
 }
 
 fn build_ocr_check_commands(_name: &str, default_commands: &[&str]) -> Vec<(String, Vec<String>)> {
@@ -397,49 +444,6 @@ pub fn detect_platform() -> OsPlatform {
     } else {
         OsPlatform::Linux
     }
-}
-
-/// On Windows, wraps choco/winget install commands in a PowerShell script
-/// that requests UAC elevation via `Start-Process -Verb RunAs`.
-/// Output is redirected to a temp log file which the parent reads back.
-/// pip does not need elevation.
-#[cfg(target_os = "windows")]
-fn wrap_windows_elevated(pm: &str, program: String, args: Vec<String>) -> (String, Vec<String>) {
-    if pm == "pip" {
-        return (program, args);
-    }
-
-    let inner_cmd = format!("{} {}", program, args.join(" "));
-    let log_file = format!(
-        "{}\\trustrag_ocr_install_{}.log",
-        std::env::temp_dir().display(),
-        std::process::id()
-    );
-
-    let ps_script = format!(
-        "$logFile = '{}'; \
-         $proc = Start-Process -FilePath '{}' -ArgumentList '{}' \
-         -Verb RunAs -Wait -PassThru \
-         -RedirectStandardOutput $logFile \
-         -RedirectStandardError ($logFile + '.err'); \
-         if (Test-Path $logFile) {{ Get-Content $logFile }}; \
-         if (Test-Path ($logFile + '.err')) {{ Get-Content ($logFile + '.err') }}; \
-         exit $proc.ExitCode",
-        log_file,
-        program,
-        args.join("' '"),
-    );
-
-    (
-        "powershell".into(),
-        vec![
-            "-NoProfile".into(),
-            "-ExecutionPolicy".into(),
-            "Bypass".into(),
-            "-Command".into(),
-            ps_script,
-        ],
-    )
 }
 
 pub async fn detect_package_managers() -> Vec<PackageManager> {
@@ -702,33 +706,102 @@ async fn ocr_install(
 // 17.9.3  Async OCR install (task-based with polling)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
-pub struct OcrInstallTask {
-    pub task_id: String,
-    pub engine: String,
-    pub package_manager: String,
-    pub status: OcrTaskStatus,
-    pub started_at: String,
-    pub finished_at: Option<String>,
-    pub exit_code: Option<i32>,
-    pub log_lines: Vec<String>,
-    pub message: Option<String>,
-    pub pid: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OcrTaskStatus {
-    Running,
-    Completed,
-    Failed,
-    Cancelled,
-}
-
 #[derive(Serialize)]
 struct OcrInstallStartResponse {
     task_id: String,
     status: OcrTaskStatus,
+    log_file_path: Option<String>,
+    logs_dir: Option<String>,
+}
+
+async fn ocr_preflight(_auth: AuthUser) -> Result<Json<crate::services::ocr_install::OcrPreflightResponse>, AppError> {
+    Ok(Json(
+        crate::services::ocr_install::run_comprehensive_preflight().await,
+    ))
+}
+
+#[derive(Serialize)]
+struct OcrLatestLogResponse {
+    log_file_path: Option<String>,
+    logs_dir: String,
+}
+
+async fn ocr_install_latest_log(
+    _auth: AuthUser,
+) -> Result<Json<OcrLatestLogResponse>, AppError> {
+    Ok(Json(OcrLatestLogResponse {
+        log_file_path: crate::services::ocr_install::read_latest_log_path(),
+        logs_dir: crate::services::ocr_install::install_logs_dir()
+            .display()
+            .to_string(),
+    }))
+}
+
+fn resolve_install_command(
+    engine: &str,
+    pm: &str,
+    platform: OsPlatform,
+) -> Result<(String, Vec<String>, OcrInstallMethod, bool), AppError> {
+    use crate::services::ocr_install::OcrInstallMethod;
+    let (program, args, method, needs_admin) = match (engine, pm, platform) {
+        ("tesseract", "apt", OsPlatform::Linux) => (
+            "sudo".into(),
+            vec![
+                "apt", "install", "-y", "tesseract-ocr", "tesseract-ocr-chi-sim",
+                "tesseract-ocr-eng", "poppler-utils",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            OcrInstallMethod::Apt,
+            true,
+        ),
+        ("tesseract", "brew", _) => (
+            "brew".into(),
+            vec!["install", "tesseract", "tesseract-lang", "poppler"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            OcrInstallMethod::Brew,
+            false,
+        ),
+        ("tesseract", "choco", OsPlatform::Windows) => (
+            "choco".into(),
+            vec!["install", "tesseract", "poppler", "-y", "--no-progress"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            OcrInstallMethod::Choco,
+            true,
+        ),
+        ("tesseract", "winget", OsPlatform::Windows) => (
+            "winget".into(),
+            vec![
+                "install", "--accept-source-agreements", "--accept-package-agreements",
+                "UB-Mannheim.TesseractOCR",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            OcrInstallMethod::Winget,
+            true,
+        ),
+        ("paddleocr", "pip", _) => (
+            "pip3".into(),
+            vec!["install", "paddleocr", "paddlepaddle"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            OcrInstallMethod::Pip,
+            false,
+        ),
+        _ => {
+            return Err(AppError::BadRequest(format!(
+                "不支持的安装组合: engine={engine}, pm={pm}, platform={platform}"
+            )));
+        }
+    };
+    Ok((program, args, method, needs_admin))
 }
 
 async fn ocr_install_start(
@@ -736,234 +809,434 @@ async fn ocr_install_start(
     _auth: AuthUser,
     Json(req): Json<OcrInstallRequest>,
 ) -> Result<Json<OcrInstallStartResponse>, AppError> {
+    use crate::services::ocr_install::{
+        analyze_failure_suggestions, install_logs_dir, push_log_line, task_cancel_flag_path,
+        task_log_path, task_status_path, verify_installation, write_install_log_header,
+        write_latest_task_pointer, write_task_status_file, OcrInstallStage, OcrTaskStatus,
+        INSTALL_TIMEOUT_SECS,
+    };
+    use std::time::Instant;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
     let platform = detect_platform();
     let pm = req.package_manager.as_str();
     let engine = req.engine.as_str();
+    let (raw_program, raw_args, install_method, needs_admin) =
+        resolve_install_command(engine, pm, platform)?;
 
-    let (program, args): (String, Vec<String>) = match (engine, pm, platform) {
-        ("tesseract", "apt", OsPlatform::Linux) => (
-            "sudo".into(),
-            vec!["apt", "install", "-y", "tesseract-ocr", "tesseract-ocr-chi-sim", "tesseract-ocr-eng", "poppler-utils"]
-                .into_iter().map(String::from).collect(),
-        ),
-        ("tesseract", "brew", _) => (
-            "brew".into(),
-            vec!["install", "tesseract", "tesseract-lang", "poppler"]
-                .into_iter().map(String::from).collect(),
-        ),
-        ("tesseract", "choco", OsPlatform::Windows) => (
-            "choco".into(),
-            vec!["install", "tesseract", "poppler", "-y", "--no-progress"]
-                .into_iter().map(String::from).collect(),
-        ),
-        ("tesseract", "winget", OsPlatform::Windows) => (
-            "winget".into(),
-            vec!["install", "--accept-source-agreements", "--accept-package-agreements", "UB-Mannheim.TesseractOCR"]
-                .into_iter().map(String::from).collect(),
-        ),
-        ("paddleocr", "pip", _) => (
-            "pip3".into(),
-            vec!["install", "paddleocr", "paddlepaddle"]
-                .into_iter().map(String::from).collect(),
-        ),
-        _ => {
-            return Err(AppError::BadRequest(format!(
-                "不支持的安装组合: engine={}, pm={}, platform={}", engine, pm, platform
-            )));
-        }
-    };
-
-    #[cfg(target_os = "windows")]
-    let (program, args) = wrap_windows_elevated(pm, program, args);
+    let is_admin = crate::services::ocr_install::is_running_as_admin().await;
+    let use_elevation = needs_admin && !is_admin && cfg!(target_os = "windows") && pm != "pip";
 
     let task_id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let logs_dir_path = install_logs_dir();
+    std::fs::create_dir_all(&logs_dir_path)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("无法创建日志目录: {e}")))?;
 
-    let task = OcrInstallTask {
+    let log_file_path = task_log_path(&task_id);
+    let status_file_path = task_status_path(&task_id);
+    let cancel_flag_path = task_cancel_flag_path(&task_id);
+    let logs_dir = logs_dir_path.display().to_string();
+
+    let install_command_str = format!("{raw_program} {}", raw_args.join(" "));
+
+    let (program, args, is_elevated, initial_status) = if use_elevation {
+        #[cfg(target_os = "windows")]
+        {
+            let script = crate::services::ocr_install::write_windows_elevated_install_script(
+                &task_id,
+                &log_file_path,
+                &status_file_path,
+                &cancel_flag_path,
+                &raw_program,
+                &raw_args,
+            )
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("无法创建提权安装脚本: {e}")))?;
+            let (p, a) = crate::services::ocr_install::build_uac_launcher(&script);
+            (p, a, true, OcrTaskStatus::WaitingForUac)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            (raw_program, raw_args, false, OcrTaskStatus::Running)
+        }
+    } else if is_admin && needs_admin {
+        (raw_program, raw_args, true, OcrTaskStatus::Running)
+    } else {
+        (raw_program, raw_args, false, OcrTaskStatus::Running)
+    };
+
+    let command_str = install_command_str;
+
+    let preflight = crate::services::ocr_install::run_comprehensive_preflight().await;
+    write_install_log_header(&log_file_path, &preflight, &command_str);
+    write_latest_task_pointer(&task_id);
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let started_instant = Instant::now();
+    let initial_stage = if initial_status == OcrTaskStatus::WaitingForUac {
+        OcrInstallStage::WaitingForUac
+    } else {
+        OcrInstallStage::ExecutingInstall
+    };
+
+    let mut task = OcrInstallTask {
         task_id: task_id.clone(),
         engine: engine.to_string(),
-        package_manager: pm.to_string(),
-        status: OcrTaskStatus::Running,
-        started_at: now,
+        install_method,
+        status: initial_status.clone(),
+        stage: initial_stage,
+        requires_admin: needs_admin,
+        is_elevated,
+        command: command_str.clone(),
+        started_at: now.clone(),
         finished_at: None,
+        duration_ms: None,
         exit_code: None,
-        log_lines: vec![format!("Starting: {} {}", program, args.join(" "))],
+        log_lines: vec![],
         message: None,
+        error_message: None,
         pid: None,
+        log_file: Some(log_file_path.display().to_string()),
+        status_file: Some(status_file_path.display().to_string()),
+        cancel_flag_file: Some(cancel_flag_path.display().to_string()),
+        logs_dir: Some(logs_dir.clone()),
+        last_output_at: Some(chrono::Utc::now().to_rfc3339()),
+        stall_warning: false,
+        suggestions: vec![],
+        verification: None,
+        residual_pids: vec![],
+        residual_command_lines: vec![],
+        windows_helper_log: Some(log_file_path.display().to_string()),
     };
+    push_log_line(
+        &mut task,
+        format!("[info] 开始时间: {now}"),
+        Some(&log_file_path),
+    );
+    push_log_line(
+        &mut task,
+        format!("[info] 执行命令: {command_str}"),
+        Some(&log_file_path),
+    );
+    if use_elevation {
+        push_log_line(
+            &mut task,
+            "[info] 等待 UAC 管理员授权...".into(),
+            Some(&log_file_path),
+        );
+    } else if needs_admin && !is_admin {
+        push_log_line(
+            &mut task,
+            "[warn] 当前非管理员，自动安装可能失败。建议以管理员身份运行 TrustRAG 或使用自定义路径。".into(),
+            Some(&log_file_path),
+        );
+    }
+    write_task_status_file(&task);
 
     {
         let mut tasks = state.ocr_tasks.lock().await;
         tasks.insert(task_id.clone(), task);
     }
 
+    let child_slot = Arc::new(Mutex::new(None::<Child>));
+    {
+        let mut children = state.ocr_install_children.lock().await;
+        children.insert(task_id.clone(), child_slot.clone());
+    }
+
     let store = state.ocr_tasks.clone();
+    let children_store = state.ocr_install_children.clone();
     let tid = task_id.clone();
     let prog = program;
     let cmd_args = args;
     let eng = engine.to_string();
+    let pm_owned = pm.to_string();
+    let log_file_for_task = log_file_path.clone();
+    let poll_log = log_file_path.display().to_string();
+    let initial_status_spawn = initial_status.clone();
+
+    let poll_store = store.clone();
+    let poll_tid = tid.clone();
+    tokio::spawn(async move {
+        crate::services::ocr_install::poll_log_file(poll_store, poll_tid, poll_log, 0).await;
+    });
 
     tokio::spawn(async move {
-        use tokio::io::{AsyncBufReadExt, BufReader};
-        use tokio::process::Command;
+        if initial_status_spawn == OcrTaskStatus::WaitingForUac {
+            let mut tasks = store.lock().await;
+            if let Some(t) = tasks.get_mut(&tid) {
+                t.stage = OcrInstallStage::WaitingForUac;
+                write_task_status_file(t);
+            }
+        }
 
-        let child = Command::new(&prog)
+        let child_result = Command::new(&prog)
             .args(&cmd_args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn();
 
-        let mut child = match child {
+        let child = match child_result {
             Ok(c) => c,
             Err(e) => {
                 let mut tasks = store.lock().await;
                 if let Some(t) = tasks.get_mut(&tid) {
                     t.status = OcrTaskStatus::Failed;
+                    t.stage = OcrInstallStage::Done;
                     t.finished_at = Some(chrono::Utc::now().to_rfc3339());
-                    t.log_lines.push(format!("Failed to start process: {}", e));
-                    t.message = Some(format!("执行安装命令失败: {}", e));
+                    t.duration_ms = Some(started_instant.elapsed().as_millis() as u64);
+                    push_log_line(
+                        t,
+                        format!("[error] 无法启动进程: {e}"),
+                        Some(&log_file_for_task),
+                    );
+                    t.message = Some(format!("执行安装命令失败: {e}"));
+                    t.error_message = Some(e.to_string());
+                    t.suggestions = analyze_failure_suggestions(&e.to_string(), None, &pm_owned);
+                    write_task_status_file(t);
                 }
+                children_store.lock().await.remove(&tid);
                 return;
             }
         };
 
         let pid = child.id();
         {
+            let mut slot = child_slot.lock().await;
+            *slot = Some(child);
+        }
+        {
             let mut tasks = store.lock().await;
             if let Some(t) = tasks.get_mut(&tid) {
                 t.pid = pid;
+                t.status = OcrTaskStatus::Running;
+                t.stage = OcrInstallStage::ExecutingInstall;
+                if let Some(p) = pid {
+                    push_log_line(
+                        t,
+                        format!("[info] 进程 PID: {p}"),
+                        Some(&log_file_for_task),
+                    );
+                }
+                write_task_status_file(t);
             }
         }
 
+        let mut child = child_slot.lock().await.take().expect("child in slot");
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
-        let store2 = store.clone();
-        let tid2 = tid.clone();
 
-        let stdout_handle = tokio::spawn(async move {
-            if let Some(out) = stdout {
-                let mut reader = BufReader::new(out).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let mut tasks = store2.lock().await;
-                    if let Some(t) = tasks.get_mut(&tid2) {
-                        if t.status == OcrTaskStatus::Cancelled {
-                            break;
+        let stdout_handle = tokio::spawn({
+            let store2 = store.clone();
+            let tid2 = tid.clone();
+            let log2 = log_file_for_task.clone();
+            async move {
+                if let Some(out) = stdout {
+                    let mut reader = BufReader::new(out).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        let mut tasks = store2.lock().await;
+                        if let Some(t) = tasks.get_mut(&tid2) {
+                            if matches!(
+                                t.status,
+                                OcrTaskStatus::Cancelled | OcrTaskStatus::Cancelling
+                            ) {
+                                break;
+                            }
+                            push_log_line(t, format!("[stdout] {line}"), Some(&log2));
                         }
-                        t.log_lines.push(line);
                     }
                 }
             }
         });
 
-        let store3 = store.clone();
-        let tid3 = tid.clone();
-        let stderr_handle = tokio::spawn(async move {
-            if let Some(err) = stderr {
-                let mut reader = BufReader::new(err).lines();
-                while let Ok(Some(line)) = reader.next_line().await {
-                    let mut tasks = store3.lock().await;
-                    if let Some(t) = tasks.get_mut(&tid3) {
-                        if t.status == OcrTaskStatus::Cancelled {
-                            break;
+        let stderr_handle = tokio::spawn({
+            let store3 = store.clone();
+            let tid3 = tid.clone();
+            let log3 = log_file_for_task.clone();
+            async move {
+                if let Some(err) = stderr {
+                    let mut reader = BufReader::new(err).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        let mut tasks = store3.lock().await;
+                        if let Some(t) = tasks.get_mut(&tid3) {
+                            if matches!(
+                                t.status,
+                                OcrTaskStatus::Cancelled | OcrTaskStatus::Cancelling
+                            ) {
+                                break;
+                            }
+                            push_log_line(t, format!("[stderr] {line}"), Some(&log3));
                         }
-                        t.log_lines.push(format!("[stderr] {}", line));
                     }
                 }
             }
         });
 
         let timeout_result = tokio::time::timeout(
-            std::time::Duration::from_secs(600),
+            std::time::Duration::from_secs(INSTALL_TIMEOUT_SECS),
             child.wait(),
-        ).await;
+        )
+        .await;
 
         let _ = stdout_handle.await;
         let _ = stderr_handle.await;
 
+        if timeout_result.is_err() {
+            if let Some(p) = pid {
+                crate::services::ocr_install::kill_process_tree(p).await;
+            }
+        }
+        children_store.lock().await.remove(&tid);
+
         let mut tasks = store.lock().await;
         if let Some(t) = tasks.get_mut(&tid) {
-            if t.status == OcrTaskStatus::Cancelled {
+            if matches!(
+                t.status,
+                OcrTaskStatus::Cancelled | OcrTaskStatus::Cancelling | OcrTaskStatus::CancelFailed
+            ) {
                 return;
             }
             t.finished_at = Some(chrono::Utc::now().to_rfc3339());
+            t.duration_ms = Some(started_instant.elapsed().as_millis() as u64);
 
             match timeout_result {
                 Ok(Ok(exit_status)) => {
-                    t.exit_code = exit_status.code();
-                    let log_lower = t.log_lines.join("\n").to_lowercase();
-                    let already_installed = log_lower.contains("already installed")
-                        || log_lower.contains("no available upgrade")
-                        || log_lower.contains("已安装");
-                    let success = exit_status.success() || already_installed;
-
-                    if success {
-                        t.status = OcrTaskStatus::Completed;
-                        t.log_lines.push("安装命令执行完成，正在验证...".to_string());
+                    let code = exit_status.code();
+                    t.exit_code = code;
+                    push_log_line(
+                        t,
+                        format!("[info] 退出码: {code:?}"),
+                        Some(&log_file_for_task),
+                    );
+                    if code == Some(1223) {
+                        t.status = OcrTaskStatus::ElevationCancelled;
+                        t.stage = OcrInstallStage::Done;
+                        t.message = Some("用户取消了 UAC 管理员授权。".into());
+                        t.error_message = Some("elevation_cancelled".into());
+                        t.suggestions = analyze_failure_suggestions("", Some(1223), &pm_owned);
                     } else {
-                        t.status = OcrTaskStatus::Failed;
-                        t.message = Some(format!(
-                            "{} 安装失败 (退出码: {:?})，请查看日志或手动安装。",
-                            eng, exit_status.code()
-                        ));
+                        let log_lower = t.log_lines.join("\n").to_lowercase();
+                        let already_installed = log_lower.contains("already installed")
+                            || log_lower.contains("no available upgrade")
+                            || log_lower.contains("已安装");
+                        let cmd_success = exit_status.success() || already_installed;
+                        if !cmd_success {
+                            t.status = OcrTaskStatus::Failed;
+                            t.stage = OcrInstallStage::Done;
+                            t.suggestions =
+                                analyze_failure_suggestions(&log_lower, code, &pm_owned);
+                            t.message = Some(format!(
+                                "{eng} 安装失败 (退出码: {code:?})。"
+                            ));
+                        } else {
+                            push_log_line(
+                                t,
+                                "[info] 安装命令执行完成，开始验证...".into(),
+                                Some(&log_file_for_task),
+                            );
+                        }
                     }
                 }
                 Ok(Err(e)) => {
                     t.status = OcrTaskStatus::Failed;
-                    t.log_lines.push(format!("Process error: {}", e));
-                    t.message = Some(format!("安装进程异常: {}", e));
+                    t.stage = OcrInstallStage::Done;
+                    push_log_line(
+                        t,
+                        format!("[error] 进程异常: {e}"),
+                        Some(&log_file_for_task),
+                    );
+                    t.message = Some(format!("安装进程异常: {e}"));
+                    t.error_message = Some(e.to_string());
+                    t.suggestions = analyze_failure_suggestions(&e.to_string(), None, &pm_owned);
                 }
                 Err(_) => {
-                    t.status = OcrTaskStatus::Failed;
-                    t.log_lines.push("Installation timed out after 10 minutes.".to_string());
-                    t.message = Some(format!("{} 安装超时 (10 分钟)。建议手动安装。", eng));
+                    t.status = OcrTaskStatus::Timeout;
+                    t.stage = OcrInstallStage::Done;
+                    push_log_line(
+                        t,
+                        format!("[error] 安装超时 ({INSTALL_TIMEOUT_SECS} 秒)"),
+                        Some(&log_file_for_task),
+                    );
+                    t.message = Some(format!("{eng} 安装超时。"));
+                    t.suggestions = vec![
+                        "安装长时间无响应。可能正在等待 UAC、网络下载或 Chocolatey 锁。".into(),
+                    ];
                 }
             }
+            write_task_status_file(t);
         }
+        drop(tasks);
 
-        // Post-install verification: re-check if the binary is now available
-        {
-            let should_verify = {
-                let tasks = store.lock().await;
-                tasks.get(&tid).map(|t| t.status == OcrTaskStatus::Completed).unwrap_or(false)
-            };
+        let should_verify = {
+            let tasks = store.lock().await;
+            tasks.get(&tid).map(|t| {
+                !matches!(
+                    t.status,
+                    OcrTaskStatus::Failed
+                        | OcrTaskStatus::Cancelled
+                        | OcrTaskStatus::ElevationCancelled
+                        | OcrTaskStatus::Timeout
+                ) && t.exit_code.map(|c| c == 0).unwrap_or(false)
+            }).unwrap_or(false)
+        };
 
-            if should_verify {
-                let (check_name, check_args): (&str, &[&str]) = if eng == "paddleocr" {
-                    ("python3", &["python3", "-c", "import paddleocr; print(paddleocr.VERSION)"])
-                } else {
-                    ("tesseract", &["tesseract", "--version"])
-                };
-
-                let (ok, ver, path) = check_binary(check_name, check_args).await;
-
+        if should_verify {
+            {
                 let mut tasks = store.lock().await;
                 if let Some(t) = tasks.get_mut(&tid) {
-                    if ok {
-                        let ver_str = ver.unwrap_or_default();
-                        let path_str = path.unwrap_or_default();
-                        t.log_lines.push(format!("验证成功: {} v{} ({})", check_name, ver_str, path_str));
-                        t.message = Some(format!(
-                            "{} 安装并验证成功！版本: {}",
-                            eng, ver_str
-                        ));
-                    } else {
-                        t.log_lines.push(format!(
-                            "警告: 安装命令执行成功，但 {} 仍不可用。可能需要重启终端或将其添加到 PATH。",
-                            check_name
-                        ));
-                        t.message = Some(format!(
-                            "{} 安装命令已完成，但验证未通过。建议重启应用后重新检测。",
-                            eng
-                        ));
+                    t.stage = OcrInstallStage::VerifyingTesseract;
+                    write_task_status_file(t);
+                }
+            }
+            let verification = verify_installation(&eng).await;
+            let mut tasks = store.lock().await;
+            if let Some(t) = tasks.get_mut(&tid) {
+                t.verification = Some(verification.clone());
+                t.stage = OcrInstallStage::RefreshingConfig;
+                for item in &verification.items {
+                    let tag = if item.passed { "OK" } else { "FAIL" };
+                    push_log_line(
+                        t,
+                        format!("[verify:{tag}] {} — {}", item.name, item.detail),
+                        Some(&log_file_for_task),
+                    );
+                }
+                if verification.all_passed {
+                    t.status = OcrTaskStatus::Success;
+                    t.stage = OcrInstallStage::Done;
+                    t.message = Some(format!("{eng} 安装并验证成功！"));
+                } else {
+                    t.status = OcrTaskStatus::Failed;
+                    t.stage = OcrInstallStage::Done;
+                    t.message = Some(format!(
+                        "{eng} 安装命令已结束，但验证未全部通过。{}",
+                        if verification.path_refresh_needed {
+                            "请重启 TrustRAG 或手动配置路径。"
+                        } else {
+                            "请查看验证详情。"
+                        }
+                    ));
+                    if verification.path_refresh_needed {
+                        t.suggestions.push(
+                            "PATH 可能未刷新。请重启 TrustRAG 或手动配置 Tesseract/Poppler 路径。".into(),
+                        );
                     }
                 }
+                push_log_line(
+                    t,
+                    format!("[info] 耗时: {} ms", t.duration_ms.unwrap_or(0)),
+                    Some(&log_file_for_task),
+                );
+                write_task_status_file(t);
             }
         }
     });
 
     Ok(Json(OcrInstallStartResponse {
         task_id,
-        status: OcrTaskStatus::Running,
+        status: initial_status.clone(),
+        log_file_path: Some(log_file_path.display().to_string()),
+        logs_dir: Some(logs_dir),
     }))
 }
 
@@ -976,12 +1249,27 @@ struct OcrStatusQuery {
 struct OcrInstallStatusResponse {
     task_id: String,
     status: OcrTaskStatus,
+    stage: OcrInstallStage,
     engine: String,
-    package_manager: String,
+    install_method: OcrInstallMethod,
+    requires_admin: bool,
+    is_elevated: bool,
+    command: String,
     started_at: String,
     finished_at: Option<String>,
+    duration_ms: Option<u64>,
     exit_code: Option<i32>,
     message: Option<String>,
+    error_message: Option<String>,
+    log_file_path: Option<String>,
+    status_file_path: Option<String>,
+    logs_dir: Option<String>,
+    last_log_at: Option<String>,
+    stall_warning: bool,
+    suggestions: Vec<String>,
+    verification: Option<crate::services::ocr_install::OcrVerificationResult>,
+    residual_pids: Vec<u32>,
+    residual_command_lines: Vec<String>,
     new_lines: Vec<String>,
     total_lines: usize,
 }
@@ -992,6 +1280,8 @@ async fn ocr_install_status(
     Path(task_id): Path<String>,
     Query(query): Query<OcrStatusQuery>,
 ) -> Result<Json<OcrInstallStatusResponse>, AppError> {
+    crate::services::ocr_install::update_stall_warning(&state.ocr_tasks, &task_id).await;
+
     let tasks = state.ocr_tasks.lock().await;
     let task = tasks.get(&task_id).ok_or_else(|| {
         AppError::NotFound(format!("OCR install task not found: {}", task_id))
@@ -1007,14 +1297,136 @@ async fn ocr_install_status(
     Ok(Json(OcrInstallStatusResponse {
         task_id: task.task_id.clone(),
         status: task.status.clone(),
+        stage: task.stage.clone(),
         engine: task.engine.clone(),
-        package_manager: task.package_manager.clone(),
+        install_method: task.install_method.clone(),
+        requires_admin: task.requires_admin,
+        is_elevated: task.is_elevated,
+        command: task.command.clone(),
         started_at: task.started_at.clone(),
         finished_at: task.finished_at.clone(),
+        duration_ms: task.duration_ms,
         exit_code: task.exit_code,
         message: task.message.clone(),
+        error_message: task.error_message.clone(),
+        log_file_path: task.log_file.clone(),
+        status_file_path: task.status_file.clone(),
+        logs_dir: task.logs_dir.clone(),
+        last_log_at: task.last_output_at.clone(),
+        stall_warning: task.stall_warning,
+        suggestions: task.suggestions.clone(),
+        verification: task.verification.clone(),
+        residual_pids: task.residual_pids.clone(),
+        residual_command_lines: task.residual_command_lines.clone(),
         new_lines,
         total_lines: task.log_lines.len(),
+    }))
+}
+
+async fn ocr_install_task_logs(
+    _auth: AuthUser,
+    Path(task_id): Path<String>,
+    Query(query): Query<OcrStatusQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let since = query.since_line.unwrap_or(0);
+    let (new_lines, total) = crate::services::ocr_install::read_task_logs(&task_id, since);
+    Ok(Json(serde_json::json!({
+        "task_id": task_id,
+        "new_lines": new_lines,
+        "total_lines": total,
+        "log_file_path": crate::services::ocr_install::task_log_path(&task_id).display().to_string(),
+    })))
+}
+
+async fn ocr_config_get(
+    _auth: AuthUser,
+) -> Result<Json<crate::services::ocr_install::OcrConfig>, AppError> {
+    Ok(Json(crate::services::ocr_install::load_ocr_config()))
+}
+
+#[derive(Deserialize)]
+struct OcrConfigSaveRequest {
+    tesseract_path: Option<String>,
+    tessdata_dir: Option<String>,
+    poppler_bin_dir: Option<String>,
+    default_language: Option<String>,
+    ocr_enabled: Option<bool>,
+    prefer_custom_paths: Option<bool>,
+    allow_auto_install: Option<bool>,
+    portable_runtime_dir: Option<String>,
+}
+
+#[derive(Serialize)]
+struct OcrConfigSaveResponse {
+    success: bool,
+    config: crate::services::ocr_install::OcrConfig,
+    verification: crate::services::ocr_install::OcrVerificationResult,
+    message: String,
+}
+
+async fn ocr_config_save(
+    _auth: AuthUser,
+    Json(req): Json<OcrConfigSaveRequest>,
+) -> Result<Json<OcrConfigSaveResponse>, AppError> {
+    let mut config = crate::services::ocr_install::load_ocr_config();
+    if let Some(v) = req.tesseract_path {
+        config.tesseract_path = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Some(v) = req.tessdata_dir {
+        config.tessdata_dir = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Some(v) = req.poppler_bin_dir {
+        config.poppler_bin_dir = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Some(v) = req.default_language {
+        config.default_language = v;
+    }
+    if let Some(v) = req.ocr_enabled {
+        config.ocr_enabled = v;
+    }
+    if let Some(v) = req.prefer_custom_paths {
+        config.prefer_custom_paths = v;
+    }
+    if let Some(v) = req.allow_auto_install {
+        config.allow_auto_install = v;
+    }
+    if let Some(v) = req.portable_runtime_dir {
+        config.portable_runtime_dir = if v.is_empty() { None } else { Some(v) };
+    }
+
+    crate::services::ocr_install::save_ocr_config(&config)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("保存 OCR 配置失败: {e}")))?;
+
+    let verification = crate::services::ocr_install::verify_with_config("tesseract", &config).await;
+    let message = if verification.all_passed {
+        "OCR 路径配置已保存并验证通过。".into()
+    } else {
+        "OCR 路径配置已保存，但验证未全部通过。请检查路径。".into()
+    };
+
+    Ok(Json(OcrConfigSaveResponse {
+        success: verification.all_passed,
+        config,
+        verification,
+        message,
+    }))
+}
+
+#[derive(Serialize)]
+struct OcrVerifyResponse {
+    verification: crate::services::ocr_install::OcrVerificationResult,
+    overall: crate::services::ocr_install::OcrOverallStatus,
+}
+
+async fn ocr_verify(
+    _auth: AuthUser,
+) -> Result<Json<OcrVerifyResponse>, AppError> {
+    let config = crate::services::ocr_install::load_ocr_config();
+    let verification = crate::services::ocr_install::verify_with_config("tesseract", &config).await;
+    let overall = crate::services::ocr_install::compute_overall_status(&config).await;
+    Ok(Json(OcrVerifyResponse {
+        verification,
+        overall,
     }))
 }
 
@@ -1029,40 +1441,51 @@ async fn ocr_install_cancel(
     _auth: AuthUser,
     Path(task_id): Path<String>,
 ) -> Result<Json<OcrCancelResponse>, AppError> {
-    let mut tasks = state.ocr_tasks.lock().await;
-    let task = tasks.get_mut(&task_id).ok_or_else(|| {
-        AppError::NotFound(format!("OCR install task not found: {}", task_id))
-    })?;
+    use crate::services::ocr_install::{push_log_line, write_task_status_file, OcrTaskStatus};
 
-    if task.status != OcrTaskStatus::Running {
+    let can_cancel = {
+        let tasks = state.ocr_tasks.lock().await;
+        let task = tasks.get(&task_id).ok_or_else(|| {
+            AppError::NotFound(format!("OCR install task not found: {task_id}"))
+        })?;
+        matches!(
+            task.status,
+            OcrTaskStatus::Running
+                | OcrTaskStatus::WaitingForUac
+                | OcrTaskStatus::Pending
+        )
+    };
+
+    if !can_cancel {
         return Ok(Json(OcrCancelResponse {
             success: false,
-            message: format!("任务已不在运行状态 ({})", serde_json::to_string(&task.status).unwrap_or_default()),
+            message: "任务已不在可取消状态".into(),
         }));
     }
 
-    if let Some(pid) = task.pid {
-        #[cfg(unix)]
-        {
-            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
-        }
-        #[cfg(windows)]
-        {
-            let _ = tokio::process::Command::new("taskkill")
-                .args(&["/PID", &pid.to_string(), "/F"])
-                .output()
-                .await;
+    {
+        let mut tasks = state.ocr_tasks.lock().await;
+        if let Some(task) = tasks.get_mut(&task_id) {
+            let log_path_buf = task.log_file.clone();
+            let log_path = log_path_buf.as_deref().map(std::path::Path::new);
+            task.status = OcrTaskStatus::Cancelling;
+            task.message = Some("正在取消安装...".into());
+            push_log_line(task, "[info] 用户请求取消安装".into(), log_path);
+            push_log_line(task, "[info] 正在终止安装进程...".into(), log_path);
+            write_task_status_file(task);
         }
     }
 
-    task.status = OcrTaskStatus::Cancelled;
-    task.finished_at = Some(chrono::Utc::now().to_rfc3339());
-    task.log_lines.push("Installation cancelled by user.".to_string());
-    task.message = Some("安装已被用户取消。".to_string());
+    let store = state.ocr_tasks.clone();
+    let children_store = state.ocr_install_children.clone();
+    let tid = task_id.clone();
+    tokio::spawn(async move {
+        crate::services::ocr_install::perform_async_cancel(store, children_store, tid).await;
+    });
 
     Ok(Json(OcrCancelResponse {
         success: true,
-        message: "安装已取消".to_string(),
+        message: "取消请求已接受，正在终止安装进程".into(),
     }))
 }
 
@@ -1139,68 +1562,28 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "windows")]
-    fn test_wrap_windows_elevated_choco() {
-        let (prog, args) = wrap_windows_elevated(
-            "choco",
-            "choco".into(),
-            vec!["install".into(), "tesseract".into(), "-y".into()],
-        );
-        assert_eq!(prog, "powershell");
-        assert!(args.contains(&"-NoProfile".to_string()));
-        assert!(args.contains(&"Bypass".to_string()));
-        let cmd = args.last().unwrap();
-        assert!(cmd.contains("Start-Process"));
-        assert!(cmd.contains("Verb RunAs"));
-        assert!(cmd.contains("choco"));
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn test_wrap_windows_elevated_pip_no_elevation() {
-        let (prog, args) = wrap_windows_elevated(
-            "pip",
-            "pip3".into(),
-            vec!["install".into(), "paddleocr".into()],
-        );
-        assert_eq!(prog, "pip3");
-        assert_eq!(args, vec!["install".to_string(), "paddleocr".to_string()]);
-    }
-
-    #[test]
     fn test_ocr_task_status_serde() {
         let status = OcrTaskStatus::Running;
         let json = serde_json::to_string(&status).unwrap();
         assert_eq!(json, "\"running\"");
 
-        let completed: OcrTaskStatus = serde_json::from_str("\"completed\"").unwrap();
-        assert_eq!(completed, OcrTaskStatus::Completed);
+        let success: OcrTaskStatus = serde_json::from_str("\"success\"").unwrap();
+        assert_eq!(success, OcrTaskStatus::Success);
 
         let cancelled: OcrTaskStatus = serde_json::from_str("\"cancelled\"").unwrap();
         assert_eq!(cancelled, OcrTaskStatus::Cancelled);
 
-        let failed: OcrTaskStatus = serde_json::from_str("\"failed\"").unwrap();
-        assert_eq!(failed, OcrTaskStatus::Failed);
+        let elevation: OcrTaskStatus = serde_json::from_str("\"elevation_cancelled\"").unwrap();
+        assert_eq!(elevation, OcrTaskStatus::ElevationCancelled);
     }
 
     #[test]
-    fn test_ocr_install_task_serialization() {
-        let task = OcrInstallTask {
-            task_id: "test-123".into(),
-            engine: "tesseract".into(),
-            package_manager: "choco".into(),
-            status: OcrTaskStatus::Running,
-            started_at: "2026-05-27T10:00:00Z".into(),
-            finished_at: None,
-            exit_code: None,
-            log_lines: vec!["Starting install...".into()],
-            message: None,
-            pid: Some(1234),
-        };
-        let json = serde_json::to_value(&task).unwrap();
-        assert_eq!(json["task_id"], "test-123");
-        assert_eq!(json["status"], "running");
-        assert_eq!(json["pid"], 1234);
-        assert!(json["finished_at"].is_null());
+    fn test_resolve_install_command_choco() {
+        let (prog, args, method, admin) =
+            resolve_install_command("tesseract", "choco", OsPlatform::Windows).unwrap();
+        assert_eq!(prog, "choco");
+        assert!(args.contains(&"tesseract".to_string()));
+        assert_eq!(method, OcrInstallMethod::Choco);
+        assert!(admin);
     }
 }
