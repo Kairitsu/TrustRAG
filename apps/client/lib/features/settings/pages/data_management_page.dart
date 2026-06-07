@@ -9,6 +9,8 @@ import 'package:go_router/go_router.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/services/backend_manager.dart';
 import '../../../core/services/diagnostic_logger.dart';
+import '../../../core/services/local_bootstrap.dart';
+import '../../../core/services/local_data_wipe.dart';
 import '../../auth/providers/auth_provider.dart';
 
 class DataManagementPage extends ConsumerStatefulWidget {
@@ -151,6 +153,98 @@ class _DataManagementPageState extends ConsumerState<DataManagementPage> {
     if (mounted) {
       ref.read(authProvider.notifier).logout();
       context.go('/login');
+    }
+  }
+
+  Future<void> _wipeAllLocalDataAndReinit() async {
+    final backup = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清除本机全部数据'),
+        content: const Text(
+          '是否在清除前备份当前数据库到「文档/TrustRAG_backups」目录？\n\n'
+          '建议选择「备份并清除」。',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('不备份，直接清除')),
+          TextButton(onPressed: () => Navigator.pop(ctx, null), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('备份并清除'),
+          ),
+        ],
+      ),
+    );
+    if (backup == null || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber, color: Colors.red.shade900, size: 24),
+            const SizedBox(width: 8),
+            const Text('确认清除本机全部数据'),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('此操作将删除：', style: TextStyle(fontWeight: FontWeight.w600)),
+            SizedBox(height: 8),
+            Text('· 本地资料库、上传文件与向量索引'),
+            Text('· 聊天记录'),
+            Text('· 模型配置'),
+            Text('· API Key / Token / Session'),
+            Text('· 本地账号和工作区信息'),
+            Text('· 缓存和日志'),
+            SizedBox(height: 12),
+            Text(
+              '完成后将重新初始化本地模式。此操作不可恢复（备份文件除外）。',
+              style: TextStyle(color: Colors.red, fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade900),
+            child: const Text('确认清除并重新初始化'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _loading = true);
+    final result = await LocalDataWipe.wipeAllLocalData(backupFirst: backup);
+    if (!mounted) return;
+
+    if (result.success) {
+      final bootstrap = await LocalBootstrap.bootstrap(
+        ref.read(apiClientProvider),
+        widgetRef: ref,
+      );
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _lastMessage = bootstrap.isSuccess
+            ? '${result.message}\n本地模式已重新初始化。'
+            : '${result.message}\n重新初始化未完成：${bootstrap.message}';
+      });
+      if (bootstrap.isSuccess) {
+        context.go('/dashboard');
+      } else {
+        context.go('/onboarding');
+      }
+    } else {
+      setState(() {
+        _loading = false;
+        _lastMessage = result.message;
+      });
     }
   }
 
@@ -434,6 +528,14 @@ class _DataManagementPageState extends ConsumerState<DataManagementPage> {
                   ),
 
                   if (BackendManager.shouldRunEmbedded) ...[
+                    const SizedBox(height: 8),
+                    _actionCard(
+                      icon: Icons.delete_sweep,
+                      title: '清除本机全部数据并重新初始化',
+                      subtitle: '删除所有本地资料库、配置、登录状态，并重建默认工作区',
+                      onTap: _wipeAllLocalDataAndReinit,
+                      color: Colors.red.shade900,
+                    ),
                     const SizedBox(height: 8),
                     _actionCard(
                       icon: Icons.restart_alt,
